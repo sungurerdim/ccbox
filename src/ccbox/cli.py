@@ -7,7 +7,6 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
 
 import click
 from rich.console import Console
@@ -17,12 +16,11 @@ from rich.table import Table
 
 from . import __version__
 from .config import (
+    STACK_DESCRIPTIONS,
     Config,
     LanguageStack,
     RuntimeMode,
-    STACK_DESCRIPTIONS,
     get_config_dir,
-    get_container_name,
     get_image_name,
     load_config,
     save_config,
@@ -80,11 +78,13 @@ def cli() -> None:
 @cli.command()
 def init() -> None:
     """Interactive setup wizard for ccbox."""
-    console.print(Panel.fit(
-        "[bold blue]ccbox Setup Wizard[/bold blue]\n"
-        "Configure your secure Claude Code environment",
-        border_style="blue",
-    ))
+    console.print(
+        Panel.fit(
+            "[bold blue]ccbox Setup Wizard[/bold blue]\n"
+            "Configure your secure Claude Code environment",
+            border_style="blue",
+        )
+    )
 
     config = load_config()
 
@@ -180,12 +180,17 @@ def _build_image(config: Config, stack: LanguageStack) -> bool:
 
     # Build image
     try:
-        run_command([
-            "docker", "build",
-            "-t", get_image_name(stack),
-            "-f", str(build_dir / "Dockerfile"),
-            str(build_dir),
-        ])
+        run_command(
+            [
+                "docker",
+                "build",
+                "-t",
+                get_image_name(stack),
+                "-f",
+                str(build_dir / "Dockerfile"),
+                str(build_dir),
+            ]
+        )
         console.print(f"[green]Successfully built {get_image_name(stack)}[/green]")
         return True
     except subprocess.CalledProcessError:
@@ -199,8 +204,8 @@ def _build_image(config: Config, stack: LanguageStack) -> bool:
 @click.option("--build", is_flag=True, help="Force rebuild image before running")
 @click.argument("path", default=".", type=click.Path(exists=True))
 def run(
-    bypass_mode: Optional[bool],
-    stack: Optional[str],
+    bypass_mode: bool | None,
+    stack: str | None,
     build: bool,
     path: str,
 ) -> None:
@@ -219,78 +224,36 @@ def run(
     project_path = Path(path).resolve()
     project_name = get_project_name(project_path)
 
-    console.print(Panel.fit(
-        f"[bold]Project:[/bold] {project_name}\n"
-        f"[bold]Path:[/bold] {project_path}",
-        title="ccbox",
-        border_style="blue",
-    ))
+    console.print(
+        Panel.fit(
+            f"[bold]Project:[/bold] {project_name}\n[bold]Path:[/bold] {project_path}",
+            title="ccbox",
+            border_style="blue",
+        )
+    )
 
     # Detect or use specified stack
     if stack:
         selected_stack = LanguageStack(stack)
         console.print(f"[dim]Using specified stack: {selected_stack.value}[/dim]")
     else:
-        detection = detect_project_type(project_path)
-        console.print(f"\n[bold]Detected languages:[/bold] {', '.join(detection.detected_languages) or 'none'}")
-        console.print(f"[bold]Recommended stack:[/bold] {detection.recommended_stack.value}")
-        console.print(f"[dim]Confidence: {detection.confidence:.0%}[/dim]")
+        selected_stack = _detect_and_select_stack(project_path)
 
-        # Ask user to confirm or change
-        stack_choices = [s.value for s in LanguageStack if s != LanguageStack.CUSTOM]
-        choice = Prompt.ask(
-            "\nUse stack",
-            choices=stack_choices,
-            default=detection.recommended_stack.value,
-        )
-        selected_stack = LanguageStack(choice)
-
-    # Check if image exists
-    image_name = get_image_name(selected_stack)
-    image_exists = _check_image_exists(image_name)
-
-    if build or not image_exists:
-        if not image_exists:
-            console.print(f"[yellow]Image {image_name} not found. Building...[/yellow]")
-        if not _build_image(config, selected_stack):
-            return
+    # Ensure image exists
+    if not _ensure_image(config, selected_stack, build):
+        return
 
     # Determine runtime mode
-    if bypass_mode is None:
-        use_bypass = config.default_mode == RuntimeMode.BYPASS
-    else:
-        use_bypass = bypass_mode
-
-    mode_str = "[bold green]bypass[/bold green]" if use_bypass else "[bold yellow]safe[/bold yellow]"
+    use_bypass = (
+        bypass_mode if bypass_mode is not None else config.default_mode == RuntimeMode.BYPASS
+    )
+    mode_str = "[bold green]bypass[/bold green]" if use_bypass else "[bold yellow]safe[/]"
     console.print(f"\n[bold]Mode:[/bold] {mode_str}")
 
-    # Generate compose file
+    # Generate compose file and run
     build_dir = get_config_dir() / "build" / selected_stack.value
     compose_file = write_compose_file(config, project_path, project_name, selected_stack, build_dir)
-
-    # Build claude args (entrypoint already calls claude)
-    claude_args = []
-    if use_bypass:
-        claude_args.append("--dangerously-skip-permissions")
-
-    # Run container
-    console.print("\n[bold]Starting Claude Code...[/bold]\n")
-
-    try:
-        subprocess.run(
-            [
-                "docker", "compose",
-                "-f", str(compose_file),
-                "run", "--rm",
-                "claude",
-            ] + claude_args,
-            check=True,
-        )
-    except subprocess.CalledProcessError as e:
-        if e.returncode != 130:  # Ignore Ctrl+C
-            console.print(f"[red]Claude Code exited with error: {e.returncode}[/red]")
-    except KeyboardInterrupt:
-        console.print("\n[yellow]Interrupted[/yellow]")
+    _run_container(compose_file, use_bypass)
 
 
 def _check_image_exists(image_name: str) -> bool:
@@ -306,9 +269,63 @@ def _check_image_exists(image_name: str) -> bool:
         return False
 
 
+def _detect_and_select_stack(project_path: Path) -> LanguageStack:
+    """Detect project type and prompt user to select stack."""
+    detection = detect_project_type(project_path)
+    langs = ", ".join(detection.detected_languages) or "none"
+    console.print(f"\n[bold]Detected languages:[/bold] {langs}")
+    console.print(f"[bold]Recommended stack:[/bold] {detection.recommended_stack.value}")
+    console.print(f"[dim]Confidence: {detection.confidence:.0%}[/dim]")
+
+    stack_choices = [s.value for s in LanguageStack if s != LanguageStack.CUSTOM]
+    choice = Prompt.ask(
+        "\nUse stack",
+        choices=stack_choices,
+        default=detection.recommended_stack.value,
+    )
+    return LanguageStack(choice)
+
+
+def _ensure_image(config: Config, stack: LanguageStack, force_build: bool) -> bool:
+    """Ensure Docker image exists, building if necessary. Returns True if ready."""
+    image_name = get_image_name(stack)
+    image_exists = _check_image_exists(image_name)
+
+    if force_build or not image_exists:
+        if not image_exists:
+            console.print(f"[yellow]Image {image_name} not found. Building...[/yellow]")
+        return _build_image(config, stack)
+    return True
+
+
+def _run_container(
+    compose_file: Path,
+    use_bypass: bool,
+) -> None:
+    """Run Claude Code container."""
+    claude_args = ["--dangerously-skip-permissions"] if use_bypass else []
+
+    console.print("\n[bold]Starting Claude Code...[/bold]\n")
+
+    try:
+        subprocess.run(
+            ["docker", "compose", "-f", str(compose_file), "run", "--rm", "claude"] + claude_args,
+            check=True,
+        )
+    except subprocess.CalledProcessError as e:
+        if e.returncode != 130:  # Ignore Ctrl+C
+            console.print(f"[red]Claude Code exited with error: {e.returncode}[/red]")
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Interrupted[/yellow]")
+
+
 @cli.command()
-@click.option("--stack", type=click.Choice([s.value for s in LanguageStack]), help="Specific stack to update")
-def update(stack: Optional[str]) -> None:
+@click.option(
+    "--stack",
+    type=click.Choice([s.value for s in LanguageStack]),
+    help="Specific stack to update",
+)
+def update(stack: str | None) -> None:
     """Update Docker images to latest Claude Code version."""
     config = load_config()
 
@@ -336,6 +353,31 @@ def update(stack: Optional[str]) -> None:
         _build_image(config, s)
 
 
+def _clean_containers() -> None:
+    """Remove all ccbox containers."""
+    console.print("[bold]Removing containers...[/bold]")
+    result = run_command(
+        ["docker", "ps", "-a", "--filter", "name=ccbox-", "--format", "{{.Names}}"],
+        capture=True,
+        check=False,
+    )
+    if result.stdout.strip():
+        for name in result.stdout.strip().split("\n"):
+            console.print(f"  Removing {name}")
+            run_command(["docker", "rm", "-f", name], capture=True, check=False)
+
+
+def _clean_images() -> None:
+    """Remove all ccbox images."""
+    console.print("[bold]Removing images...[/bold]")
+    for stack in LanguageStack:
+        if stack != LanguageStack.CUSTOM:
+            image_name = get_image_name(stack)
+            if _check_image_exists(image_name):
+                console.print(f"  Removing {image_name}")
+                run_command(["docker", "rmi", "-f", image_name], capture=True, check=False)
+
+
 @cli.command()
 @click.option("--containers", is_flag=True, help="Remove only containers")
 @click.option("--images", is_flag=True, help="Remove only images")
@@ -347,13 +389,11 @@ def clean(containers: bool, images: bool, remove_all: bool, force: bool) -> None
         console.print("[red]Error:[/red] Docker is not available.")
         return
 
-    # Default: clean both if nothing specified
-    if not containers and not images and not remove_all:
-        remove_all = True
-
-    if remove_all:
+    # Default: clean both if nothing specified or --all used
+    if not containers and not images and not remove_all or remove_all:
         containers = images = True
 
+    # Confirm unless forced
     if not force:
         what = []
         if containers:
@@ -364,26 +404,9 @@ def clean(containers: bool, images: bool, remove_all: bool, force: bool) -> None
             return
 
     if containers:
-        console.print("[bold]Removing containers...[/bold]")
-        # Find ccbox containers
-        result = run_command(
-            ["docker", "ps", "-a", "--filter", "name=ccbox-", "--format", "{{.Names}}"],
-            capture=True,
-            check=False,
-        )
-        if result.stdout.strip():
-            for name in result.stdout.strip().split("\n"):
-                console.print(f"  Removing {name}")
-                run_command(["docker", "rm", "-f", name], capture=True, check=False)
-
+        _clean_containers()
     if images:
-        console.print("[bold]Removing images...[/bold]")
-        for stack in LanguageStack:
-            if stack != LanguageStack.CUSTOM:
-                image_name = get_image_name(stack)
-                if _check_image_exists(image_name):
-                    console.print(f"  Removing {image_name}")
-                    run_command(["docker", "rmi", "-f", image_name], capture=True, check=False)
+        _clean_images()
 
     console.print("[green]Cleanup complete[/green]")
 
@@ -408,9 +431,9 @@ def config_cmd(show: bool, reset: bool, set_value: tuple[tuple[str, str], ...]) 
             if hasattr(config, key):
                 # Type conversion
                 field_type = type(getattr(config, key))
-                if field_type == bool:
+                if field_type is bool:
                     setattr(config, key, value.lower() in ("true", "1", "yes"))
-                elif field_type == int:
+                elif field_type is int:
                     setattr(config, key, int(value))
                 else:
                     setattr(config, key, value)
@@ -439,10 +462,12 @@ def config_cmd(show: bool, reset: bool, set_value: tuple[tuple[str, str], ...]) 
 @cli.command()
 def doctor() -> None:
     """Check system requirements and diagnose issues."""
-    console.print(Panel.fit(
-        "[bold]ccbox System Check[/bold]",
-        border_style="blue",
-    ))
+    console.print(
+        Panel.fit(
+            "[bold]ccbox System Check[/bold]",
+            border_style="blue",
+        )
+    )
 
     checks: list[tuple[str, bool, str]] = []
 
@@ -454,44 +479,51 @@ def doctor() -> None:
 
     # Check disk space
     try:
-        import shutil as sh
-        total, used, free = sh.disk_usage("/")
+        total, used, free = shutil.disk_usage("/")
         free_gb = free // (1024**3)
         has_space = free_gb >= 5
-        checks.append((
-            f"Disk space ({free_gb}GB free)",
-            has_space,
-            "Need at least 5GB free space",
-        ))
+        checks.append(
+            (
+                f"Disk space ({free_gb}GB free)",
+                has_space,
+                "Need at least 5GB free space",
+            )
+        )
     except Exception:
         checks.append(("Disk space", False, "Could not check disk space"))
 
     # Check Python version
     py_version = sys.version_info
     py_ok = py_version >= (3, 8)
-    checks.append((
-        f"Python {py_version.major}.{py_version.minor}",
-        py_ok,
-        "Python 3.8+ required",
-    ))
+    checks.append(
+        (
+            f"Python {py_version.major}.{py_version.minor}",
+            py_ok,
+            "Python 3.8+ required",
+        )
+    )
 
     # Check Claude config directory
     config = load_config()
     claude_dir = Path(os.path.expanduser(config.claude_config_dir))
     claude_exists = claude_dir.exists()
-    checks.append((
-        f"Claude config ({claude_dir})",
-        claude_exists,
-        "Run 'claude' once to create config",
-    ))
+    checks.append(
+        (
+            f"Claude config ({claude_dir})",
+            claude_exists,
+            "Run 'claude' once to create config",
+        )
+    )
 
     # Check ccbox config
     ccbox_config_exists = (get_config_dir() / "config.json").exists()
-    checks.append((
-        "ccbox configured",
-        ccbox_config_exists,
-        "Run 'ccbox init' to configure",
-    ))
+    checks.append(
+        (
+            "ccbox configured",
+            ccbox_config_exists,
+            "Run 'ccbox init' to configure",
+        )
+    )
 
     # Display results
     table = Table()
@@ -519,10 +551,12 @@ def status() -> None:
     """Show ccbox installation status and running containers."""
     config = load_config()
 
-    console.print(Panel.fit(
-        f"[bold]ccbox v{__version__}[/bold]",
-        border_style="blue",
-    ))
+    console.print(
+        Panel.fit(
+            f"[bold]ccbox v{__version__}[/bold]",
+            border_style="blue",
+        )
+    )
 
     # Show configuration summary
     console.print("\n[bold]Configuration:[/bold]")
@@ -546,8 +580,9 @@ def status() -> None:
     # Show running containers
     console.print("\n[bold]Running Containers:[/bold]")
     if check_docker():
+        docker_fmt = "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
         result = run_command(
-            ["docker", "ps", "--filter", "name=ccbox-", "--format", "table {{.Names}}\t{{.Status}}\t{{.Ports}}"],
+            ["docker", "ps", "--filter", "name=ccbox-", "--format", docker_fmt],
             capture=True,
             check=False,
         )
