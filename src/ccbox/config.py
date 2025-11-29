@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import json
 import os
-import platform
 from enum import Enum
 from pathlib import Path
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -71,20 +69,15 @@ class Config(BaseModel):
     claude_config_dir: str = "~/.claude"
 
     # Advanced settings
-    docker_network: Optional[str] = None
+    docker_network: str | None = None
     extra_volumes: list[str] = Field(default_factory=list)
     extra_env: dict[str, str] = Field(default_factory=dict)
-    custom_dockerfile: Optional[str] = None
+    custom_dockerfile: str | None = None
 
 
 def get_config_dir() -> Path:
     """Get the ccbox configuration directory based on platform."""
-    if platform.system() == "Windows":
-        base = os.environ.get("USERPROFILE", os.path.expanduser("~"))
-    else:
-        base = os.environ.get("HOME", os.path.expanduser("~"))
-
-    return Path(base) / ".ccbox"
+    return Path.home() / ".ccbox"
 
 
 def get_config_path() -> Path:
