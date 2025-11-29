@@ -5,7 +5,7 @@ FROM node:slim AS base
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Temel araçlar
+# Essential tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git gnupg ca-certificates openssh-client \
     curl wget jq \
@@ -23,7 +23,7 @@ RUN sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen \
 ENV LANG=en_US.UTF-8
 ENV LC_ALL=en_US.UTF-8
 
-# npm optimizasyonu
+# npm optimization
 RUN npm config set fund false \
     && npm config set audit false \
     && npm config set update-notifier false
@@ -39,7 +39,7 @@ $extra_languages
 
 $optional_tools
 
-# Node.js araçları
+# Node.js tools
 RUN npm install -g typescript eslint prettier pnpm --force
 
 WORKDIR /home/node/project
