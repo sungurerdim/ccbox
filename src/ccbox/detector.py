@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 from .config import LanguageStack
 
@@ -70,7 +69,7 @@ LANGUAGE_PATTERNS: dict[str, list[str]] = {
 def _check_glob_pattern(directory: Path, pattern: str) -> bool:
     """Check if a glob pattern matches any files in the directory."""
     if "*" in pattern:
-        return len(list(directory.glob(pattern))) > 0
+        return any(directory.glob(pattern))
     return (directory / pattern).exists()
 
 
@@ -110,35 +109,45 @@ def detect_project_type(directory: Path) -> DetectionResult:
     )
 
 
+# Stack selection rules: (frozenset of languages) -> LanguageStack
+# Order matters - first match wins
+STACK_RULES: list[tuple[frozenset[str], LanguageStack]] = [
+    (frozenset({"node"}), LanguageStack.NODE),
+    (frozenset({"python"}), LanguageStack.NODE_PYTHON),
+    (frozenset({"node", "python"}), LanguageStack.NODE_PYTHON),
+]
+
+# Single-language priority mapping (when language is present with others)
+LANGUAGE_PRIORITY = {
+    "go": LanguageStack.NODE_GO,
+    "rust": LanguageStack.NODE_RUST,
+    "java": LanguageStack.NODE_JAVA,
+    "dotnet": LanguageStack.NODE_DOTNET,
+}
+
+
 def _determine_stack(languages: list[str]) -> LanguageStack:
     """Determine the best stack based on detected languages."""
     if not languages:
-        # No detection, recommend minimal Node (required for Claude Code)
         return LanguageStack.NODE
 
-    lang_set = set(languages)
+    lang_set = frozenset(languages)
 
-    # Check for multiple languages - recommend universal
+    # More than 2 languages -> universal
     if len(lang_set) > 2:
         return LanguageStack.UNIVERSAL
 
-    # Single language or two languages - specific stack
-    if lang_set == {"node"}:
-        return LanguageStack.NODE
-    elif lang_set == {"python"} or lang_set == {"node", "python"}:
-        return LanguageStack.NODE_PYTHON
-    elif "go" in lang_set:
-        return LanguageStack.NODE_GO
-    elif "rust" in lang_set:
-        return LanguageStack.NODE_RUST
-    elif "java" in lang_set:
-        return LanguageStack.NODE_JAVA
-    elif "dotnet" in lang_set:
-        return LanguageStack.NODE_DOTNET
-    elif "python" in lang_set:
-        return LanguageStack.NODE_PYTHON
-    else:
-        return LanguageStack.UNIVERSAL
+    # Check exact matches first
+    for pattern, stack in STACK_RULES:
+        if lang_set == pattern:
+            return stack
+
+    # Check if any priority language is present
+    for lang, stack in LANGUAGE_PRIORITY.items():
+        if lang in lang_set:
+            return stack
+
+    return LanguageStack.UNIVERSAL
 
 
 def _calculate_confidence(languages: list[str], directory: Path) -> float:
@@ -164,7 +173,7 @@ def _calculate_confidence(languages: list[str], directory: Path) -> float:
         return 0.5
 
 
-def get_stack_for_language(language: str) -> Optional[LanguageStack]:
+def get_stack_for_language(language: str) -> LanguageStack | None:
     """Get the appropriate stack for a specific language."""
     mapping = {
         "node": LanguageStack.NODE,
