@@ -13,12 +13,8 @@ from .config import Config, LanguageStack, get_config_dir
 
 def get_template(name: str) -> str:
     """Load a template file from the templates directory."""
-    try:
-        files = importlib.resources.files("ccbox.templates")
-        return (files / name).read_text(encoding="utf-8")
-    except (AttributeError, TypeError):
-        import pkg_resources
-        return pkg_resources.resource_string("ccbox", f"templates/{name}").decode("utf-8")
+    files = importlib.resources.files("ccbox.templates")
+    return (files / name).read_text(encoding="utf-8")
 
 
 def render_template(template_name: str, context: dict[str, Any]) -> str:
@@ -37,7 +33,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \\
     python3 python3-pip python3-venv python3-dev python-is-python3 build-essential \\
     && rm -rf /var/lib/apt/lists/*
 
-# Python araçları
+# Python tools
 RUN pip install --break-system-packages \\
     poetry uv pipx ruff mypy black isort flake8 pylint bandit pytest pytest-cov coverage"""
 
@@ -142,13 +138,8 @@ def generate_compose(
     """Generate docker-compose.yml content."""
     claude_config = Path(os.path.expanduser(config.claude_config_dir))
 
-    extra_volumes = ""
-    for vol in config.extra_volumes:
-        extra_volumes += f"\n      - {vol}"
-
-    extra_env = ""
-    for key, value in config.extra_env.items():
-        extra_env += f"\n      - {key}={value}"
+    extra_volumes = "".join(f"\n      - {vol}" for vol in config.extra_volumes)
+    extra_env = "".join(f"\n      - {k}={v}" for k, v in config.extra_env.items())
 
     network_config = ""
     if config.docker_network:
