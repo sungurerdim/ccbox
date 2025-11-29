@@ -20,7 +20,7 @@ ccbox/
 │       └── templates/
 │           ├── Dockerfile.template
 │           ├── compose.yml.template
-│           └── run.bat.template
+│           └── entrypoint.sh.template
 └── tests/
     └── test_cli.py
 ```
