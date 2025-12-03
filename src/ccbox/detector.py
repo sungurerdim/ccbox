@@ -56,13 +56,6 @@ LANGUAGE_PATTERNS: dict[str, list[str]] = {
         ".mvn",
         "gradlew",
     ],
-    "dotnet": [
-        "*.csproj",
-        "*.fsproj",
-        "*.sln",
-        "global.json",
-        "nuget.config",
-    ],
 }
 
 
@@ -109,45 +102,36 @@ def detect_project_type(directory: Path) -> DetectionResult:
     )
 
 
-# Stack selection rules: (frozenset of languages) -> LanguageStack
-# Order matters - first match wins
-STACK_RULES: list[tuple[frozenset[str], LanguageStack]] = [
-    (frozenset({"node"}), LanguageStack.NODE),
-    (frozenset({"python"}), LanguageStack.NODE_PYTHON),
-    (frozenset({"node", "python"}), LanguageStack.NODE_PYTHON),
-]
-
-# Single-language priority mapping (when language is present with others)
-LANGUAGE_PRIORITY = {
-    "go": LanguageStack.NODE_GO,
-    "rust": LanguageStack.NODE_RUST,
-    "java": LanguageStack.NODE_JAVA,
-    "dotnet": LanguageStack.NODE_DOTNET,
+# Language to stack mapping
+LANGUAGE_TO_STACK: dict[str, LanguageStack] = {
+    "node": LanguageStack.BASE,
+    "python": LanguageStack.PYTHON,
+    "go": LanguageStack.GO,
+    "rust": LanguageStack.RUST,
+    "java": LanguageStack.JAVA,
 }
 
 
 def _determine_stack(languages: list[str]) -> LanguageStack:
     """Determine the best stack based on detected languages."""
     if not languages:
-        return LanguageStack.NODE
+        return LanguageStack.BASE
 
-    lang_set = frozenset(languages)
+    # Node + Python = WEB stack (common fullstack combo)
+    if "node" in languages and "python" in languages:
+        return LanguageStack.WEB
 
-    # More than 2 languages -> universal
-    if len(lang_set) > 2:
-        return LanguageStack.UNIVERSAL
+    # Multiple languages -> FULL
+    if len(languages) > 2:
+        return LanguageStack.FULL
 
-    # Check exact matches first
-    for pattern, stack in STACK_RULES:
-        if lang_set == pattern:
-            return stack
+    # Single language: use specific stack
+    for lang in ("python", "go", "rust", "java"):
+        if lang in languages:
+            return LANGUAGE_TO_STACK[lang]
 
-    # Check if any priority language is present
-    for lang, stack in LANGUAGE_PRIORITY.items():
-        if lang in lang_set:
-            return stack
-
-    return LanguageStack.UNIVERSAL
+    # Node only or unknown -> BASE
+    return LanguageStack.BASE
 
 
 def _calculate_confidence(languages: list[str], directory: Path) -> float:
@@ -175,12 +159,4 @@ def _calculate_confidence(languages: list[str], directory: Path) -> float:
 
 def get_stack_for_language(language: str) -> LanguageStack | None:
     """Get the appropriate stack for a specific language."""
-    mapping = {
-        "node": LanguageStack.NODE,
-        "python": LanguageStack.NODE_PYTHON,
-        "go": LanguageStack.NODE_GO,
-        "rust": LanguageStack.NODE_RUST,
-        "java": LanguageStack.NODE_JAVA,
-        "dotnet": LanguageStack.NODE_DOTNET,
-    }
-    return mapping.get(language)
+    return LANGUAGE_TO_STACK.get(language)

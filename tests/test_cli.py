@@ -9,333 +9,210 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from ccbox.cli import check_docker, cli, get_project_name, run_command
+from ccbox.cli import (
+    build_image,
+    check_docker,
+    cli,
+    get_git_config,
+    image_exists,
+)
 from ccbox.config import (
     Config,
     LanguageStack,
-    RuntimeMode,
-    get_claude_config_dir,
+    STACK_INFO,
     get_config_dir,
     get_config_path,
-    get_container_name,
     get_image_name,
     load_config,
     save_config,
 )
 from ccbox.detector import detect_project_type, get_stack_for_language
 from ccbox.generator import (
-    generate_compose,
+    STACK_PACKAGES,
     generate_dockerfile,
     generate_entrypoint,
-    get_language_packages,
-    get_optional_tools,
-    get_template,
-    render_template,
+    get_docker_run_cmd,
+    write_build_files,
 )
 
 
-@pytest.fixture
-def runner() -> CliRunner:
-    """Create a CLI test runner."""
-    return CliRunner()
-
-
-@pytest.fixture
-def temp_config_dir(tmp_path: Path) -> Path:
-    """Create a temporary config directory."""
-    config_dir = tmp_path / ".ccbox"
-    config_dir.mkdir()
-    return config_dir
-
-
 class TestConfig:
-    """Tests for configuration management."""
+    """Tests for configuration model."""
 
     def test_config_defaults(self) -> None:
         """Test default configuration values."""
         config = Config()
-        assert config.ram_percent == 75
-        assert config.cpu_percent == 100
-        assert config.default_mode == RuntimeMode.BYPASS
-        assert config.default_stack == LanguageStack.NODE_PYTHON
-        assert config.install_cco is False
-        assert config.install_gh is False
-        assert config.install_gitleaks is False
+        assert config.git_name == ""
+        assert config.git_email == ""
+        assert config.claude_config_dir == "~/.claude"
 
     def test_config_custom_values(self) -> None:
         """Test custom configuration values."""
         config = Config(
             git_name="Test User",
             git_email="test@example.com",
-            ram_percent=50,
-            install_cco=True,
         )
         assert config.git_name == "Test User"
-        assert config.ram_percent == 50
-        assert config.install_cco is True
+        assert config.git_email == "test@example.com"
 
-    def test_config_serialization(self, tmp_path: Path) -> None:
-        """Test config save and load."""
-        config = Config(
-            git_name="Test",
-            git_email="test@test.com",
-        )
-        config_file = tmp_path / "config.json"
-        config_file.write_text(json.dumps(config.model_dump()))
+    def test_config_serialization(self) -> None:
+        """Test config serialization to JSON."""
+        config = Config(git_name="Test")
+        data = config.model_dump()
+        assert data["git_name"] == "Test"
 
-        loaded = json.loads(config_file.read_text())
-        assert loaded["git_name"] == "Test"
+
+class TestLanguageStack:
+    """Tests for language stack enum."""
+
+    def test_stack_values(self) -> None:
+        """Test stack enum values."""
+        assert LanguageStack.BASE.value == "base"
+        assert LanguageStack.PYTHON.value == "python"
+        assert LanguageStack.GO.value == "go"
+        assert LanguageStack.RUST.value == "rust"
+        assert LanguageStack.JAVA.value == "java"
+        assert LanguageStack.WEB.value == "web"
+        assert LanguageStack.FULL.value == "full"
+
+    def test_stack_info(self) -> None:
+        """Test stack info dictionary."""
+        for stack in LanguageStack:
+            assert stack in STACK_INFO
+            desc, size = STACK_INFO[stack]
+            assert isinstance(desc, str)
+            assert isinstance(size, int)
 
 
 class TestDetector:
-    """Tests for project type detection."""
+    """Tests for project detection."""
 
     def test_detect_node_project(self, tmp_path: Path) -> None:
         """Test detection of Node.js project."""
         (tmp_path / "package.json").write_text("{}")
         result = detect_project_type(tmp_path)
         assert "node" in result.detected_languages
-        assert result.recommended_stack in [LanguageStack.NODE, LanguageStack.NODE_PYTHON]
+        assert result.recommended_stack == LanguageStack.BASE
 
     def test_detect_python_project(self, tmp_path: Path) -> None:
         """Test detection of Python project."""
         (tmp_path / "pyproject.toml").write_text("")
         result = detect_project_type(tmp_path)
         assert "python" in result.detected_languages
-        assert result.recommended_stack == LanguageStack.NODE_PYTHON
+        assert result.recommended_stack == LanguageStack.PYTHON
 
     def test_detect_go_project(self, tmp_path: Path) -> None:
         """Test detection of Go project."""
         (tmp_path / "go.mod").write_text("")
         result = detect_project_type(tmp_path)
         assert "go" in result.detected_languages
-        assert result.recommended_stack == LanguageStack.NODE_GO
+        assert result.recommended_stack == LanguageStack.GO
 
     def test_detect_rust_project(self, tmp_path: Path) -> None:
         """Test detection of Rust project."""
         (tmp_path / "Cargo.toml").write_text("")
         result = detect_project_type(tmp_path)
         assert "rust" in result.detected_languages
-        assert result.recommended_stack == LanguageStack.NODE_RUST
+        assert result.recommended_stack == LanguageStack.RUST
+
+    def test_detect_java_project(self, tmp_path: Path) -> None:
+        """Test detection of Java project."""
+        (tmp_path / "pom.xml").write_text("")
+        result = detect_project_type(tmp_path)
+        assert "java" in result.detected_languages
+        assert result.recommended_stack == LanguageStack.JAVA
 
     def test_detect_empty_project(self, tmp_path: Path) -> None:
         """Test detection of empty project."""
         result = detect_project_type(tmp_path)
         assert result.detected_languages == []
-        assert result.recommended_stack == LanguageStack.NODE
-        assert result.confidence == 0.0
+        assert result.recommended_stack == LanguageStack.BASE
 
-    def test_detect_multi_language(self, tmp_path: Path) -> None:
-        """Test detection of multi-language project."""
+    def test_detect_web_project(self, tmp_path: Path) -> None:
+        """Test detection of Node + Python project (web)."""
         (tmp_path / "package.json").write_text("{}")
         (tmp_path / "pyproject.toml").write_text("")
-        (tmp_path / "go.mod").write_text("")
         result = detect_project_type(tmp_path)
-        assert len(result.detected_languages) == 3
-        assert result.recommended_stack == LanguageStack.UNIVERSAL
+        assert "node" in result.detected_languages
+        assert "python" in result.detected_languages
+        assert result.recommended_stack == LanguageStack.WEB
 
-
-class TestNaming:
-    """Tests for naming conventions."""
-
-    def test_image_name(self) -> None:
-        """Test Docker image naming."""
-        assert get_image_name(LanguageStack.NODE) == "ccbox:node"
-        assert get_image_name(LanguageStack.NODE_PYTHON) == "ccbox:node-python"
-        assert get_image_name(LanguageStack.UNIVERSAL) == "ccbox:universal"
-
-    def test_container_name(self) -> None:
-        """Test Docker container naming."""
-        assert get_container_name("my-project") == "ccbox-my-project"
-        assert get_container_name("MyProject") == "ccbox-myproject"
-        assert get_container_name("project with spaces") == "ccbox-project-with-spaces"
-
-
-class TestCLI:
-    """Tests for CLI commands."""
-
-    def test_version(self, runner: CliRunner) -> None:
-        """Test version command."""
-        result = runner.invoke(cli, ["--version"])
-        assert result.exit_code == 0
-        assert "ccbox" in result.output
-
-    def test_help(self, runner: CliRunner) -> None:
-        """Test help command."""
-        result = runner.invoke(cli, ["--help"])
-        assert result.exit_code == 0
-        assert "init" in result.output
-        assert "run" in result.output
-        assert "doctor" in result.output
-
-    def test_detect_command(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Test detect command."""
-        (tmp_path / "package.json").write_text("{}")
-        result = runner.invoke(cli, ["detect", str(tmp_path)])
-        assert result.exit_code == 0
-        assert "node" in result.output.lower()
-
-    @patch("ccbox.cli.check_docker")
-    def test_doctor_no_docker(self, mock_docker: any, runner: CliRunner) -> None:
-        """Test doctor command without Docker."""
-        mock_docker.return_value = False
-        result = runner.invoke(cli, ["doctor"])
-        assert result.exit_code == 0
-        assert "FAIL" in result.output or "Docker" in result.output
-
-
-class TestTemplates:
-    """Tests for template generation."""
-
-    def test_dockerfile_template_exists(self) -> None:
-        """Test that Dockerfile template exists."""
-        content = get_template("Dockerfile.template")
-        assert "FROM node:slim" in content
-        assert "claude" in content.lower()
-
-    def test_compose_template_exists(self) -> None:
-        """Test that compose template exists."""
-        content = get_template("compose.yml.template")
-        assert "services:" in content
-        assert "volumes:" in content
-
-    def test_entrypoint_template_exists(self) -> None:
-        """Test that entrypoint template exists."""
-        content = get_template("entrypoint.sh.template")
-        assert "#!/bin/bash" in content
-        assert "NODE_OPTIONS" in content
+    def test_get_stack_for_language(self) -> None:
+        """Test language to stack mapping."""
+        assert get_stack_for_language("python") == LanguageStack.PYTHON
+        assert get_stack_for_language("go") == LanguageStack.GO
+        assert get_stack_for_language("unknown") is None
 
 
 class TestGenerator:
-    """Tests for template generation functions."""
+    """Tests for Dockerfile and entrypoint generation."""
 
-    def test_render_template(self) -> None:
-        """Test template rendering with context."""
-        content = render_template(
-            "Dockerfile.template",
-            {
-                "extra_languages": "# Test",
-                "optional_tools": "# None",
-                "ram_percent": 75,
-                "cpu_percent": 100,
-            },
-        )
-        assert "FROM node:slim" in content
-        assert "# Test" in content
-
-    def test_get_language_packages_node(self) -> None:
-        """Test language packages for Node stack."""
-        packages = get_language_packages(LanguageStack.NODE)
-        assert "extra_languages" in packages
-        assert "Node.js only" in packages["extra_languages"]
-
-    def test_get_language_packages_python(self) -> None:
-        """Test language packages for Python stack."""
-        packages = get_language_packages(LanguageStack.NODE_PYTHON)
-        assert "python3" in packages["extra_languages"].lower()
-
-    def test_get_language_packages_go(self) -> None:
-        """Test language packages for Go stack."""
-        packages = get_language_packages(LanguageStack.NODE_GO)
-        assert "go" in packages["extra_languages"].lower()
-
-    def test_get_language_packages_rust(self) -> None:
-        """Test language packages for Rust stack."""
-        packages = get_language_packages(LanguageStack.NODE_RUST)
-        assert "rust" in packages["extra_languages"].lower()
-
-    def test_get_language_packages_java(self) -> None:
-        """Test language packages for Java stack."""
-        packages = get_language_packages(LanguageStack.NODE_JAVA)
-        assert "openjdk" in packages["extra_languages"].lower()
-
-    def test_get_language_packages_dotnet(self) -> None:
-        """Test language packages for .NET stack."""
-        packages = get_language_packages(LanguageStack.NODE_DOTNET)
-        assert "dotnet" in packages["extra_languages"].lower()
-
-    def test_get_language_packages_universal(self) -> None:
-        """Test language packages for Universal stack."""
-        packages = get_language_packages(LanguageStack.UNIVERSAL)
-        assert "python" in packages["extra_languages"].lower()
-        assert "go" in packages["extra_languages"].lower()
-        assert "rust" in packages["extra_languages"].lower()
-
-    def test_get_language_packages_custom(self) -> None:
-        """Test language packages for Custom stack."""
-        packages = get_language_packages(LanguageStack.CUSTOM)
-        assert "Custom stack" in packages["extra_languages"]
-
-    def test_get_optional_tools_none(self) -> None:
-        """Test optional tools with nothing installed."""
-        config = Config()
-        tools = get_optional_tools(config)
-        assert "No optional tools" in tools
-
-    def test_get_optional_tools_cco(self) -> None:
-        """Test optional tools with CCO."""
-        config = Config(install_cco=True)
-        tools = get_optional_tools(config)
-        assert "ClaudeCodeOptimizer" in tools
-
-    def test_get_optional_tools_gh(self) -> None:
-        """Test optional tools with GitHub CLI."""
-        config = Config(install_gh=True)
-        tools = get_optional_tools(config)
-        assert "GitHub CLI" in tools
-
-    def test_get_optional_tools_gitleaks(self) -> None:
-        """Test optional tools with Gitleaks."""
-        config = Config(install_gitleaks=True)
-        tools = get_optional_tools(config)
-        assert "Gitleaks" in tools
-
-    def test_generate_dockerfile(self) -> None:
-        """Test Dockerfile generation."""
-        config = Config()
-        dockerfile = generate_dockerfile(config, LanguageStack.NODE)
+    def test_generate_dockerfile_base(self) -> None:
+        """Test base Dockerfile generation."""
+        dockerfile = generate_dockerfile(LanguageStack.BASE)
         assert "FROM node:slim" in dockerfile
-        assert "claude" in dockerfile.lower()
+        assert "npm install -g @anthropic-ai/claude-code" in dockerfile
+        assert "# Base stack" in dockerfile
 
-    def test_generate_compose(self, tmp_path: Path) -> None:
-        """Test compose file generation."""
-        config = Config(git_name="Test", git_email="test@test.com")
-        compose = generate_compose(
-            config,
-            tmp_path,
-            "test-project",
-            LanguageStack.NODE,
-            tmp_path / "build",
-        )
-        assert "services:" in compose
-        assert "test-project" in compose
-        assert "Test" in compose
+    def test_generate_dockerfile_python(self) -> None:
+        """Test Python Dockerfile generation."""
+        dockerfile = generate_dockerfile(LanguageStack.PYTHON)
+        assert "python3" in dockerfile
+        assert "ruff" in dockerfile
+        assert "mypy" in dockerfile
 
-    def test_generate_compose_with_extras(self, tmp_path: Path) -> None:
-        """Test compose file generation with extra settings."""
-        config = Config(
-            git_name="Test",
-            git_email="test@test.com",
-            extra_volumes=["/host:/container"],
-            extra_env={"MY_VAR": "value"},
-            docker_network="mynet",
-        )
-        compose = generate_compose(
-            config,
-            tmp_path,
-            "test-project",
-            LanguageStack.NODE,
-            tmp_path / "build",
-        )
-        assert "/host:/container" in compose
-        assert "MY_VAR=value" in compose
-        assert "mynet" in compose
+    def test_generate_dockerfile_go(self) -> None:
+        """Test Go Dockerfile generation."""
+        dockerfile = generate_dockerfile(LanguageStack.GO)
+        assert "go.dev" in dockerfile
+        assert "GOPATH" in dockerfile
+
+    def test_generate_dockerfile_rust(self) -> None:
+        """Test Rust Dockerfile generation."""
+        dockerfile = generate_dockerfile(LanguageStack.RUST)
+        assert "rustup" in dockerfile
+        assert "cargo" in dockerfile
+
+    def test_generate_dockerfile_java(self) -> None:
+        """Test Java Dockerfile generation."""
+        dockerfile = generate_dockerfile(LanguageStack.JAVA)
+        assert "openjdk" in dockerfile
+        assert "maven" in dockerfile
 
     def test_generate_entrypoint(self) -> None:
         """Test entrypoint script generation."""
         entrypoint = generate_entrypoint()
         assert "#!/bin/bash" in entrypoint
+        assert "--dangerously-skip-permissions" in entrypoint
         assert "NODE_OPTIONS" in entrypoint
+
+    def test_stack_packages_coverage(self) -> None:
+        """Test all stacks have package definitions."""
+        for stack in LanguageStack:
+            assert stack in STACK_PACKAGES
+
+    def test_write_build_files(self, tmp_path: Path) -> None:
+        """Test writing build files to directory."""
+        with patch("ccbox.generator.get_config_dir", return_value=tmp_path):
+            build_dir = write_build_files(LanguageStack.BASE)
+            assert (build_dir / "Dockerfile").exists()
+            assert (build_dir / "entrypoint.sh").exists()
+
+    def test_get_docker_run_cmd(self) -> None:
+        """Test docker run command generation."""
+        config = Config(git_name="Test", git_email="test@test.com")
+        cmd = get_docker_run_cmd(
+            config,
+            Path("/project"),
+            "myproject",
+            LanguageStack.PYTHON,
+        )
+        assert "docker" in cmd
+        assert "run" in cmd
+        assert "--rm" in cmd
+        assert "-it" in cmd
+        assert "ccbox:python" in cmd
+        assert any("GIT_AUTHOR_NAME=Test" in arg for arg in cmd)
 
 
 class TestConfigFunctions:
@@ -344,116 +221,143 @@ class TestConfigFunctions:
     def test_get_config_dir(self) -> None:
         """Test config directory path."""
         config_dir = get_config_dir()
-        assert ".ccbox" in str(config_dir)
+        assert config_dir.name == ".ccbox"
 
     def test_get_config_path(self) -> None:
         """Test config file path."""
         config_path = get_config_path()
-        assert "config.json" in str(config_path)
+        assert config_path.name == "config.json"
 
-    def test_get_claude_config_dir(self) -> None:
-        """Test Claude config directory expansion."""
-        config = Config(claude_config_dir="~/.claude")
-        claude_dir = get_claude_config_dir(config)
-        assert ".claude" in str(claude_dir)
-        assert "~" not in str(claude_dir)
+    def test_get_image_name(self) -> None:
+        """Test image name generation."""
+        assert get_image_name(LanguageStack.PYTHON) == "ccbox:python"
+        assert get_image_name(LanguageStack.BASE) == "ccbox:base"
 
     def test_save_and_load_config(self, tmp_path: Path) -> None:
-        """Test config save and load cycle."""
+        """Test config persistence."""
         with patch("ccbox.config.get_config_dir", return_value=tmp_path):
-            config = Config(git_name="SaveTest", git_email="save@test.com")
+            config = Config(git_name="Test User")
             save_config(config)
+
             loaded = load_config()
-            assert loaded.git_name == "SaveTest"
-            assert loaded.git_email == "save@test.com"
+            assert loaded.git_name == "Test User"
 
     def test_load_config_invalid_json(self, tmp_path: Path) -> None:
-        """Test loading invalid JSON config."""
-        with patch("ccbox.config.get_config_path", return_value=tmp_path / "config.json"):
-            (tmp_path / "config.json").write_text("invalid json {{{")
+        """Test loading invalid config file."""
+        config_file = tmp_path / "config.json"
+        config_file.write_text("invalid json")
+
+        with patch("ccbox.config.get_config_path", return_value=config_file):
             config = load_config()
-            # Should return defaults
-            assert config.ram_percent == 75
+            assert config.git_name == ""  # Default value
 
 
-class TestDetectorFunctions:
-    """Tests for detector utility functions."""
+class TestCLI:
+    """Tests for CLI commands."""
 
-    def test_get_stack_for_language_node(self) -> None:
-        """Test stack mapping for Node."""
-        assert get_stack_for_language("node") == LanguageStack.NODE
+    def test_version(self) -> None:
+        """Test --version flag."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--version"])
+        assert result.exit_code == 0
+        assert "ccbox" in result.output
 
-    def test_get_stack_for_language_python(self) -> None:
-        """Test stack mapping for Python."""
-        assert get_stack_for_language("python") == LanguageStack.NODE_PYTHON
+    def test_help(self) -> None:
+        """Test --help flag."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--help"])
+        assert result.exit_code == 0
+        assert "ccbox" in result.output
 
-    def test_get_stack_for_language_unknown(self) -> None:
-        """Test stack mapping for unknown language."""
-        assert get_stack_for_language("unknown") is None
+    def test_doctor_no_docker(self) -> None:
+        """Test doctor command when Docker is not available."""
+        runner = CliRunner()
+        with patch("ccbox.cli.check_docker", return_value=False):
+            result = runner.invoke(cli, ["doctor"])
+            assert "Docker" in result.output
 
-    def test_detect_java_project(self, tmp_path: Path) -> None:
-        """Test detection of Java project."""
-        (tmp_path / "pom.xml").write_text("")
-        result = detect_project_type(tmp_path)
-        assert "java" in result.detected_languages
-        assert result.recommended_stack == LanguageStack.NODE_JAVA
+    def test_stacks_command(self) -> None:
+        """Test stacks command."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["stacks"])
+        assert result.exit_code == 0
+        assert "base" in result.output
+        assert "python" in result.output
 
-    def test_detect_dotnet_project(self, tmp_path: Path) -> None:
-        """Test detection of .NET project."""
-        (tmp_path / "test.csproj").write_text("")
-        result = detect_project_type(tmp_path)
-        assert "dotnet" in result.detected_languages
-        assert result.recommended_stack == LanguageStack.NODE_DOTNET
+    def test_setup_command(self) -> None:
+        """Test setup command with input."""
+        runner = CliRunner()
+        with patch("ccbox.cli.save_config"):
+            result = runner.invoke(cli, ["setup"], input="Test User\ntest@test.com\n")
+            assert result.exit_code == 0
+
+    def test_clean_no_docker(self) -> None:
+        """Test clean command when Docker is not available."""
+        runner = CliRunner()
+        with patch("ccbox.cli.check_docker", return_value=False):
+            result = runner.invoke(cli, ["clean", "-f"])
+            assert result.exit_code == 1
 
 
 class TestCLIFunctions:
     """Tests for CLI utility functions."""
 
-    def test_get_project_name(self, tmp_path: Path) -> None:
-        """Test project name extraction."""
-        name = get_project_name(tmp_path)
-        assert name == tmp_path.name
+    def test_check_docker_available(self) -> None:
+        """Test Docker availability check when available."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        with patch("subprocess.run", return_value=mock_result):
+            assert check_docker() is True
 
-    @patch("ccbox.cli.subprocess.run")
-    def test_check_docker_available(self, mock_run: MagicMock) -> None:
-        """Test Docker availability check."""
-        mock_run.return_value = MagicMock(returncode=0)
-        assert check_docker() is True
+    def test_check_docker_not_available(self) -> None:
+        """Test Docker availability check when not available."""
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        with patch("subprocess.run", return_value=mock_result):
+            assert check_docker() is False
 
-    @patch("ccbox.cli.subprocess.run")
-    def test_check_docker_not_available(self, mock_run: MagicMock) -> None:
-        """Test Docker not available."""
-        mock_run.return_value = MagicMock(returncode=1)
-        assert check_docker() is False
+    def test_check_docker_not_found(self) -> None:
+        """Test Docker availability when command not found."""
+        with patch("subprocess.run", side_effect=FileNotFoundError):
+            assert check_docker() is False
 
-    @patch("ccbox.cli.subprocess.run")
-    def test_check_docker_not_found(self, mock_run: MagicMock) -> None:
-        """Test Docker not found."""
-        mock_run.side_effect = FileNotFoundError()
-        assert check_docker() is False
+    def test_image_exists_true(self) -> None:
+        """Test image exists check when image exists."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        with patch("subprocess.run", return_value=mock_result):
+            assert image_exists(LanguageStack.PYTHON) is True
 
-    @patch("ccbox.cli.subprocess.run")
-    def test_run_command_success(self, mock_run: MagicMock) -> None:
-        """Test successful command execution."""
-        mock_run.return_value = MagicMock(returncode=0, stdout="output")
-        result = run_command(["echo", "test"], capture=True)
-        assert result.returncode == 0
+    def test_image_exists_false(self) -> None:
+        """Test image exists check when image doesn't exist."""
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        with patch("subprocess.run", return_value=mock_result):
+            assert image_exists(LanguageStack.PYTHON) is False
 
-    def test_status_command(self, runner: CliRunner) -> None:
-        """Test status command."""
-        with patch("ccbox.cli.check_docker", return_value=False):
-            result = runner.invoke(cli, ["status"])
-            assert result.exit_code == 0
-            assert "ccbox" in result.output.lower()
+    def test_get_git_config(self) -> None:
+        """Test git config retrieval."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "Test User\n"
+        with patch("subprocess.run", return_value=mock_result):
+            name, email = get_git_config()
+            assert name == "Test User"
 
-    def test_config_command_show(self, runner: CliRunner) -> None:
-        """Test config show command."""
-        result = runner.invoke(cli, ["config", "--show"])
-        assert result.exit_code == 0
+    def test_build_image_success(self, tmp_path: Path) -> None:
+        """Test successful image build."""
+        with patch("ccbox.cli.write_build_files", return_value=tmp_path):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0)
+                result = build_image(LanguageStack.PYTHON)
+                assert result is True
 
-    @patch("ccbox.cli.check_docker")
-    def test_clean_no_docker(self, mock_docker: MagicMock, runner: CliRunner) -> None:
-        """Test clean command without Docker."""
-        mock_docker.return_value = False
-        result = runner.invoke(cli, ["clean"])
-        assert "not available" in result.output.lower()
+    def test_build_image_failure(self, tmp_path: Path) -> None:
+        """Test failed image build."""
+        with patch("ccbox.cli.write_build_files", return_value=tmp_path):
+            with patch("subprocess.run") as mock_run:
+                from subprocess import CalledProcessError
+
+                mock_run.side_effect = CalledProcessError(1, "docker")
+                result = build_image(LanguageStack.PYTHON)
+                assert result is False

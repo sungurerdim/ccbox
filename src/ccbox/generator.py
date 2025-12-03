@@ -1,79 +1,49 @@
-"""Template-based file generation for ccbox."""
+"""Docker file generation for ccbox."""
 
 from __future__ import annotations
 
-import importlib.resources
 import os
 from pathlib import Path
-from string import Template
-from typing import Any
 
 from .config import Config, LanguageStack, get_config_dir
 
-
-def get_template(name: str) -> str:
-    """Load a template file from the templates directory."""
-    files = importlib.resources.files("ccbox.templates")
-    return (files / name).read_text(encoding="utf-8")
-
-
-def render_template(template_name: str, context: dict[str, Any]) -> str:
-    """Render a template with the given context."""
-    template_content = get_template(template_name)
-    template = Template(template_content)
-    return template.safe_substitute(context)
-
-
-def get_language_packages(stack: LanguageStack) -> dict[str, str]:
-    """Get language-specific package installation commands."""
-    packages: dict[str, str] = {}
-
-    python_full = """# Python
-RUN apt-get update && apt-get install -y --no-install-recommends \\
-    python3 python3-pip python3-venv python3-dev python-is-python3 build-essential \\
+# Stack-specific Dockerfile snippets
+STACK_PACKAGES: dict[LanguageStack, str] = {
+    LanguageStack.BASE: "# Base stack - Node.js only",
+    LanguageStack.PYTHON: """# Python
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip python3-venv python3-dev python-is-python3 build-essential \
     && rm -rf /var/lib/apt/lists/*
-
-# Python tools
-RUN pip install --break-system-packages \\
-    poetry uv pipx ruff mypy black isort flake8 pylint bandit pytest pytest-cov coverage"""
-
-    if stack == LanguageStack.NODE:
-        packages["extra_languages"] = "# Node.js only"
-
-    elif stack == LanguageStack.NODE_PYTHON:
-        packages["extra_languages"] = python_full
-
-    elif stack == LanguageStack.NODE_GO:
-        packages["extra_languages"] = """# Go (latest)
-RUN curl -fsSL "https://go.dev/dl/$(curl -fsSL https://go.dev/VERSION?m=text | head -1).linux-amd64.tar.gz" \\
+RUN pip install --break-system-packages \
+    poetry uv ruff mypy pytest pytest-cov""",
+    LanguageStack.GO: """# Go
+RUN curl -fsSL "https://go.dev/dl/$(curl -fsSL https://go.dev/VERSION?m=text | head -1).linux-amd64.tar.gz" \
     | tar -C /usr/local -xzf -
 ENV PATH=$PATH:/usr/local/go/bin
 ENV GOPATH=/home/node/go
-ENV PATH=$PATH:$GOPATH/bin"""
-
-    elif stack == LanguageStack.NODE_RUST:
-        packages["extra_languages"] = """# Rust
+ENV PATH=$PATH:$GOPATH/bin""",
+    LanguageStack.RUST: """# Rust
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-ENV PATH="/home/node/.cargo/bin:$PATH" """
-
-    elif stack == LanguageStack.NODE_JAVA:
-        packages["extra_languages"] = """# Java (OpenJDK)
-RUN apt-get update && apt-get install -y --no-install-recommends \\
-    openjdk-17-jdk-headless maven gradle \\
+ENV PATH="/root/.cargo/bin:$PATH" """,
+    LanguageStack.JAVA: """# Java
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openjdk-17-jdk-headless maven \
     && rm -rf /var/lib/apt/lists/*
-ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64"""
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64""",
+    LanguageStack.WEB: """# Python + pnpm (fullstack)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip python3-venv python3-dev python-is-python3 build-essential \
+    && rm -rf /var/lib/apt/lists/*
+RUN pip install --break-system-packages poetry uv ruff mypy pytest
+RUN npm install -g pnpm""",
+    LanguageStack.FULL: """# Python
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip python3-venv python3-dev python-is-python3 build-essential \
+    && rm -rf /var/lib/apt/lists/*
+RUN pip install --break-system-packages poetry uv ruff mypy pytest pytest-cov
 
-    elif stack == LanguageStack.NODE_DOTNET:
-        packages["extra_languages"] = """# .NET SDK
-RUN curl -fsSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel LTS --install-dir /usr/share/dotnet
-ENV DOTNET_ROOT=/usr/share/dotnet
-ENV PATH=$PATH:/usr/share/dotnet"""
-
-    elif stack == LanguageStack.UNIVERSAL:
-        packages["extra_languages"] = f"""{python_full}
-
-# Go (latest)
-RUN curl -fsSL "https://go.dev/dl/$(curl -fsSL https://go.dev/VERSION?m=text | head -1).linux-amd64.tar.gz" \\
+# Go
+RUN curl -fsSL "https://go.dev/dl/$(curl -fsSL https://go.dev/VERSION?m=text | head -1).linux-amd64.tar.gz" \
     | tar -C /usr/local -xzf -
 ENV PATH=$PATH:/usr/local/go/bin
 ENV GOPATH=/home/node/go
@@ -81,124 +51,147 @@ ENV PATH=$PATH:$GOPATH/bin
 
 # Rust
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-ENV PATH="/home/node/.cargo/bin:$PATH" """
-
-    else:
-        packages["extra_languages"] = "# Custom stack"
-
-    return packages
+ENV PATH="/root/.cargo/bin:$PATH" """,
+}
 
 
-def get_optional_tools(config: Config) -> str:
-    """Get optional tools installation commands."""
-    tools = []
-
-    if config.install_cco:
-        tools.append("""# CCO (ClaudeCodeOptimizer)
-RUN pip install --break-system-packages --force-reinstall \\
-    git+https://github.com/sungurerdim/ClaudeCodeOptimizer.git""")
-
-    if config.install_gh:
-        tools.append("""# GitHub CLI (latest)
-RUN GH_VERSION=$(curl -fsSL https://api.github.com/repos/cli/cli/releases/latest | jq -r .tag_name | sed 's/v//') \\
-    && curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" \\
-    | tar xz --strip-components=1 -C /usr/local""")
-
-    if config.install_gitleaks:
-        tools.append("""# Gitleaks (latest)
-RUN GL_VERSION=$(curl -fsSL https://api.github.com/repos/gitleaks/gitleaks/releases/latest | jq -r .tag_name | sed 's/v//') \\
-    && curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${GL_VERSION}/gitleaks_${GL_VERSION}_linux_x64.tar.gz" \\
-    | tar xz -C /usr/local/bin gitleaks""")
-
-    return "\n\n".join(tools) if tools else "# No optional tools"
-
-
-def generate_dockerfile(config: Config, stack: LanguageStack) -> str:
+def generate_dockerfile(stack: LanguageStack) -> str:
     """Generate Dockerfile content for the given stack."""
-    packages = get_language_packages(stack)
-    optional_tools = get_optional_tools(config)
+    extra_packages = STACK_PACKAGES.get(stack, "# Unknown stack")
 
-    context = {
-        "extra_languages": packages["extra_languages"],
-        "optional_tools": optional_tools,
-        "ram_percent": config.ram_percent,
-        "cpu_percent": config.cpu_percent,
-    }
+    return f"""# ccbox - Claude Code Docker Environment
+# Stack: {stack.value}
 
-    return render_template("Dockerfile.template", context)
+FROM node:slim
 
+ENV DEBIAN_FRONTEND=noninteractive
 
-def generate_compose(
-    config: Config,
-    project_path: Path,
-    project_name: str,
-    stack: LanguageStack,
-    build_dir: Path,
-) -> str:
-    """Generate docker-compose.yml content."""
-    claude_config = Path(os.path.expanduser(config.claude_config_dir))
+# Essential tools
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+    git gnupg ca-certificates openssh-client \\
+    curl wget jq \\
+    gawk sed grep findutils diffutils coreutils \\
+    bash less tree file patch bc \\
+    ripgrep fd-find \\
+    procps \\
+    zip unzip xz-utils bzip2 \\
+    locales \\
+    && rm -rf /var/lib/apt/lists/*
 
-    extra_volumes = "".join(f"\n      - {vol}" for vol in config.extra_volumes)
-    extra_env = "".join(f"\n      - {k}={v}" for k, v in config.extra_env.items())
+# Locale
+RUN sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen
+ENV LANG=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
 
-    network_config = ""
-    if config.docker_network:
-        network_config = f"""
-networks:
-  default:
-    name: {config.docker_network}
-    external: true"""
+# npm optimization
+RUN npm config set fund false \\
+    && npm config set audit false \\
+    && npm config set update-notifier false
 
-    context = {
-        "image_name": f"ccbox:{stack.value}",
-        "container_name": f"ccbox-{project_name}",
-        "build_dir": str(build_dir),
-        "project_path": str(project_path),
-        "project_name": project_name,
-        "claude_config_dir": str(claude_config),
-        "git_name": config.git_name,
-        "git_email": config.git_email,
-        "extra_volumes": extra_volumes,
-        "extra_env": extra_env,
-        "network_config": network_config,
-    }
+# fd symlink
+RUN ln -sf $(which fdfind) /usr/local/bin/fd
 
-    return render_template("compose.yml.template", context)
+# yq
+RUN curl -sL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 \\
+    -o /usr/local/bin/yq && chmod +x /usr/local/bin/yq
+
+# GitHub CLI
+RUN curl -sL "https://github.com/cli/cli/releases/latest/download/gh_$(curl -sL https://api.github.com/repos/cli/cli/releases/latest | jq -r .tag_name | tr -d v)_linux_amd64.tar.gz" \\
+    | tar xz --strip-components=1 -C /usr/local
+
+{extra_packages}
+
+# Node.js tools
+RUN npm install -g typescript eslint prettier --force
+
+# Claude Code
+RUN npm install -g @anthropic-ai/claude-code
+
+WORKDIR /home/node/project
+
+# Entrypoint
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+ENV HOME=/home/node
+USER node
+RUN git config --global --add safe.directory '*'
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+"""
 
 
 def generate_entrypoint() -> str:
-    """Generate entrypoint script content."""
-    return render_template("entrypoint.sh.template", {})
+    """Generate entrypoint script (always bypass mode)."""
+    return """#!/bin/bash
+# ccbox entrypoint
+
+# Dynamic RAM allocation (75% of available)
+TOTAL_MEM=$(free -m | awk '/^Mem:/{print $2}')
+NODE_MEM=$((TOTAL_MEM * 3 / 4))
+export NODE_OPTIONS="--max-old-space-size=$NODE_MEM"
+
+# Dynamic CPU allocation
+export UV_THREADPOOL_SIZE=$(nproc)
+
+# Check for Claude Code updates
+OLD_VER=$(claude --version 2>/dev/null | cut -d" " -f1)
+claude update 2>/dev/null
+NEW_VER=$(claude --version 2>/dev/null | cut -d" " -f1)
+if [ "$OLD_VER" != "$NEW_VER" ]; then
+    echo ""
+    echo "*** CLAUDE CODE UPDATED: $OLD_VER -> $NEW_VER ***"
+    echo "*** Run 'ccbox update' to make permanent ***"
+    echo ""
+    sleep 2
+fi
+
+# Run CCO setup if available
+command -v cco-setup &>/dev/null && cco-setup 2>/dev/null
+
+# Execute Claude Code with bypass permissions
+exec claude --dangerously-skip-permissions "$@"
+"""
 
 
-def write_build_files(config: Config, stack: LanguageStack) -> Path:
-    """Write Dockerfile and related files to ccbox directory."""
+def write_build_files(stack: LanguageStack) -> Path:
+    """Write Dockerfile and entrypoint to build directory."""
     build_dir = get_config_dir() / "build" / stack.value
     build_dir.mkdir(parents=True, exist_ok=True)
 
-    dockerfile = generate_dockerfile(config, stack)
-    (build_dir / "Dockerfile").write_text(dockerfile, encoding="utf-8")
-
-    entrypoint = generate_entrypoint()
-    (build_dir / "entrypoint.sh").write_text(entrypoint, encoding="utf-8")
+    (build_dir / "Dockerfile").write_text(generate_dockerfile(stack), encoding="utf-8")
+    (build_dir / "entrypoint.sh").write_text(generate_entrypoint(), encoding="utf-8")
 
     return build_dir
 
 
-def write_compose_file(
+def get_docker_run_cmd(
     config: Config,
     project_path: Path,
     project_name: str,
     stack: LanguageStack,
-    build_dir: Path,
-) -> Path:
-    """Write docker-compose.yml for a project."""
-    compose_content = generate_compose(config, project_path, project_name, stack, build_dir)
+) -> list[str]:
+    """Generate docker run command."""
+    image_name = f"ccbox:{stack.value}"
+    container_name = f"ccbox-{project_name.lower().replace(' ', '-')}"
+    claude_config = Path(os.path.expanduser(config.claude_config_dir))
 
-    compose_dir = get_config_dir() / "compose"
-    compose_dir.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        "docker", "run", "--rm", "-it",
+        "--name", container_name,
+        "-v", f"{project_path}:/home/node/{project_name}",
+        "-v", f"{claude_config}:/home/node/.claude",
+        "-w", f"/home/node/{project_name}",
+        "-e", "TERM=xterm-256color",
+    ]
 
-    compose_file = compose_dir / f"{project_name}.yml"
-    compose_file.write_text(compose_content, encoding="utf-8")
+    # Git config
+    if config.git_name:
+        cmd.extend(["-e", f"GIT_AUTHOR_NAME={config.git_name}"])
+        cmd.extend(["-e", f"GIT_COMMITTER_NAME={config.git_name}"])
+    if config.git_email:
+        cmd.extend(["-e", f"GIT_AUTHOR_EMAIL={config.git_email}"])
+        cmd.extend(["-e", f"GIT_COMMITTER_EMAIL={config.git_email}"])
 
-    return compose_file
+    cmd.append(image_name)
+    return cmd
