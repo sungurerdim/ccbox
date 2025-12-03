@@ -7,39 +7,30 @@ import os
 from enum import Enum
 from pathlib import Path
 
-from pydantic import BaseModel, Field
-
-
-class RuntimeMode(str, Enum):
-    """Claude Code runtime mode."""
-
-    BYPASS = "bypass"  # --dangerously-skip-permissions
-    SAFE = "safe"  # Normal mode with confirmations
+from pydantic import BaseModel
 
 
 class LanguageStack(str, Enum):
     """Supported language stacks for Docker images."""
 
-    UNIVERSAL = "universal"  # node + python + go + rust + common tools
-    NODE = "node"  # Node.js only (minimal)
-    NODE_PYTHON = "node-python"  # Node.js + Python
-    NODE_GO = "node-go"  # Node.js + Go
-    NODE_RUST = "node-rust"  # Node.js + Rust
-    NODE_JAVA = "node-java"  # Node.js + Java
-    NODE_DOTNET = "node-dotnet"  # Node.js + .NET
-    CUSTOM = "custom"  # User-defined Dockerfile
+    BASE = "base"  # Claude Code + git + essential CLI tools
+    PYTHON = "python"  # + Python3 + pip + ruff/mypy/pytest
+    GO = "go"  # + Go
+    RUST = "rust"  # + Rust + cargo
+    JAVA = "java"  # + JDK + Maven/Gradle
+    WEB = "web"  # + Python + pnpm + build tools (frontend/fullstack)
+    FULL = "full"  # Everything (Python + Go + Rust)
 
 
-# Language stack descriptions for UI
-STACK_DESCRIPTIONS: dict[str, str] = {
-    LanguageStack.UNIVERSAL: "All languages: Node + Python + Go + Rust (~2GB)",
-    LanguageStack.NODE: "Node.js only - minimal image (~500MB)",
-    LanguageStack.NODE_PYTHON: "Node.js + Python 3 (~800MB)",
-    LanguageStack.NODE_GO: "Node.js + Go (~900MB)",
-    LanguageStack.NODE_RUST: "Node.js + Rust (~1.2GB)",
-    LanguageStack.NODE_JAVA: "Node.js + OpenJDK (~1GB)",
-    LanguageStack.NODE_DOTNET: "Node.js + .NET SDK (~1.5GB)",
-    LanguageStack.CUSTOM: "Custom Dockerfile (advanced)",
+# Stack descriptions for CLI help
+STACK_INFO: dict[LanguageStack, tuple[str, int]] = {
+    LanguageStack.BASE: ("Claude Code + git + CLI tools", 400),
+    LanguageStack.PYTHON: ("+ Python3 + pip + ruff/mypy", 600),
+    LanguageStack.GO: ("+ Go", 550),
+    LanguageStack.RUST: ("+ Rust + cargo", 700),
+    LanguageStack.JAVA: ("+ JDK 17 + Maven", 800),
+    LanguageStack.WEB: ("+ Python + pnpm (fullstack)", 700),
+    LanguageStack.FULL: ("Python + Go + Rust (all)", 1500),
 }
 
 
@@ -48,31 +39,12 @@ class Config(BaseModel):
 
     version: str = "1.0.0"
 
-    # Git settings
+    # Git settings (auto-detected from system if empty)
     git_name: str = ""
     git_email: str = ""
 
-    # Performance settings
-    ram_percent: int = Field(default=75, ge=10, le=100)
-    cpu_percent: int = Field(default=100, ge=10, le=100)
-
-    # Runtime settings
-    default_mode: RuntimeMode = RuntimeMode.BYPASS
-    default_stack: LanguageStack = LanguageStack.NODE_PYTHON
-
-    # Optional tools (minimal by default)
-    install_cco: bool = False
-    install_gh: bool = False
-    install_gitleaks: bool = False
-
-    # Paths
+    # Claude config directory on host
     claude_config_dir: str = "~/.claude"
-
-    # Advanced settings
-    docker_network: str | None = None
-    extra_volumes: list[str] = Field(default_factory=list)
-    extra_env: dict[str, str] = Field(default_factory=dict)
-    custom_dockerfile: str | None = None
 
 
 def get_config_dir() -> Path:
