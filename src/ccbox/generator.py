@@ -67,18 +67,18 @@ ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 
 
 def _base_dockerfile() -> str:
-    """BASE stack: node:lts-slim + Python + CCO."""
+    """BASE stack: node:slim + Python + CCO."""
     return f"""# syntax=docker/dockerfile:1
 # ccbox:base - Node.js + Python + CCO
-FROM node:lts-slim
+FROM node:slim
 
 LABEL org.opencontainers.image.title="ccbox:base"
 
 ENV DEBIAN_FRONTEND=noninteractive
 {COMMON_TOOLS}
-# Python (full) - single layer with cleanup
+# Python runtime (no dev tools - most packages have pre-built wheels)
 RUN apt-get update && apt-get install -y --no-install-recommends \\
-    python3 python3-pip python3-venv python3-dev python-is-python3 build-essential \\
+    python3 python3-pip python3-venv python-is-python3 \\
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 {PYTHON_TOOLS}
 {NODE_TOOLS}
@@ -96,8 +96,8 @@ LABEL org.opencontainers.image.title="ccbox:go"
 
 ENV DEBIAN_FRONTEND=noninteractive
 {COMMON_TOOLS}
-# Node.js LTS + Python (combined for fewer layers)
-RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - \\
+# Node.js (current) + Python runtime
+RUN curl -fsSL https://deb.nodesource.com/setup_current.x | bash - \\
     && apt-get install -y --no-install-recommends nodejs python3 python3-pip python3-venv python-is-python3 \\
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 {PYTHON_TOOLS}
@@ -118,8 +118,8 @@ LABEL org.opencontainers.image.title="ccbox:rust"
 
 ENV DEBIAN_FRONTEND=noninteractive
 {COMMON_TOOLS}
-# Node.js LTS + Python (combined for fewer layers)
-RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - \\
+# Node.js (current) + Python runtime
+RUN curl -fsSL https://deb.nodesource.com/setup_current.x | bash - \\
     && apt-get install -y --no-install-recommends nodejs python3 python3-pip python3-venv python-is-python3 \\
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 {PYTHON_TOOLS}
@@ -140,8 +140,8 @@ LABEL org.opencontainers.image.title="ccbox:java"
 
 ENV DEBIAN_FRONTEND=noninteractive
 {COMMON_TOOLS}
-# Node.js LTS + Python (combined for fewer layers)
-RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - \\
+# Node.js (current) + Python runtime
+RUN curl -fsSL https://deb.nodesource.com/setup_current.x | bash - \\
     && apt-get install -y --no-install-recommends nodejs python3 python3-pip python3-venv python-is-python3 \\
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 {PYTHON_TOOLS}
@@ -156,18 +156,18 @@ RUN set -eux; \\
 
 
 def _web_dockerfile() -> str:
-    """WEB stack: node:lts-slim + pnpm + Python + CCO."""
+    """WEB stack: node:slim + pnpm + Python + CCO."""
     return f"""# syntax=docker/dockerfile:1
 # ccbox:web - Node.js + pnpm + Python + CCO (fullstack)
-FROM node:lts-slim
+FROM node:slim
 
 LABEL org.opencontainers.image.title="ccbox:web"
 
 ENV DEBIAN_FRONTEND=noninteractive
 {COMMON_TOOLS}
-# Python (full) - single layer with cleanup
+# Python runtime (no dev tools - most packages have pre-built wheels)
 RUN apt-get update && apt-get install -y --no-install-recommends \\
-    python3 python3-pip python3-venv python3-dev python-is-python3 build-essential \\
+    python3 python3-pip python3-venv python-is-python3 \\
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 {PYTHON_TOOLS}
 {NODE_TOOLS}
@@ -178,18 +178,18 @@ RUN npm install -g pnpm --force && npm cache clean --force
 
 
 def _full_dockerfile() -> str:
-    """FULL stack: node:lts-slim + all languages."""
+    """FULL stack: node:slim + all languages."""
     return f"""# syntax=docker/dockerfile:1
 # ccbox:full - All languages (Go + Rust + Java + pnpm)
-FROM node:lts-slim
+FROM node:slim
 
 LABEL org.opencontainers.image.title="ccbox:full"
 
 ENV DEBIAN_FRONTEND=noninteractive
 {COMMON_TOOLS}
-# Python (full) - single layer with cleanup
+# Python runtime (no dev tools - most packages have pre-built wheels)
 RUN apt-get update && apt-get install -y --no-install-recommends \\
-    python3 python3-pip python3-venv python3-dev python-is-python3 build-essential \\
+    python3 python3-pip python3-venv python-is-python3 \\
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 {PYTHON_TOOLS}
 {NODE_TOOLS}
