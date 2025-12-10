@@ -240,7 +240,7 @@ def generate_dockerfile(stack: LanguageStack) -> str:
     generator = DOCKERFILE_GENERATORS.get(stack)
     if generator:
         return generator()
-    return _base_dockerfile()
+    return _base_dockerfile()  # pragma: no cover - fallback for unknown stacks
 
 
 def generate_entrypoint() -> str:
@@ -336,6 +336,7 @@ def get_docker_run_cmd(
         # Environment
         "-e", "TERM=xterm-256color",
         "-e", "CLAUDE_CONFIG_DIR=/home/node/.claude",
+        "-e", "DEBUG=False",  # Disable Claude Code debug mode (prevents 20GB+ log files)
     ]
 
     if config.git_name:

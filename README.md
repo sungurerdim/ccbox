@@ -7,8 +7,11 @@ Run Claude Code in isolated Docker containers. One command, zero configuration.
 - **Isolated**: Container only accesses current project directory - nothing else
 - **Fast**: Bypass mode enabled by default (safe because container is sandboxed)
 - **Simple**: Single command to start, auto-detects everything
+- **Auto-start**: Docker Desktop starts automatically if not running (Windows/Mac)
 - **Persistent**: Claude settings stay on host (`~/.claude`), survive container restarts
 - **Clean**: No config files in your project directories
+- **Up-to-date**: Automatic update checks for ccbox and CCO
+- **Safe Logging**: Debug mode disabled (`DEBUG=False`) to prevent log file explosion
 
 ## Quick Start
 
@@ -40,11 +43,13 @@ ccbox mounts only your current directory. Claude Code can freely modify project 
 
 ```bash
 ccbox                  # Run Claude Code (auto-detect stack, auto-build)
-ccbox -s python        # Use specific stack
+ccbox -s base          # Use specific stack
 ccbox -b               # Force rebuild image
+ccbox --no-update-check # Skip update check
 
 ccbox setup            # Configure git name/email (one-time, optional)
-ccbox update           # Rebuild image with latest Claude Code
+ccbox update           # Rebuild base image with latest Claude Code
+ccbox update -s go     # Rebuild specific stack
 ccbox update -a        # Rebuild all installed images
 ccbox clean            # Remove all ccbox containers and images
 ccbox doctor           # Check system status and project detection
@@ -53,20 +58,19 @@ ccbox stacks           # List available stacks
 
 ## Stacks
 
-ccbox auto-detects your project type. Override with `-s`:
+ccbox auto-detects your project type and shows an interactive menu:
 
 | Stack | Contents | Size |
 |-------|----------|------|
-| `base` | Claude Code + git + CLI tools | ~400MB |
-| `python` | + Python 3 + ruff + mypy + pytest | ~600MB |
-| `go` | + Go | ~550MB |
-| `rust` | + Rust + cargo | ~700MB |
-| `java` | + JDK 17 + Maven | ~800MB |
-| `web` | + Python + pnpm (fullstack) | ~700MB |
-| `full` | Python + Go + Rust | ~1.5GB |
+| `base` | Node.js + Python + CCO + eslint/prettier/ruff/pytest | ~600MB |
+| `go` | + Go + golangci-lint | ~750MB |
+| `rust` | + Rust + clippy + rustfmt | ~900MB |
+| `java` | + JDK (Temurin LTS) + Maven | ~1000MB |
+| `web` | + pnpm (fullstack) | ~650MB |
+| `full` | All: Go + Rust + Java + pnpm | ~1500MB |
 
 Detection rules:
-- `pyproject.toml` or `requirements.txt` → `python`
+- `pyproject.toml` or `requirements.txt` → `base` (includes Python)
 - `go.mod` → `go`
 - `Cargo.toml` → `rust`
 - `pom.xml` or `build.gradle` → `java`
@@ -101,13 +105,20 @@ Minimal config stored in `~/.ccbox/config.json`:
 
 Git config is auto-detected from your system. Run `ccbox setup` only if you need to override.
 
+## Auto-Update Check
+
+On startup, ccbox checks for updates to:
+- **ccbox** itself (PyPI)
+- **CCO** (ClaudeCodeOptimizer, GitHub)
+
+If updates are available, you'll be prompted to update. Use `--no-update-check` to skip.
+
 ## Image Naming
 
 Images are tagged consistently: `ccbox:{stack}`
 
 ```
 ccbox:base
-ccbox:python
 ccbox:go
 ccbox:rust
 ccbox:java
@@ -121,7 +132,7 @@ Running `ccbox` in the same project reuses the same image, no duplicates.
 
 ## Requirements
 
-- Docker (running)
+- Docker (running - auto-starts on Windows/Mac if not)
 - Python 3.8+
 - Claude Code account
 
@@ -132,7 +143,10 @@ ccbox doctor    # Shows system status and detected project type
 ```
 
 ### Docker not running
-Start Docker Desktop (Windows/Mac) or `sudo systemctl start docker` (Linux)
+ccbox will attempt to auto-start Docker Desktop on Windows and macOS. On Linux, start manually:
+```bash
+sudo systemctl start docker
+```
 
 ### Permission denied (Linux)
 ```bash
@@ -152,7 +166,7 @@ ccbox
 git clone https://github.com/sungurerdim/ccbox.git
 cd ccbox
 pip install -e ".[dev]"
-pytest
+pytest --cov=src/ccbox   # 100% coverage, 106 tests
 ruff check src/ccbox
 mypy src/ccbox --strict
 ```

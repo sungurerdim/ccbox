@@ -508,5 +508,5 @@ def stacks() -> None:
     console.print("[dim]All stacks include: Python + JS/TS + CCO + lint/test tools[/dim]")
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     cli()
