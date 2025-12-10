@@ -11,26 +11,27 @@ from pydantic import BaseModel
 
 
 class LanguageStack(str, Enum):
-    """Supported language stacks for Docker images."""
+    """Supported language stacks for Docker images.
 
-    BASE = "base"  # Claude Code + git + essential CLI tools
-    PYTHON = "python"  # + Python3 + pip + ruff/mypy/pytest
-    GO = "go"  # + Go
-    RUST = "rust"  # + Rust + cargo
-    JAVA = "java"  # + JDK + Maven/Gradle
-    WEB = "web"  # + Python + pnpm + build tools (frontend/fullstack)
-    FULL = "full"  # Everything (Python + Go + Rust)
+    All stacks include base tools: Node.js + Python + CCO + linting/testing
+    """
+
+    BASE = "base"      # Node + Python + CCO + eslint/prettier/ruff/pytest (~600MB)
+    GO = "go"          # + Go + golangci-lint (~750MB)
+    RUST = "rust"      # + Rust + clippy (~900MB)
+    JAVA = "java"      # + JDK (Temurin LTS) + Maven (~1GB)
+    WEB = "web"        # + pnpm (fullstack) (~650MB)
+    FULL = "full"      # All languages (~1.5GB)
 
 
 # Stack descriptions for CLI help
 STACK_INFO: dict[LanguageStack, tuple[str, int]] = {
-    LanguageStack.BASE: ("Claude Code + git + CLI tools", 400),
-    LanguageStack.PYTHON: ("+ Python3 + pip + ruff/mypy", 600),
-    LanguageStack.GO: ("+ Go", 550),
-    LanguageStack.RUST: ("+ Rust + cargo", 700),
-    LanguageStack.JAVA: ("+ JDK 17 + Maven", 800),
-    LanguageStack.WEB: ("+ Python + pnpm (fullstack)", 700),
-    LanguageStack.FULL: ("Python + Go + Rust (all)", 1500),
+    LanguageStack.BASE: ("Node + Python + CCO + lint/test tools", 600),
+    LanguageStack.GO: ("+ Go (latest) + golangci-lint", 750),
+    LanguageStack.RUST: ("+ Rust (latest) + clippy", 900),
+    LanguageStack.JAVA: ("+ JDK (Temurin LTS) + Maven", 1000),
+    LanguageStack.WEB: ("+ pnpm (fullstack)", 650),
+    LanguageStack.FULL: ("All: Go + Rust + Java", 1500),
 }
 
 
@@ -66,7 +67,6 @@ def load_config() -> Config:
             data = json.loads(config_path.read_text(encoding="utf-8"))
             return Config(**data)
         except (json.JSONDecodeError, ValueError):
-            # Invalid config, return defaults
             pass
 
     return Config()
@@ -96,6 +96,5 @@ def get_image_name(stack: LanguageStack) -> str:
 
 def get_container_name(project_name: str) -> str:
     """Get Docker container name for a project."""
-    # Sanitize project name for Docker
     safe_name = "".join(c if c.isalnum() or c in "-_" else "-" for c in project_name.lower())
     return f"ccbox-{safe_name}"
