@@ -22,7 +22,7 @@ Conventions: test_<description> snake_case, absolute imports, Google docstrings
 Applicable: CLI, testing, containers
 
 ## Auto-Detected
-Structure: single-repo | Hooks: none | Coverage: 55%
+Structure: single-repo | Hooks: none | Coverage: 100%
 - [x] Linting configured (ruff + mypy)
 - [ ] Pre-commit hooks
 - [ ] API endpoints

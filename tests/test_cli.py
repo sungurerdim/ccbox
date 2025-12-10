@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 from click.testing import CliRunner
 
 from ccbox.cli import (
@@ -39,8 +40,11 @@ from ccbox.updater import (
     check_all_updates,
     check_ccbox_update,
     check_cco_update,
+    check_claude_code_update,
     format_changelog,
     _get_installed_cco_version,
+    _image_exists,
+    _get_docker_version,
 )
 
 
@@ -462,20 +466,30 @@ class TestUpdater:
             "body": "Release notes",
         }
         with (
+            patch("ccbox.updater._image_exists", return_value=True),
             patch("requests.get", return_value=mock_response),
-            patch("ccbox.updater._get_installed_cco_version", return_value="1.0.0"),
+            patch("ccbox.updater._get_docker_version", return_value="1.0.0"),
         ):
             result = check_cco_update()
             assert result is not None
             assert result.package == "CCO"
             assert result.latest == "v99.0.0"
 
+    def test_check_cco_update_no_image(self) -> None:
+        """Test CCO update check when no docker image exists."""
+        with patch("ccbox.updater._image_exists", return_value=False):
+            result = check_cco_update()
+            assert result is None
+
     def test_check_cco_update_no_tag(self) -> None:
         """Test CCO update check with no tag."""
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {}
-        with patch("requests.get", return_value=mock_response):
+        with (
+            patch("ccbox.updater._image_exists", return_value=True),
+            patch("requests.get", return_value=mock_response),
+        ):
             result = check_cco_update()
             assert result is None
 
@@ -483,18 +497,22 @@ class TestUpdater:
         """Test CCO update check with HTTP error."""
         mock_response = MagicMock()
         mock_response.status_code = 404
-        with patch("requests.get", return_value=mock_response):
+        with (
+            patch("ccbox.updater._image_exists", return_value=True),
+            patch("requests.get", return_value=mock_response),
+        ):
             result = check_cco_update()
             assert result is None
 
     def test_check_cco_update_no_installed_version(self) -> None:
-        """Test CCO update check when not installed."""
+        """Test CCO update check when not installed in container."""
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {"tag_name": "v1.0.0"}
         with (
+            patch("ccbox.updater._image_exists", return_value=True),
             patch("requests.get", return_value=mock_response),
-            patch("ccbox.updater._get_installed_cco_version", return_value=None),
+            patch("ccbox.updater._get_docker_version", return_value=None),
         ):
             result = check_cco_update()
             assert result is not None
@@ -521,6 +539,7 @@ class TestUpdater:
         """Test check_all_updates when no updates."""
         with (
             patch("ccbox.updater.check_ccbox_update", return_value=None),
+            patch("ccbox.updater.check_claude_code_update", return_value=None),
             patch("ccbox.updater.check_cco_update", return_value=None),
         ):
             updates = check_all_updates()
@@ -531,6 +550,7 @@ class TestUpdater:
         ccbox_update = UpdateInfo("ccbox", "1.0.0", "1.0.0")
         with (
             patch("ccbox.updater.check_ccbox_update", return_value=ccbox_update),
+            patch("ccbox.updater.check_claude_code_update", return_value=None),
             patch("ccbox.updater.check_cco_update", return_value=None),
         ):
             updates = check_all_updates()
@@ -552,6 +572,142 @@ class TestUpdater:
         long_content = "\n".join(f"Line {i}" for i in range(20))
         result = format_changelog(long_content, max_lines=5)
         assert "..." in result
+
+
+class TestDockerVersionCheck:
+    """Tests for docker-based version checking."""
+
+    def test_image_exists_true(self) -> None:
+        """Test _image_exists when image exists."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        with patch("subprocess.run", return_value=mock_result):
+            assert _image_exists() is True
+
+    def test_image_exists_false(self) -> None:
+        """Test _image_exists when image doesn't exist."""
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        with patch("subprocess.run", return_value=mock_result):
+            assert _image_exists() is False
+
+    def test_image_exists_docker_not_found(self) -> None:
+        """Test _image_exists when docker not installed."""
+        with patch("subprocess.run", side_effect=FileNotFoundError):
+            assert _image_exists() is False
+
+    def test_get_docker_version_success(self) -> None:
+        """Test _get_docker_version returns version."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "1.2.3\n"
+        with patch("subprocess.run", return_value=mock_result):
+            result = _get_docker_version("some command")
+            assert result == "1.2.3"
+
+    def test_get_docker_version_failure(self) -> None:
+        """Test _get_docker_version returns None on failure."""
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stdout = ""
+        with patch("subprocess.run", return_value=mock_result):
+            result = _get_docker_version("some command")
+            assert result is None
+
+    def test_get_docker_version_timeout(self) -> None:
+        """Test _get_docker_version handles timeout."""
+        import subprocess as sp
+        with patch("subprocess.run", side_effect=sp.TimeoutExpired("cmd", 30)):
+            result = _get_docker_version("some command")
+            assert result is None
+
+    def test_check_claude_code_update_success(self) -> None:
+        """Test successful Claude Code update check."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"version": "99.0.0"}
+        with (
+            patch("ccbox.updater._image_exists", return_value=True),
+            patch("requests.get", return_value=mock_response),
+            patch("ccbox.updater._get_docker_version", return_value="1.0.0"),
+        ):
+            result = check_claude_code_update()
+            assert result is not None
+            assert result.package == "Claude Code"
+            assert result.latest == "99.0.0"
+
+    def test_check_claude_code_update_no_image(self) -> None:
+        """Test Claude Code update check when no image."""
+        with patch("ccbox.updater._image_exists", return_value=False):
+            result = check_claude_code_update()
+            assert result is None
+
+    def test_check_claude_code_update_http_error(self) -> None:
+        """Test Claude Code update check with HTTP error."""
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+        with (
+            patch("ccbox.updater._image_exists", return_value=True),
+            patch("requests.get", return_value=mock_response),
+        ):
+            result = check_claude_code_update()
+            assert result is None
+
+    def test_check_claude_code_update_no_version_in_container(self) -> None:
+        """Test Claude Code update check when not installed in container."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"version": "1.0.0"}
+        with (
+            patch("ccbox.updater._image_exists", return_value=True),
+            patch("requests.get", return_value=mock_response),
+            patch("ccbox.updater._get_docker_version", return_value=None),
+        ):
+            result = check_claude_code_update()
+            assert result is not None
+            assert result.current == "0.0.0"
+
+    def test_check_claude_code_update_no_version_in_response(self) -> None:
+        """Test Claude Code update check when no version in npm response."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {}  # No version field
+        with (
+            patch("ccbox.updater._image_exists", return_value=True),
+            patch("requests.get", return_value=mock_response),
+        ):
+            result = check_claude_code_update()
+            assert result is None
+
+    def test_check_claude_code_update_network_error(self) -> None:
+        """Test Claude Code update check with network error."""
+        with (
+            patch("ccbox.updater._image_exists", return_value=True),
+            patch("requests.get", side_effect=requests.RequestException),
+        ):
+            result = check_claude_code_update()
+            assert result is None
+
+    def test_check_cco_update_network_error(self) -> None:
+        """Test CCO update check with network error."""
+        with (
+            patch("ccbox.updater._image_exists", return_value=True),
+            patch("requests.get", side_effect=requests.RequestException),
+        ):
+            result = check_cco_update()
+            assert result is None
+
+    def test_check_all_updates_with_claude_update(self) -> None:
+        """Test check_all_updates includes Claude Code update."""
+        claude_update = UpdateInfo("Claude Code", "1.0.0", "2.0.0")
+        with (
+            patch("ccbox.updater.check_ccbox_update", return_value=None),
+            patch("ccbox.updater.check_claude_code_update", return_value=claude_update),
+            patch("ccbox.updater.check_cco_update", return_value=None),
+        ):
+            updates = check_all_updates()
+            assert len(updates) == 1
+            assert updates[0].package == "Claude Code"
 
 
 class TestDockerDesktopStart:

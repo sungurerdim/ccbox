@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from dataclasses import dataclass
 
 import requests
 
 from . import __version__
+from .config import LanguageStack, get_image_name
 
 # Timeout for HTTP requests
 REQUEST_TIMEOUT = 5
@@ -71,8 +73,42 @@ def check_ccbox_update() -> UpdateInfo | None:
         return None
 
 
-def check_cco_update() -> UpdateInfo | None:
-    """Check GitHub for CCO updates."""
+def _image_exists(stack: LanguageStack = LanguageStack.BASE) -> bool:
+    """Check if docker image exists."""
+    try:
+        result = subprocess.run(
+            ["docker", "image", "inspect", get_image_name(stack)],
+            capture_output=True,
+            check=False,
+        )
+        return result.returncode == 0
+    except FileNotFoundError:
+        return False
+
+
+def _get_docker_version(command: str, stack: LanguageStack = LanguageStack.BASE) -> str | None:
+    """Get version from inside docker container."""
+    try:
+        result = subprocess.run(
+            ["docker", "run", "--rm", get_image_name(stack), "bash", "-c", command],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+        return None
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+
+
+def check_cco_update(stack: LanguageStack = LanguageStack.BASE) -> UpdateInfo | None:
+    """Check GitHub for CCO updates (version from docker image)."""
+    # Skip if no image exists
+    if not _image_exists(stack):
+        return None
+
     try:
         # Get latest release from GitHub
         resp = requests.get(
@@ -91,8 +127,8 @@ def check_cco_update() -> UpdateInfo | None:
         # Get changelog from release body
         changelog = data.get("body")
 
-        # Get current installed version
-        current = _get_installed_cco_version()
+        # Get current installed version from docker image
+        current = _get_docker_version("pip show ClaudeCodeOptimizer | grep Version | cut -d' ' -f2", stack)
         if not current:
             current = "0.0.0"
 
@@ -106,8 +142,42 @@ def check_cco_update() -> UpdateInfo | None:
         return None
 
 
+def check_claude_code_update(stack: LanguageStack = LanguageStack.BASE) -> UpdateInfo | None:
+    """Check npm for Claude Code updates (version from docker image)."""
+    # Skip if no image exists
+    if not _image_exists(stack):
+        return None
+
+    try:
+        # Get latest version from npm
+        resp = requests.get(
+            "https://registry.npmjs.org/@anthropic-ai/claude-code/latest",
+            timeout=REQUEST_TIMEOUT,
+        )
+        if resp.status_code != 200:
+            return None
+
+        data = resp.json()
+        latest = data.get("version", "")
+        if not latest:
+            return None
+
+        # Get current installed version from docker image
+        current = _get_docker_version("claude --version 2>/dev/null | head -1 | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+'", stack)
+        if not current:
+            current = "0.0.0"
+
+        return UpdateInfo(
+            package="Claude Code",
+            current=current,
+            latest=latest,
+        )
+    except (requests.RequestException, json.JSONDecodeError, KeyError):
+        return None
+
+
 def _get_installed_cco_version() -> str | None:
-    """Get currently installed CCO version."""
+    """Get currently installed CCO version (host - deprecated, kept for compatibility)."""
     try:
         from importlib.metadata import version
 
@@ -116,15 +186,22 @@ def _get_installed_cco_version() -> str | None:
         return None
 
 
-def check_all_updates() -> list[UpdateInfo]:
+def check_all_updates(stack: LanguageStack = LanguageStack.BASE) -> list[UpdateInfo]:
     """Check for all available updates."""
     updates: list[UpdateInfo] = []
 
+    # ccbox update (host)
     ccbox_update = check_ccbox_update()
     if ccbox_update and ccbox_update.has_update:
         updates.append(ccbox_update)
 
-    cco_update = check_cco_update()
+    # Claude Code update (docker image)
+    claude_update = check_claude_code_update(stack)
+    if claude_update and claude_update.has_update:
+        updates.append(claude_update)
+
+    # CCO update (docker image)
+    cco_update = check_cco_update(stack)
     if cco_update and cco_update.has_update:
         updates.append(cco_update)
 
