@@ -296,9 +296,9 @@ def write_build_files(stack: LanguageStack) -> Path:
     build_dir = get_config_dir() / "build" / stack.value
     build_dir.mkdir(parents=True, exist_ok=True)
 
-    (build_dir / "Dockerfile").write_text(generate_dockerfile(stack), encoding="utf-8")
-    (build_dir / "entrypoint.sh").write_text(generate_entrypoint(), encoding="utf-8")
-    (build_dir / ".dockerignore").write_text(generate_dockerignore(), encoding="utf-8")
+    (build_dir / "Dockerfile").write_text(generate_dockerfile(stack), encoding="utf-8", newline="\n")
+    (build_dir / "entrypoint.sh").write_text(generate_entrypoint(), encoding="utf-8", newline="\n")
+    (build_dir / ".dockerignore").write_text(generate_dockerignore(), encoding="utf-8", newline="\n")
 
     return build_dir
 
