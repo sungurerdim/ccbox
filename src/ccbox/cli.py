@@ -100,7 +100,48 @@ def image_exists(stack: LanguageStack) -> bool:
         return False
 
 
-def build_image(stack: LanguageStack) -> bool:
+def _run_cco_setup(stack: LanguageStack) -> bool:
+    """Run CCO setup after image build."""
+    image_name = get_image_name(stack)
+    config = load_config()
+    claude_dir = Path(os.path.expanduser(config.claude_config_dir))
+
+    if not claude_dir.exists():
+        console.print("[dim]Skipping cco-setup (no claude config)[/dim]")
+        return True
+
+    console.print("[dim]Running cco-setup...[/dim]")
+    try:
+        result = subprocess.run(
+            [
+                "docker", "run", "--rm",
+                "--entrypoint", "cco-setup",
+                "-e", "CLAUDE_CONFIG_DIR=/home/node/.claude",
+                "-v", f"{claude_dir}:/home/node/.claude",
+                image_name,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        if result.returncode == 0:
+            console.print("[green]✓ CCO setup complete[/green]")
+            return True
+        # cco-setup might not exist, that's ok
+        if "executable file not found" in result.stderr:
+            console.print("[dim]cco-setup not available, skipping[/dim]")
+            return True
+        console.print(f"[yellow]⚠ cco-setup warning: {result.stderr.strip()}[/yellow]")
+        return True
+    except subprocess.TimeoutExpired:
+        console.print("[yellow]⚠ cco-setup timed out[/yellow]")
+        return True
+    except FileNotFoundError:
+        return True
+
+
+def build_image(stack: LanguageStack, run_cco_setup: bool = True) -> bool:
     """Build Docker image for stack with BuildKit optimization."""
     image_name = get_image_name(stack)
     console.print(f"[bold]Building {image_name}...[/bold]")
@@ -124,6 +165,11 @@ def build_image(stack: LanguageStack) -> bool:
             env=env,
         )
         console.print(f"[green]✓ Built {image_name}[/green]")
+
+        # Run CCO setup after successful build
+        if run_cco_setup:
+            _run_cco_setup(stack)
+
         return True
     except subprocess.CalledProcessError:
         console.print(f"[red]✗ Failed to build {image_name}[/red]")
@@ -156,11 +202,11 @@ def get_git_config() -> tuple[str, str]:
     return name, email
 
 
-def _check_and_prompt_updates() -> bool:
+def _check_and_prompt_updates(stack: LanguageStack) -> bool:
     """Check for updates and prompt user. Returns True if rebuild needed."""
     console.print("[dim]Checking for updates...[/dim]")
 
-    updates = check_all_updates()
+    updates = check_all_updates(stack)
     if not updates:
         return False
 
@@ -282,20 +328,19 @@ def _run(
 
     config = load_config()
 
-    # Auto-detect git config
+    # Auto-detect git config and prompt user
     if not config.git_name or not config.git_email:
         name, email = get_git_config()
-        if name and not config.git_name:
-            config.git_name = name
-        if email and not config.git_email:
-            config.git_email = email
         if name or email:
-            save_config(config)
-
-    # Check for updates (unless skipped)
-    update_rebuild = False
-    if not no_update_check:
-        update_rebuild = _check_and_prompt_updates()
+            detected_name = name if name and not config.git_name else config.git_name
+            detected_email = email if email and not config.git_email else config.git_email
+            console.print(f"[dim]Detected git config: {detected_name} <{detected_email}>[/dim]")
+            if click.confirm("Use this git config?", default=True):
+                config.git_name = detected_name
+                config.git_email = detected_email
+                save_config(config)
+            else:
+                console.print("[dim]Run 'ccbox setup' to configure git credentials.[/dim]")
 
     project_path = Path(path).resolve()
     project_name = project_path.name
@@ -323,8 +368,14 @@ def _run(
         )
     )
 
+    # Check for updates only if image exists (new builds get latest anyway)
+    update_rebuild = False
+    has_image = image_exists(selected_stack)
+    if has_image and not no_update_check:
+        update_rebuild = _check_and_prompt_updates(selected_stack)
+
     # Build if needed (with confirmation) or if update requested
-    needs_build = force_build or update_rebuild or not image_exists(selected_stack)
+    needs_build = force_build or update_rebuild or not has_image
     if needs_build:
         # Skip confirmation if update already confirmed rebuild
         if not update_rebuild:

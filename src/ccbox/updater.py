@@ -128,7 +128,8 @@ def check_cco_update(stack: LanguageStack = LanguageStack.BASE) -> UpdateInfo | 
         changelog = data.get("body")
 
         # Get current installed version from docker image
-        current = _get_docker_version("pip show ClaudeCodeOptimizer | grep Version | cut -d' ' -f2", stack)
+        cmd = "pip show ClaudeCodeOptimizer | grep Version | cut -d' ' -f2"
+        current = _get_docker_version(cmd, stack)
         if not current:
             current = "0.0.0"
 
@@ -163,7 +164,8 @@ def check_claude_code_update(stack: LanguageStack = LanguageStack.BASE) -> Updat
             return None
 
         # Get current installed version from docker image
-        current = _get_docker_version("claude --version 2>/dev/null | head -1 | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+'", stack)
+        cmd = r"claude --version 2>/dev/null | head -1 | grep -oP '[0-9]+\.[0-9]+\.[0-9]+'"
+        current = _get_docker_version(cmd, stack)
         if not current:
             current = "0.0.0"
 
