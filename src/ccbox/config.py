@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
 
@@ -15,22 +15,22 @@ class LanguageStack(str, Enum):
     All stacks include base tools: Node.js + Python + CCO + linting/testing
     """
 
-    BASE = "base"      # Node + Python + CCO + eslint/prettier/ruff/pytest (~600MB)
+    BASE = "base"      # Node + Python + CCO + eslint/prettier/ruff/pytest (~450MB)
     GO = "go"          # + Go + golangci-lint (~750MB)
     RUST = "rust"      # + Rust + clippy (~900MB)
     JAVA = "java"      # + JDK (Temurin LTS) + Maven (~1GB)
-    WEB = "web"        # + pnpm (fullstack) (~650MB)
-    FULL = "full"      # All languages (~1.5GB)
+    WEB = "web"        # + pnpm (fullstack) (~500MB)
+    FULL = "full"      # All languages (~1.35GB)
 
 
-# Stack descriptions for CLI help
+# Stack descriptions for CLI help (sizes are estimates, no dev tools)
 STACK_INFO: dict[LanguageStack, tuple[str, int]] = {
-    LanguageStack.BASE: ("Node + Python + CCO + lint/test tools", 600),
+    LanguageStack.BASE: ("Node + Python + CCO + lint/test tools", 450),
     LanguageStack.GO: ("+ Go (latest) + golangci-lint", 750),
     LanguageStack.RUST: ("+ Rust (latest) + clippy", 900),
     LanguageStack.JAVA: ("+ JDK (Temurin LTS) + Maven", 1000),
-    LanguageStack.WEB: ("+ pnpm (fullstack)", 650),
-    LanguageStack.FULL: ("All: Go + Rust + Java", 1500),
+    LanguageStack.WEB: ("+ pnpm (fullstack)", 500),
+    LanguageStack.FULL: ("All: Go + Rust + Java", 1350),
 }
 
 

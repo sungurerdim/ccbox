@@ -125,7 +125,7 @@ class TestGenerator:
     def test_generate_dockerfile_base(self) -> None:
         """Test BASE Dockerfile generation."""
         dockerfile = generate_dockerfile(LanguageStack.BASE)
-        assert "FROM node:lts-slim" in dockerfile
+        assert "FROM node:slim" in dockerfile
         assert "@anthropic-ai/claude-code" in dockerfile
         assert "python3" in dockerfile
         assert "ClaudeCodeOptimizer" in dockerfile
@@ -926,7 +926,7 @@ class TestGeneratorExtended:
     def test_generate_dockerfile_web(self) -> None:
         """Test WEB Dockerfile generation."""
         dockerfile = generate_dockerfile(LanguageStack.WEB)
-        assert "FROM node:lts-slim" in dockerfile
+        assert "FROM node:slim" in dockerfile
         assert "pnpm" in dockerfile
 
     def test_generate_dockerignore(self) -> None:
