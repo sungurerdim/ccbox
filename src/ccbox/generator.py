@@ -256,9 +256,6 @@ export NODE_OPTIONS="--max-old-space-size=$NODE_MEM"
 # Dynamic CPU allocation
 export UV_THREADPOOL_SIZE=$(nproc)
 
-# Run CCO setup if available
-command -v cco-setup &>/dev/null && cco-setup 2>/dev/null
-
 # Execute Claude Code with bypass permissions
 exec claude --dangerously-skip-permissions "$@"
 """

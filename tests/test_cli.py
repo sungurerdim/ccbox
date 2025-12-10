@@ -38,14 +38,14 @@ from ccbox.generator import (
 )
 from ccbox.updater import (
     UpdateInfo,
+    _get_docker_version,
+    _get_installed_cco_version,
+    _image_exists,
     check_all_updates,
     check_ccbox_update,
     check_cco_update,
     check_claude_code_update,
     format_changelog,
-    _get_installed_cco_version,
-    _image_exists,
-    _get_docker_version,
 )
 
 
@@ -166,7 +166,8 @@ class TestGenerator:
         assert "#!/bin/bash" in entrypoint
         assert "--dangerously-skip-permissions" in entrypoint
         assert "NODE_OPTIONS" in entrypoint
-        assert "cco-setup" in entrypoint
+        # cco-setup is now run separately after build, not in entrypoint
+        assert "cco-setup" not in entrypoint
 
     def test_write_build_files(self, tmp_path: Path) -> None:
         """Test writing build files to directory."""
@@ -1043,7 +1044,7 @@ class TestCheckAndPromptUpdates:
         from ccbox.cli import _check_and_prompt_updates
 
         with patch("ccbox.cli.check_all_updates", return_value=[]):
-            result = _check_and_prompt_updates()
+            result = _check_and_prompt_updates(LanguageStack.BASE)
             assert result is False
 
     def test_check_and_prompt_updates_declined(self) -> None:
@@ -1055,7 +1056,7 @@ class TestCheckAndPromptUpdates:
             patch("ccbox.cli.check_all_updates", return_value=[update]),
             patch("click.confirm", return_value=False),
         ):
-            result = _check_and_prompt_updates()
+            result = _check_and_prompt_updates(LanguageStack.BASE)
             assert result is False
 
     def test_check_and_prompt_updates_cco_only(self) -> None:
@@ -1067,7 +1068,7 @@ class TestCheckAndPromptUpdates:
             patch("ccbox.cli.check_all_updates", return_value=[update]),
             patch("click.confirm", return_value=True),
         ):
-            result = _check_and_prompt_updates()
+            result = _check_and_prompt_updates(LanguageStack.BASE)
             assert result is True
 
     def test_check_and_prompt_updates_ccbox_success(self) -> None:
@@ -1083,7 +1084,7 @@ class TestCheckAndPromptUpdates:
             patch("subprocess.run", return_value=mock_run),
             pytest.raises(SystemExit),
         ):
-            _check_and_prompt_updates()
+            _check_and_prompt_updates(LanguageStack.BASE)
 
     def test_check_and_prompt_updates_ccbox_failure(self) -> None:
         """Test ccbox update failure continues."""
@@ -1097,7 +1098,7 @@ class TestCheckAndPromptUpdates:
             patch("click.confirm", return_value=True),
             patch("subprocess.run", return_value=mock_run),
         ):
-            result = _check_and_prompt_updates()
+            result = _check_and_prompt_updates(LanguageStack.BASE)
             # Returns True because rebuild is still triggered (CCO gets rebuilt)
             assert result is True
 
@@ -1110,7 +1111,7 @@ class TestCheckAndPromptUpdates:
             patch("ccbox.cli.check_all_updates", return_value=[update]),
             patch("click.confirm", return_value=True),
         ):
-            result = _check_and_prompt_updates()
+            result = _check_and_prompt_updates(LanguageStack.BASE)
             assert result is True
 
 
@@ -1125,7 +1126,7 @@ class TestRunFlowExtended:
             patch("ccbox.cli.load_config", return_value=Config()),
             patch("ccbox.cli.get_git_config", return_value=("Test", "test@test.com")),
             patch("ccbox.cli.save_config"),
-            patch("ccbox.cli._check_and_prompt_updates", return_value=False),
+            patch("click.confirm", return_value=True),  # Confirm git config
             patch("ccbox.cli.detect_project_type") as mock_detect,
             patch("ccbox.cli._select_stack", return_value=None),  # User cancels
         ):
@@ -1234,15 +1235,15 @@ class TestRunFlowExtended:
 class TestGitConfigSave:
     """Tests for git config auto-detection and save."""
 
-    def test_run_auto_saves_git_config(self, tmp_path: Path) -> None:
-        """Test that git config is auto-saved when detected."""
+    def test_run_prompts_and_saves_git_config(self, tmp_path: Path) -> None:
+        """Test that git config is prompted and saved when user confirms."""
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
             patch("ccbox.cli.load_config", return_value=Config()),
             patch("ccbox.cli.get_git_config", return_value=("Auto Name", "auto@test.com")),
             patch("ccbox.cli.save_config") as mock_save,
-            patch("ccbox.cli._check_and_prompt_updates", return_value=False),
+            patch("click.confirm", return_value=True),  # User confirms git config
             patch("ccbox.cli.detect_project_type") as mock_detect,
             patch("ccbox.cli._select_stack", return_value=None),
         ):
@@ -1251,6 +1252,24 @@ class TestGitConfigSave:
             mock_detect.return_value = DetectionResult([], LanguageStack.BASE)
             runner.invoke(cli, ["-p", str(tmp_path), "--no-update-check"])
             mock_save.assert_called_once()
+
+    def test_run_skips_git_config_when_declined(self, tmp_path: Path) -> None:
+        """Test that git config is not saved when user declines."""
+        runner = CliRunner()
+        with (
+            patch("ccbox.cli.check_docker", return_value=True),
+            patch("ccbox.cli.load_config", return_value=Config()),
+            patch("ccbox.cli.get_git_config", return_value=("Auto Name", "auto@test.com")),
+            patch("ccbox.cli.save_config") as mock_save,
+            patch("click.confirm", return_value=False),  # User declines git config
+            patch("ccbox.cli.detect_project_type") as mock_detect,
+            patch("ccbox.cli._select_stack", return_value=None),
+        ):
+            from ccbox.detector import DetectionResult
+
+            mock_detect.return_value = DetectionResult([], LanguageStack.BASE)
+            runner.invoke(cli, ["-p", str(tmp_path), "--no-update-check"])
+            mock_save.assert_not_called()
 
 
 class TestUpdaterExtended:
