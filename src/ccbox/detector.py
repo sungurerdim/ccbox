@@ -14,149 +14,62 @@ class DetectionResult:
 
     recommended_stack: LanguageStack
     detected_languages: list[str] = field(default_factory=list)
-    confidence: float = 0.0  # 0.0 to 1.0
-    details: dict[str, bool] = field(default_factory=dict)
 
 
 # File patterns for language detection
 LANGUAGE_PATTERNS: dict[str, list[str]] = {
-    "node": [
-        "package.json",
-        "package-lock.json",
-        "yarn.lock",
-        "pnpm-lock.yaml",
-        ".nvmrc",
-        "tsconfig.json",
-        ".npmrc",
-    ],
-    "python": [
-        "pyproject.toml",
-        "setup.py",
-        "requirements.txt",
-        "Pipfile",
-        "poetry.lock",
-        ".python-version",
-        "tox.ini",
-        "setup.cfg",
-    ],
-    "go": [
-        "go.mod",
-        "go.sum",
-        "go.work",
-    ],
-    "rust": [
-        "Cargo.toml",
-        "Cargo.lock",
-    ],
-    "java": [
-        "pom.xml",
-        "build.gradle",
-        "build.gradle.kts",
-        "settings.gradle",
-        ".mvn",
-        "gradlew",
-    ],
+    "python": ["pyproject.toml", "setup.py", "requirements.txt", "Pipfile", "poetry.lock"],
+    "node": ["package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml"],
+    "go": ["go.mod", "go.sum"],
+    "rust": ["Cargo.toml", "Cargo.lock"],
+    "java": ["pom.xml", "build.gradle", "build.gradle.kts"],
 }
-
-
-def _check_glob_pattern(directory: Path, pattern: str) -> bool:
-    """Check if a glob pattern matches any files in the directory."""
-    if "*" in pattern:
-        return any(directory.glob(pattern))
-    return (directory / pattern).exists()
 
 
 def detect_project_type(directory: Path) -> DetectionResult:
-    """
-    Detect the project type based on files in the directory.
-
-    Args:
-        directory: Path to the project directory
-
-    Returns:
-        DetectionResult with recommended stack and detected languages
-    """
-    detected: dict[str, bool] = {}
+    """Detect the project type based on files in the directory."""
+    detected: list[str] = []
 
     for lang, patterns in LANGUAGE_PATTERNS.items():
         for pattern in patterns:
-            if _check_glob_pattern(directory, pattern):
-                detected[lang] = True
+            if (directory / pattern).exists():
+                detected.append(lang)
                 break
-        else:
-            detected[lang] = False
 
-    languages = [lang for lang, found in detected.items() if found]
-
-    # Determine recommended stack based on detected languages
-    recommended = _determine_stack(languages)
-
-    # Calculate confidence
-    confidence = _calculate_confidence(languages, directory)
+    # Determine recommended stack
+    stack = _determine_stack(detected)
 
     return DetectionResult(
-        recommended_stack=recommended,
-        detected_languages=languages,
-        confidence=confidence,
-        details=detected,
+        recommended_stack=stack,
+        detected_languages=detected,
     )
-
-
-# Language to stack mapping
-LANGUAGE_TO_STACK: dict[str, LanguageStack] = {
-    "node": LanguageStack.BASE,
-    "python": LanguageStack.PYTHON,
-    "go": LanguageStack.GO,
-    "rust": LanguageStack.RUST,
-    "java": LanguageStack.JAVA,
-}
 
 
 def _determine_stack(languages: list[str]) -> LanguageStack:
     """Determine the best stack based on detected languages."""
-    if not languages:
-        return LanguageStack.BASE
+    has_python = "python" in languages
+    has_node = "node" in languages
+    has_go = "go" in languages
+    has_rust = "rust" in languages
+    has_java = "java" in languages
 
-    # Node + Python = WEB stack (common fullstack combo)
-    if "node" in languages and "python" in languages:
-        return LanguageStack.WEB
-
-    # Multiple languages -> FULL
-    if len(languages) > 2:
+    # Multiple compiled languages -> FULL
+    compiled_count = sum([has_go, has_rust, has_java])
+    if compiled_count >= 2:
         return LanguageStack.FULL
 
-    # Single language: use specific stack
-    for lang in ("python", "go", "rust", "java"):
-        if lang in languages:
-            return LANGUAGE_TO_STACK[lang]
+    # Single compiled language takes priority
+    if has_go:
+        return LanguageStack.GO
+    if has_rust:
+        return LanguageStack.RUST
+    if has_java:
+        return LanguageStack.JAVA
 
-    # Node only or unknown -> BASE
+    # Node + Python -> WEB (fullstack)
+    if has_node and has_python:
+        return LanguageStack.WEB
+
+    # Python only, Node only, or nothing -> BASE
+    # (BASE includes Python + Node tools anyway)
     return LanguageStack.BASE
-
-
-def _calculate_confidence(languages: list[str], directory: Path) -> float:
-    """Calculate confidence score for detection."""
-    if not languages:
-        return 0.0
-
-    # More files found = higher confidence
-    total_matches = 0
-    for lang in languages:
-        patterns = LANGUAGE_PATTERNS.get(lang, [])
-        for pattern in patterns:
-            if _check_glob_pattern(directory, pattern):
-                total_matches += 1
-
-    # Confidence based on number of matching files
-    # 1 file = 0.5, 2 files = 0.7, 3+ files = 0.9
-    if total_matches >= 3:
-        return 0.9
-    elif total_matches == 2:
-        return 0.7
-    else:
-        return 0.5
-
-
-def get_stack_for_language(language: str) -> LanguageStack | None:
-    """Get the appropriate stack for a specific language."""
-    return LANGUAGE_TO_STACK.get(language)

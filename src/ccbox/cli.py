@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import os
+import platform
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import click
@@ -18,17 +20,42 @@ from .config import (
     STACK_INFO,
     LanguageStack,
     get_config_dir,
+    get_image_name,
     load_config,
     save_config,
 )
 from .detector import detect_project_type
 from .generator import get_docker_run_cmd, write_build_files
+from .updater import check_all_updates, format_changelog
 
 console = Console()
 
 
-def check_docker() -> bool:
-    """Check if Docker is available and running."""
+def _start_docker_desktop() -> bool:
+    """Attempt to start Docker Desktop based on platform."""
+    system = platform.system()
+
+    if system == "Windows":
+        result = subprocess.run(
+            ["docker", "desktop", "start"],
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode == 0:
+            return True
+        docker_path = Path(os.environ.get("PROGRAMFILES", "C:\\Program Files"))
+        docker_exe = docker_path / "Docker" / "Docker" / "Docker Desktop.exe"
+        if docker_exe.exists():
+            subprocess.Popen([str(docker_exe)], start_new_session=True)
+            return True
+    elif system == "Darwin":
+        subprocess.run(["open", "-a", "Docker"], capture_output=True, check=False)
+        return True
+    return False
+
+
+def check_docker(auto_start: bool = True) -> bool:
+    """Check if Docker is available and running, optionally auto-start."""
     try:
         result = subprocess.run(
             ["docker", "info"],
@@ -36,7 +63,26 @@ def check_docker() -> bool:
             text=True,
             check=False,
         )
-        return result.returncode == 0
+        if result.returncode == 0:
+            return True
+
+        if auto_start:
+            console.print("[dim]Docker not running, attempting to start...[/dim]")
+            if _start_docker_desktop():
+                for i in range(30):
+                    time.sleep(1)
+                    result = subprocess.run(
+                        ["docker", "info"],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    if result.returncode == 0:
+                        console.print("[green]Docker started successfully[/green]")
+                        return True
+                    if i % 5 == 4:
+                        console.print(f"[dim]Waiting for Docker... ({i + 1}s)[/dim]")
+        return False
     except FileNotFoundError:
         return False
 
@@ -45,7 +91,7 @@ def image_exists(stack: LanguageStack) -> bool:
     """Check if Docker image exists for stack."""
     try:
         result = subprocess.run(
-            ["docker", "image", "inspect", f"ccbox:{stack.value}"],
+            ["docker", "image", "inspect", get_image_name(stack)],
             capture_output=True,
             check=False,
         )
@@ -55,25 +101,32 @@ def image_exists(stack: LanguageStack) -> bool:
 
 
 def build_image(stack: LanguageStack) -> bool:
-    """Build Docker image for stack."""
-    console.print(f"[bold]Building ccbox:{stack.value}...[/bold]")
+    """Build Docker image for stack with BuildKit optimization."""
+    image_name = get_image_name(stack)
+    console.print(f"[bold]Building {image_name}...[/bold]")
 
     build_dir = write_build_files(stack)
+
+    # Enable BuildKit for faster, more efficient builds
+    env = os.environ.copy()
+    env["DOCKER_BUILDKIT"] = "1"
 
     try:
         subprocess.run(
             [
                 "docker", "build",
-                "-t", f"ccbox:{stack.value}",
+                "-t", image_name,
                 "-f", str(build_dir / "Dockerfile"),
+                "--progress=auto",
                 str(build_dir),
             ],
             check=True,
+            env=env,
         )
-        console.print(f"[green]✓ Built ccbox:{stack.value}[/green]")
+        console.print(f"[green]✓ Built {image_name}[/green]")
         return True
     except subprocess.CalledProcessError:
-        console.print(f"[red]✗ Failed to build ccbox:{stack.value}[/red]")
+        console.print(f"[red]✗ Failed to build {image_name}[/red]")
         return False
 
 
@@ -103,37 +156,133 @@ def get_git_config() -> tuple[str, str]:
     return name, email
 
 
+def _check_and_prompt_updates() -> bool:
+    """Check for updates and prompt user. Returns True if rebuild needed."""
+    console.print("[dim]Checking for updates...[/dim]")
+
+    updates = check_all_updates()
+    if not updates:
+        return False
+
+    console.print()
+    console.print(Panel.fit("[bold yellow]Updates Available[/bold yellow]", border_style="yellow"))
+
+    for update in updates:
+        ver_info = f"{update.current} → [green]{update.latest}[/green]"
+        console.print(f"\n[bold]{update.package}[/bold]: {ver_info}")
+        if update.changelog:
+            console.print("[dim]Changelog:[/dim]")
+            console.print(format_changelog(update.changelog))
+
+    console.print()
+    if click.confirm("Update and rebuild images?", default=True):
+        # Update ccbox if needed
+        ccbox_updated = False
+        for update in updates:
+            if update.package == "ccbox":
+                console.print("[dim]Updating ccbox...[/dim]")
+                result = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "--upgrade", "ccbox"],
+                    capture_output=True,
+                    check=False,
+                )
+                if result.returncode == 0:
+                    console.print("[green]✓ ccbox updated[/green]")
+                    ccbox_updated = True
+                else:
+                    console.print("[red]✗ Failed to update ccbox[/red]")
+
+        if ccbox_updated:
+            console.print("\n[yellow]Please restart ccbox to use the new version.[/yellow]")
+            sys.exit(0)
+
+        # CCO will be updated during image rebuild
+        return True
+
+    return False
+
+
 @click.group(invoke_without_command=True)
 @click.option("--stack", "-s", type=click.Choice([s.value for s in LanguageStack]), help="Stack")
 @click.option("--build", "-b", is_flag=True, help="Force rebuild image")
 @click.option("--path", "-p", default=".", type=click.Path(exists=True), help="Project path")
+@click.option("--no-update-check", is_flag=True, help="Skip update check")
 @click.pass_context
 @click.version_option(version=__version__, prog_name="ccbox")
-def cli(ctx: click.Context, stack: str | None, build: bool, path: str) -> None:
+def cli(
+    ctx: click.Context, stack: str | None, build: bool, path: str, no_update_check: bool
+) -> None:
     """ccbox - Run Claude Code in isolated Docker containers.
 
     Simply run 'ccbox' in any project directory to start.
     """
-    # If a subcommand is invoked, skip default behavior
     if ctx.invoked_subcommand is not None:
         return
 
-    # Default behavior: run Claude Code
-    _run(stack, build, path)
+    _run(stack, build, path, no_update_check)
 
 
-def _run(stack_name: str | None, force_build: bool, path: str) -> None:
+def _select_stack(
+    detected_stack: LanguageStack, detected_languages: list[str]
+) -> LanguageStack | None:
+    """Show interactive stack selection menu."""
+    console.print(Panel.fit("[bold]Stack Selection[/bold]", border_style="blue"))
+
+    if detected_languages:
+        console.print(f"[dim]Detected languages: {', '.join(detected_languages)}[/dim]\n")
+
+    # Build options list
+    options: list[tuple[str, LanguageStack, bool]] = []
+    for stack in LanguageStack:
+        desc, size = STACK_INFO[stack]
+        is_detected = stack == detected_stack
+        options.append((f"{stack.value}", stack, is_detected))
+
+    # Display options
+    console.print("[bold]Available stacks:[/bold]")
+    for idx, (name, stack, is_detected) in enumerate(options, 1):
+        desc, size = STACK_INFO[stack]
+        marker = "[green]→[/green] " if is_detected else "  "
+        detected_label = " [green](detected)[/green]" if is_detected else ""
+        installed = " [dim][installed][/dim]" if image_exists(stack) else ""
+        console.print(f"  {marker}[cyan]{idx}[/cyan]. {name}{detected_label}{installed}")
+        console.print(f"      [dim]{desc} (~{size}MB)[/dim]")
+
+    console.print("\n  [dim]0[/dim]. Cancel")
+
+    # Get user choice
+    console.print()
+    default_idx = next((i for i, (_, s, _) in enumerate(options, 1) if s == detected_stack), 1)
+
+    while True:
+        choice = click.prompt(
+            f"Select stack [1-{len(options)}, 0 to cancel]",
+            default=str(default_idx),
+            show_default=False,
+        )
+        try:
+            choice_int = int(choice)
+            if choice_int == 0:
+                return None
+            if 1 <= choice_int <= len(options):
+                return options[choice_int - 1][1]
+        except ValueError:
+            pass
+        console.print("[red]Invalid choice. Try again.[/red]")
+
+
+def _run(
+    stack_name: str | None, force_build: bool, path: str, no_update_check: bool = False
+) -> None:
     """Run Claude Code in Docker container."""
-    # Check Docker
     if not check_docker():
         console.print("[red]Error: Docker is not running.[/red]")
         console.print("Start Docker and try again.")
         sys.exit(1)
 
-    # Load config
     config = load_config()
 
-    # Auto-detect git config if not set
+    # Auto-detect git config
     if not config.git_name or not config.git_email:
         name, email = get_git_config()
         if name and not config.git_name:
@@ -143,17 +292,30 @@ def _run(stack_name: str | None, force_build: bool, path: str) -> None:
         if name or email:
             save_config(config)
 
-    # Resolve project path
+    # Check for updates (unless skipped)
+    update_rebuild = False
+    if not no_update_check:
+        update_rebuild = _check_and_prompt_updates()
+
     project_path = Path(path).resolve()
     project_name = project_path.name
 
-    # Detect or use specified stack
+    # Detect project type
+    detection = detect_project_type(project_path)
+
+    # Stack selection: use provided or show interactive menu
     if stack_name:
         selected_stack = LanguageStack(stack_name)
     else:
-        detection = detect_project_type(project_path)
-        selected_stack = detection.recommended_stack
+        selected_stack_or_none = _select_stack(
+            detection.recommended_stack, detection.detected_languages
+        )
+        if selected_stack_or_none is None:
+            console.print("[yellow]Cancelled.[/yellow]")
+            sys.exit(0)
+        selected_stack = selected_stack_or_none
 
+    console.print()
     console.print(
         Panel.fit(
             f"[bold]{project_name}[/bold] → ccbox:{selected_stack.value}",
@@ -161,12 +323,18 @@ def _run(stack_name: str | None, force_build: bool, path: str) -> None:
         )
     )
 
-    # Build image if needed
-    needs_build = force_build or not image_exists(selected_stack)
-    if needs_build and not build_image(selected_stack):
-        sys.exit(1)
+    # Build if needed (with confirmation) or if update requested
+    needs_build = force_build or update_rebuild or not image_exists(selected_stack)
+    if needs_build:
+        # Skip confirmation if update already confirmed rebuild
+        if not update_rebuild:
+            desc, size = STACK_INFO[selected_stack]
+            if not click.confirm(f"Build ccbox:{selected_stack.value} (~{size}MB)?", default=True):
+                console.print("[yellow]Cancelled.[/yellow]")
+                sys.exit(0)
+        if not build_image(selected_stack):
+            sys.exit(1)
 
-    # Run container
     console.print("[dim]Starting Claude Code...[/dim]\n")
 
     cmd = get_docker_run_cmd(config, project_path, project_name, selected_stack)
@@ -174,7 +342,7 @@ def _run(stack_name: str | None, force_build: bool, path: str) -> None:
     try:
         subprocess.run(cmd, check=True)
     except subprocess.CalledProcessError as e:
-        if e.returncode != 130:  # Ignore Ctrl+C
+        if e.returncode != 130:
             sys.exit(e.returncode)
     except KeyboardInterrupt:
         pass
@@ -184,8 +352,6 @@ def _run(stack_name: str | None, force_build: bool, path: str) -> None:
 def setup() -> None:
     """Configure git credentials (one-time setup)."""
     config = load_config()
-
-    # Try to get from git config
     sys_name, sys_email = get_git_config()
 
     console.print("[bold]ccbox Setup[/bold]\n")
@@ -203,7 +369,7 @@ def setup() -> None:
 
 @cli.command()
 @click.option("--stack", "-s", type=click.Choice([s.value for s in LanguageStack]), help="Stack")
-@click.option("--all", "-a", "build_all", is_flag=True, help="Rebuild all existing images")
+@click.option("--all", "-a", "build_all", is_flag=True, help="Rebuild all installed images")
 def update(stack: str | None, build_all: bool) -> None:
     """Rebuild Docker image(s) with latest Claude Code."""
     if not check_docker():
@@ -215,13 +381,11 @@ def update(stack: str | None, build_all: bool) -> None:
     if stack:
         stacks_to_build.append(LanguageStack(stack))
     elif build_all:
-        # Rebuild all existing images
         for s in LanguageStack:
             if image_exists(s):
                 stacks_to_build.append(s)
     else:
-        # Default: rebuild python stack (most common)
-        stacks_to_build.append(LanguageStack.PYTHON)
+        stacks_to_build.append(LanguageStack.BASE)
 
     if not stacks_to_build:
         console.print("[yellow]No images to update.[/yellow]")
@@ -232,9 +396,8 @@ def update(stack: str | None, build_all: bool) -> None:
 
 
 @cli.command()
-@click.option("--images", "-i", is_flag=True, help="Remove images only")
 @click.option("--force", "-f", is_flag=True, help="Skip confirmation")
-def clean(images: bool, force: bool) -> None:
+def clean(force: bool) -> None:
     """Remove ccbox containers and images."""
     if not check_docker():
         console.print("[red]Error: Docker is not running.[/red]")
@@ -243,25 +406,22 @@ def clean(images: bool, force: bool) -> None:
     if not force and not click.confirm("Remove all ccbox containers and images?", default=False):
         return
 
-    # Remove containers
-    if not images:
-        console.print("[dim]Removing containers...[/dim]")
-        result = subprocess.run(
-            ["docker", "ps", "-a", "--filter", "name=ccbox-", "--format", "{{.Names}}"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        for name in result.stdout.strip().split("\n"):
-            if name:
-                subprocess.run(["docker", "rm", "-f", name], capture_output=True, check=False)
+    console.print("[dim]Removing containers...[/dim]")
+    result = subprocess.run(
+        ["docker", "ps", "-a", "--filter", "name=ccbox-", "--format", "{{.Names}}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    for name in result.stdout.strip().split("\n"):
+        if name:
+            subprocess.run(["docker", "rm", "-f", name], capture_output=True, check=False)
 
-    # Remove images
     console.print("[dim]Removing images...[/dim]")
     for stack in LanguageStack:
         if image_exists(stack):
             subprocess.run(
-                ["docker", "rmi", "-f", f"ccbox:{stack.value}"],
+                ["docker", "rmi", "-f", get_image_name(stack)],
                 capture_output=True,
                 check=False,
             )
@@ -280,11 +440,9 @@ def doctor(path: str) -> None:
     # System checks
     checks: list[tuple[str, bool, str]] = []
 
-    # Docker
-    docker_ok = check_docker()
+    docker_ok = check_docker(auto_start=False)
     checks.append(("Docker running", docker_ok, "Start Docker"))
 
-    # Disk space
     try:
         _, _, free = shutil.disk_usage("/")
         free_gb = free // (1024**3)
@@ -292,20 +450,16 @@ def doctor(path: str) -> None:
     except Exception:
         checks.append(("Disk space", False, "Cannot check"))
 
-    # Python
     py_ok = sys.version_info >= (3, 8)
     checks.append((f"Python {sys.version_info.major}.{sys.version_info.minor}", py_ok, "Need 3.8+"))
 
-    # Claude config
     config = load_config()
     claude_dir = Path(os.path.expanduser(config.claude_config_dir))
     checks.append(("Claude config", claude_dir.exists(), "Run 'claude' first"))
 
-    # Git config
     git_ok = bool(config.git_name and config.git_email)
     checks.append(("Git configured", git_ok, "Run 'ccbox setup'"))
 
-    # Display checks
     table = Table(title="System Status")
     table.add_column("Check")
     table.add_column("Status")
@@ -330,7 +484,7 @@ def doctor(path: str) -> None:
     found = False
     for stack in LanguageStack:
         if image_exists(stack):
-            desc, size = STACK_INFO[stack]
+            desc, _ = STACK_INFO[stack]
             console.print(f"  [green]ccbox:{stack.value}[/green] - {desc}")
             found = True
     if not found:
@@ -350,7 +504,8 @@ def stacks() -> None:
         table.add_row(stack.value, desc, f"~{size}MB")
 
     console.print(table)
-    console.print("\n[dim]Usage: ccbox --stack=python[/dim]")
+    console.print("\n[dim]Usage: ccbox --stack=go[/dim]")
+    console.print("[dim]All stacks include: Python + JS/TS + CCO + lint/test tools[/dim]")
 
 
 if __name__ == "__main__":
