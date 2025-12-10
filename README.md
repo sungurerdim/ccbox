@@ -8,6 +8,7 @@ Run Claude Code in isolated Docker containers. One command, zero configuration.
 - **Fast**: Bypass mode enabled by default (safe because container is sandboxed)
 - **Simple**: Single command to start, auto-detects everything
 - **Auto-start**: Docker Desktop starts automatically if not running (Windows/Mac)
+- **Git Auto-detect**: Git credentials auto-detected from host system
 - **Persistent**: Claude settings stay on host (`~/.claude`), survive container restarts
 - **Clean**: No config files in your project directories
 - **Up-to-date**: Automatic update checks for ccbox and CCO
@@ -16,7 +17,7 @@ Run Claude Code in isolated Docker containers. One command, zero configuration.
 ## Quick Start
 
 ```bash
-pip install ccbox
+pip install git+https://github.com/sungurerdim/ccbox.git
 ```
 
 ```bash
@@ -103,7 +104,7 @@ Minimal config stored in `~/.ccbox/config.json`:
 }
 ```
 
-Git config is auto-detected from your system. Run `ccbox setup` only if you need to override.
+Git credentials are auto-detected from your system (`git config --global user.name/email`). Run `ccbox setup` only if you need to override.
 
 ## Auto-Update Check
 
