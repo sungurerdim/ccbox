@@ -109,7 +109,8 @@ Git config is auto-detected from your system. Run `ccbox setup` only if you need
 
 On startup, ccbox checks for updates to:
 - **ccbox** itself (PyPI)
-- **CCO** (ClaudeCodeOptimizer, GitHub)
+- **Claude Code** (npm, version inside Docker image)
+- **CCO** (ClaudeCodeOptimizer, GitHub, version inside Docker image)
 
 If updates are available, you'll be prompted to update. Use `--no-update-check` to skip.
 
@@ -166,7 +167,7 @@ ccbox
 git clone https://github.com/sungurerdim/ccbox.git
 cd ccbox
 pip install -e ".[dev]"
-pytest --cov=src/ccbox   # 100% coverage, 106 tests
+pytest --cov=src/ccbox   # 100% coverage, 121 tests
 ruff check src/ccbox
 mypy src/ccbox --strict
 ```
