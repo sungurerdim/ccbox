@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -70,7 +71,7 @@ class TestConfig:
     def test_config_serialization(self) -> None:
         """Test config serialization to JSON."""
         config = Config(git_name="Test")
-        data = config.model_dump()
+        data = asdict(config)
         assert data["git_name"] == "Test"
 
 

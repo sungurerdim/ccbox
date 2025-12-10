@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
-
-from pydantic import BaseModel
 
 
 class LanguageStack(str, Enum):
@@ -35,7 +34,8 @@ STACK_INFO: dict[LanguageStack, tuple[str, int]] = {
 }
 
 
-class Config(BaseModel):
+@dataclass
+class Config:
     """ccbox configuration model."""
 
     version: str = "1.0.0"
@@ -79,7 +79,7 @@ def save_config(config: Config) -> None:
 
     config_path = get_config_path()
     config_path.write_text(
-        json.dumps(config.model_dump(), indent=2, ensure_ascii=False),
+        json.dumps(asdict(config), indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
 
