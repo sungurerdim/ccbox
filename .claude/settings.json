@@ -1,0 +1,11 @@
+{
+  "env": {
+    "MAX_THINKING_TOKENS": "5000",
+    "MAX_MCP_OUTPUT_TOKENS": "25000",
+    "DISABLE_PROMPT_CACHING": "0"
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "node .claude/statusline.js"
+  }
+}
