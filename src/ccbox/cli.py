@@ -357,9 +357,13 @@ def _run(
     # Detect project type
     detection = detect_project_type(project_path)
 
-    # Stack selection: use provided or show interactive menu
+    # Stack selection: use provided, auto-detect if image exists, or show menu
     if stack_name:
         selected_stack = LanguageStack(stack_name)
+    elif image_exists(detection.recommended_stack):
+        # Auto-select detected stack if image already exists
+        selected_stack = detection.recommended_stack
+        console.print(f"[dim]Using existing image: ccbox:{selected_stack.value}[/dim]")
     else:
         selected_stack_or_none = _select_stack(
             detection.recommended_stack, detection.detected_languages
