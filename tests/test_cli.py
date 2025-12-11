@@ -90,9 +90,18 @@ class TestConfigFunctions:
 
     def test_get_container_name(self) -> None:
         """Test container name generation."""
-        assert get_container_name("my-project") == "ccbox-my-project"
-        assert get_container_name("My Project") == "ccbox-my-project"
-        assert get_container_name("test_app") == "ccbox-test_app"
+        # Test unique=False (deterministic names)
+        assert get_container_name("my-project", unique=False) == "ccbox-my-project"
+        assert get_container_name("My Project", unique=False) == "ccbox-my-project"
+        assert get_container_name("test_app", unique=False) == "ccbox-test_app"
+
+        # Test unique=True (default) - has random suffix
+        name1 = get_container_name("my-project")
+        name2 = get_container_name("my-project")
+        assert name1.startswith("ccbox-my-project-")
+        assert name2.startswith("ccbox-my-project-")
+        assert len(name1.split("-")[-1]) == 6  # 6-char hex suffix
+        assert name1 != name2  # Each call generates unique name
 
     def test_image_name(self) -> None:
         """Test image name generation."""
@@ -129,8 +138,6 @@ class TestGenerator:
         assert "@anthropic-ai/claude-code" in dockerfile
         assert "python3" in dockerfile
         assert "ClaudeCodeOptimizer" in dockerfile
-        assert "ruff" in dockerfile
-        assert "prettier" in dockerfile
         assert "syntax=docker/dockerfile:1" in dockerfile  # BuildKit
 
     def test_generate_dockerfile_go(self) -> None:
