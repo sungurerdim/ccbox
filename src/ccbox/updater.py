@@ -128,10 +128,11 @@ def check_cco_update(stack: LanguageStack = LanguageStack.BASE) -> UpdateInfo | 
         changelog = data.get("body")
 
         # Get current installed version from docker image
-        cmd = "pip show ClaudeCodeOptimizer | grep Version | cut -d' ' -f2"
+        # Package name is lowercase in pyproject.toml
+        cmd = "pip show claudecodeoptimizer | grep Version | cut -d' ' -f2"
         current = _get_docker_version(cmd, stack)
         if not current:
-            current = "0.0.0"
+            return None  # Fail-fast: can't compare without current version
 
         return UpdateInfo(
             package="CCO",
@@ -167,7 +168,7 @@ def check_claude_code_update(stack: LanguageStack = LanguageStack.BASE) -> Updat
         cmd = r"claude --version 2>/dev/null | head -1 | grep -oP '[0-9]+\.[0-9]+\.[0-9]+'"
         current = _get_docker_version(cmd, stack)
         if not current:
-            current = "0.0.0"
+            return None  # Fail-fast: can't compare without current version
 
         return UpdateInfo(
             package="Claude Code",
@@ -183,7 +184,7 @@ def _get_installed_cco_version() -> str | None:
     try:
         from importlib.metadata import version
 
-        return version("ClaudeCodeOptimizer")
+        return version("claudecodeoptimizer")
     except Exception:
         return None
 
