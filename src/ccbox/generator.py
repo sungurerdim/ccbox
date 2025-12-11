@@ -8,46 +8,44 @@ from typing import Callable
 
 from .config import Config, LanguageStack, get_config_dir, get_image_name
 
-# Common tools added to all images (CCO, Claude Code, lint/test tools)
-# Optimized: single layer, parallel downloads, minimal temp files
+# Common system packages (minimal - matches original)
 COMMON_TOOLS = """
-# System packages + CLI tools (single layer for caching)
+# System packages (minimal but complete)
 RUN apt-get update && apt-get install -y --no-install-recommends \\
-    git gnupg ca-certificates openssh-client curl \\
-    jq ripgrep procps locales \\
-    bash less tree file zip unzip \\
+    git curl ca-certificates bash \\
+    python3 python3-pip python3-venv python-is-python3 \\
+    ripgrep jq procps openssh-client locales \\
+    # Standard CLI tools used by Claude Code
+    gawk sed grep findutils coreutils less file unzip \\
+    && rm -rf /var/lib/apt/lists/* \\
     && sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen \\
-    && rm -rf /var/lib/apt/lists/*
-
-# External tools: fd, gh, yq (separate layer - changes less frequently)
-RUN set -eux; \\
-    FD_VER=$(curl -sfL https://api.github.com/repos/sharkdp/fd/releases/latest | jq -r .tag_name); \\
-    GH_VER=$(curl -sfL https://api.github.com/repos/cli/cli/releases/latest | jq -r .tag_name); \\
-    curl -sfL "https://github.com/sharkdp/fd/releases/download/${FD_VER}/fd_${FD_VER#v}_amd64.deb" -o /tmp/fd.deb; \\
-    curl -sfL "https://github.com/cli/cli/releases/download/${GH_VER}/gh_${GH_VER#v}_linux_amd64.tar.gz" | tar xz --strip-components=2 -C /usr/local/bin "gh_${GH_VER#v}_linux_amd64/bin/gh"; \\
-    curl -sfL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq; \\
-    dpkg -i /tmp/fd.deb; \\
-    chmod +x /usr/local/bin/yq; \\
-    rm -f /tmp/fd.deb
+    # fd (latest)
+    && FD_VER=$(curl -sL https://api.github.com/repos/sharkdp/fd/releases/latest | jq -r .tag_name) \\
+    && curl -sL "https://github.com/sharkdp/fd/releases/download/${FD_VER}/fd_${FD_VER#v}_amd64.deb" -o /tmp/fd.deb \\
+    && dpkg -i /tmp/fd.deb && rm /tmp/fd.deb \\
+    # GitHub CLI (latest)
+    && GH_VER=$(curl -sL https://api.github.com/repos/cli/cli/releases/latest | jq -r .tag_name) \\
+    && curl -sL "https://github.com/cli/cli/releases/download/${GH_VER}/gh_${GH_VER#v}_linux_amd64.tar.gz" \\
+    | tar xz --strip-components=2 -C /usr/local/bin "gh_${GH_VER#v}_linux_amd64/bin/gh" \\
+    # yq (latest)
+    && curl -sL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq \\
+    && chmod +x /usr/local/bin/yq
 
 ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 """
 
-# Python tools (for CCO and linting)
-# Optimized: single pip install, CCO from git
+# CCO only (no extra dev tools - users install what they need)
 PYTHON_TOOLS = """
-# Python tools + CCO (single layer)
+# CCO (ClaudeCodeOptimizer)
 RUN pip install --break-system-packages --no-cache-dir \\
-    ruff mypy pytest pytest-cov poetry uv \\
     git+https://github.com/sungurerdim/ClaudeCodeOptimizer.git
 """
 
-# Node.js tools (for Claude Code)
-# Optimized: combined npm config and installs
+# Claude Code only (no extra dev tools - users install what they need)
 NODE_TOOLS = """
-# npm config + global tools + Claude Code (single layer)
-RUN npm config set fund false && npm config set audit false && npm config set update-notifier false \\
-    && npm install -g typescript eslint prettier jest @anthropic-ai/claude-code --force \\
+# Claude Code
+RUN npm config set fund false && npm config set update-notifier false \\
+    && npm install -g @anthropic-ai/claude-code --force \\
     && npm cache clean --force
 """
 
@@ -76,10 +74,6 @@ LABEL org.opencontainers.image.title="ccbox:base"
 
 ENV DEBIAN_FRONTEND=noninteractive
 {COMMON_TOOLS}
-# Python runtime (no dev tools - most packages have pre-built wheels)
-RUN apt-get update && apt-get install -y --no-install-recommends \\
-    python3 python3-pip python3-venv python-is-python3 \\
-    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 {PYTHON_TOOLS}
 {NODE_TOOLS}
 {ENTRYPOINT_SETUP}
@@ -95,11 +89,12 @@ FROM golang:latest
 LABEL org.opencontainers.image.title="ccbox:go"
 
 ENV DEBIAN_FRONTEND=noninteractive
-{COMMON_TOOLS}
-# Node.js (current) + Python runtime
+
+# Node.js (current)
 RUN curl -fsSL https://deb.nodesource.com/setup_current.x | bash - \\
-    && apt-get install -y --no-install-recommends nodejs python3 python3-pip python3-venv python-is-python3 \\
-    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+    && apt-get install -y --no-install-recommends nodejs \\
+    && rm -rf /var/lib/apt/lists/*
+{COMMON_TOOLS}
 {PYTHON_TOOLS}
 {NODE_TOOLS}
 # golangci-lint (latest)
@@ -117,11 +112,12 @@ FROM rust:latest
 LABEL org.opencontainers.image.title="ccbox:rust"
 
 ENV DEBIAN_FRONTEND=noninteractive
-{COMMON_TOOLS}
-# Node.js (current) + Python runtime
+
+# Node.js (current)
 RUN curl -fsSL https://deb.nodesource.com/setup_current.x | bash - \\
-    && apt-get install -y --no-install-recommends nodejs python3 python3-pip python3-venv python-is-python3 \\
-    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+    && apt-get install -y --no-install-recommends nodejs \\
+    && rm -rf /var/lib/apt/lists/*
+{COMMON_TOOLS}
 {PYTHON_TOOLS}
 {NODE_TOOLS}
 # Rust tools (clippy + rustfmt)
@@ -139,11 +135,12 @@ FROM eclipse-temurin:latest
 LABEL org.opencontainers.image.title="ccbox:java"
 
 ENV DEBIAN_FRONTEND=noninteractive
-{COMMON_TOOLS}
-# Node.js (current) + Python runtime
+
+# Node.js (current)
 RUN curl -fsSL https://deb.nodesource.com/setup_current.x | bash - \\
-    && apt-get install -y --no-install-recommends nodejs python3 python3-pip python3-venv python-is-python3 \\
-    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+    && apt-get install -y --no-install-recommends nodejs \\
+    && rm -rf /var/lib/apt/lists/*
+{COMMON_TOOLS}
 {PYTHON_TOOLS}
 {NODE_TOOLS}
 # Maven (latest from Apache)
@@ -165,13 +162,9 @@ LABEL org.opencontainers.image.title="ccbox:web"
 
 ENV DEBIAN_FRONTEND=noninteractive
 {COMMON_TOOLS}
-# Python runtime (no dev tools - most packages have pre-built wheels)
-RUN apt-get update && apt-get install -y --no-install-recommends \\
-    python3 python3-pip python3-venv python-is-python3 \\
-    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 {PYTHON_TOOLS}
 {NODE_TOOLS}
-# pnpm (latest) - combined with cache clean
+# pnpm (latest)
 RUN npm install -g pnpm --force && npm cache clean --force
 {ENTRYPOINT_SETUP}
 """
@@ -187,10 +180,6 @@ LABEL org.opencontainers.image.title="ccbox:full"
 
 ENV DEBIAN_FRONTEND=noninteractive
 {COMMON_TOOLS}
-# Python runtime (no dev tools - most packages have pre-built wheels)
-RUN apt-get update && apt-get install -y --no-install-recommends \\
-    python3 python3-pip python3-venv python-is-python3 \\
-    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 {PYTHON_TOOLS}
 {NODE_TOOLS}
 # Go (latest) + golangci-lint
@@ -293,9 +282,14 @@ def write_build_files(stack: LanguageStack) -> Path:
     build_dir = get_config_dir() / "build" / stack.value
     build_dir.mkdir(parents=True, exist_ok=True)
 
-    (build_dir / "Dockerfile").write_text(generate_dockerfile(stack), encoding="utf-8", newline="\n")
-    (build_dir / "entrypoint.sh").write_text(generate_entrypoint(), encoding="utf-8", newline="\n")
-    (build_dir / ".dockerignore").write_text(generate_dockerignore(), encoding="utf-8", newline="\n")
+    # Write with Unix line endings (open with newline="" to prevent OS conversion)
+    for filename, content in [
+        ("Dockerfile", generate_dockerfile(stack)),
+        ("entrypoint.sh", generate_entrypoint()),
+        (".dockerignore", generate_dockerignore()),
+    ]:
+        with open(build_dir / filename, "w", encoding="utf-8", newline="\n") as f:
+            f.write(content)
 
     return build_dir
 
@@ -310,9 +304,9 @@ def get_docker_run_cmd(
     image_name = get_image_name(stack)
     claude_config = Path(os.path.expanduser(config.claude_config_dir))
 
-    # Sanitize project name for container naming
-    safe_name = "".join(c if c.isalnum() or c in "-_" else "-" for c in project_name.lower())
-    container_name = f"ccbox-{safe_name}"
+    # Use centralized container naming with unique suffix
+    from ccbox.config import get_container_name
+    container_name = get_container_name(project_name)
 
     # Use directory name (not full path) for workdir
     dirname = project_path.name

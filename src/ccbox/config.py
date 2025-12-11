@@ -94,7 +94,17 @@ def get_image_name(stack: LanguageStack) -> str:
     return f"ccbox:{stack.value}"
 
 
-def get_container_name(project_name: str) -> str:
-    """Get Docker container name for a project."""
+def get_container_name(project_name: str, unique: bool = True) -> str:
+    """Get Docker container name for a project.
+
+    Args:
+        project_name: Name of the project directory.
+        unique: If True, append a short unique suffix to allow multiple instances.
+    """
+    import uuid
+
     safe_name = "".join(c if c.isalnum() or c in "-_" else "-" for c in project_name.lower())
+    if unique:
+        suffix = uuid.uuid4().hex[:6]
+        return f"ccbox-{safe_name}-{suffix}"
     return f"ccbox-{safe_name}"
