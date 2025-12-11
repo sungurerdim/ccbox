@@ -114,10 +114,15 @@ def _run_cco_setup(stack: LanguageStack) -> bool:
     try:
         result = subprocess.run(
             [
-                "docker", "run", "--rm",
-                "--entrypoint", "cco-setup",
-                "-e", "CLAUDE_CONFIG_DIR=/home/node/.claude",
-                "-v", f"{claude_dir}:/home/node/.claude",
+                "docker",
+                "run",
+                "--rm",
+                "--entrypoint",
+                "cco-setup",
+                "-e",
+                "CLAUDE_CONFIG_DIR=/home/node/.claude",
+                "-v",
+                f"{claude_dir}:/home/node/.claude",
                 image_name,
             ],
             capture_output=True,
@@ -155,9 +160,13 @@ def build_image(stack: LanguageStack, run_cco_setup: bool = True) -> bool:
     try:
         subprocess.run(
             [
-                "docker", "build",
-                "-t", image_name,
-                "-f", str(build_dir / "Dockerfile"),
+                "docker",
+                "build",
+                "-t",
+                image_name,
+                "-f",
+                str(build_dir / "Dockerfile"),
+                "--no-cache",
                 "--progress=auto",
                 str(build_dir),
             ],
