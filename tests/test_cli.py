@@ -514,7 +514,7 @@ class TestUpdater:
             assert result is None
 
     def test_check_cco_update_no_installed_version(self) -> None:
-        """Test CCO update check when not installed in container."""
+        """Test CCO update check when not installed in container (fail-fast)."""
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {"tag_name": "v1.0.0"}
@@ -524,8 +524,7 @@ class TestUpdater:
             patch("ccbox.updater._get_docker_version", return_value=None),
         ):
             result = check_cco_update()
-            assert result is not None
-            assert result.current == "0.0.0"
+            assert result is None  # Fail-fast: no fallback to 0.0.0
 
     def test_get_installed_cco_version_not_installed(self) -> None:
         """Test getting CCO version when not installed."""
@@ -663,7 +662,7 @@ class TestDockerVersionCheck:
             assert result is None
 
     def test_check_claude_code_update_no_version_in_container(self) -> None:
-        """Test Claude Code update check when not installed in container."""
+        """Test Claude Code update check when not installed in container (fail-fast)."""
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {"version": "1.0.0"}
@@ -673,8 +672,7 @@ class TestDockerVersionCheck:
             patch("ccbox.updater._get_docker_version", return_value=None),
         ):
             result = check_claude_code_update()
-            assert result is not None
-            assert result.current == "0.0.0"
+            assert result is None  # Fail-fast: no fallback to 0.0.0
 
     def test_check_claude_code_update_no_version_in_response(self) -> None:
         """Test Claude Code update check when no version in npm response."""
