@@ -153,63 +153,59 @@ RUN set -eux; \\
 
 
 def _web_dockerfile() -> str:
-    """WEB stack: node:slim + pnpm + Python + CCO."""
-    return f"""# syntax=docker/dockerfile:1
+    """WEB stack: ccbox:base + pnpm (fullstack)."""
+    return """# syntax=docker/dockerfile:1
 # ccbox:web - Node.js + pnpm + Python + CCO (fullstack)
-FROM node:slim
+# Layered on ccbox:base for efficient caching
+FROM ccbox:base
 
 LABEL org.opencontainers.image.title="ccbox:web"
 
-ENV DEBIAN_FRONTEND=noninteractive
-{COMMON_TOOLS}
-{PYTHON_TOOLS}
-{NODE_TOOLS}
 # pnpm (latest)
 RUN npm install -g pnpm --force && npm cache clean --force
-{ENTRYPOINT_SETUP}
 """
 
 
 def _full_dockerfile() -> str:
-    """FULL stack: node:slim + all languages."""
-    return f"""# syntax=docker/dockerfile:1
+    """FULL stack: ccbox:base + all languages (Go + Rust + Java + pnpm)."""
+    return """# syntax=docker/dockerfile:1
 # ccbox:full - All languages (Go + Rust + Java + pnpm)
-FROM node:slim
+# Layered on ccbox:base for efficient caching
+FROM ccbox:base
 
 LABEL org.opencontainers.image.title="ccbox:full"
 
-ENV DEBIAN_FRONTEND=noninteractive
-{COMMON_TOOLS}
-{PYTHON_TOOLS}
-{NODE_TOOLS}
+USER root
+
 # Go (latest) + golangci-lint
-RUN set -eux; \\
-    GO_VER=$(curl -fsSL https://go.dev/VERSION?m=text | head -1); \\
-    curl -fsSL "https://go.dev/dl/${{GO_VER}}.linux-amd64.tar.gz" | tar -C /usr/local -xzf -; \\
+RUN set -eux; \
+    GO_VER=$(curl -fsSL https://go.dev/VERSION?m=text | head -1); \
+    curl -fsSL "https://go.dev/dl/${GO_VER}.linux-amd64.tar.gz" | tar -C /usr/local -xzf -; \
     curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b /usr/local/bin
 ENV PATH=$PATH:/usr/local/go/bin GOPATH=/home/node/go
 ENV PATH=$PATH:$GOPATH/bin
 
-# Rust (latest) + clippy + rustfmt
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \\
+# Rust (latest) + clippy + rustfmt - install for node user
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
     && /root/.cargo/bin/rustup component add clippy rustfmt
 ENV PATH="/root/.cargo/bin:$PATH"
 
 # Java (Temurin LTS) + Maven
-RUN set -eux; \\
-    TEMURIN_VER=$(curl -sfL "https://api.adoptium.net/v3/info/available_releases" | jq -r '.most_recent_lts'); \\
-    curl -sfL "https://api.adoptium.net/v3/binary/latest/${{TEMURIN_VER}}/ga/linux/x64/jdk/hotspot/normal/eclipse" -o /tmp/jdk.tar.gz; \\
-    mkdir -p /usr/lib/jvm && tar -xzf /tmp/jdk.tar.gz -C /usr/lib/jvm; \\
-    ln -s /usr/lib/jvm/jdk-* /usr/lib/jvm/temurin; \\
-    MVN_VER=$(curl -sfL https://api.github.com/repos/apache/maven/releases/latest | jq -r .tag_name | sed 's/maven-//'); \\
-    curl -sfL "https://archive.apache.org/dist/maven/maven-3/${{MVN_VER}}/binaries/apache-maven-${{MVN_VER}}-bin.tar.gz" | tar -xz -C /opt; \\
-    ln -s /opt/apache-maven-${{MVN_VER}}/bin/mvn /usr/local/bin/mvn; \\
+RUN set -eux; \
+    TEMURIN_VER=$(curl -sfL "https://api.adoptium.net/v3/info/available_releases" | jq -r '.most_recent_lts'); \
+    curl -sfL "https://api.adoptium.net/v3/binary/latest/${TEMURIN_VER}/ga/linux/x64/jdk/hotspot/normal/eclipse" -o /tmp/jdk.tar.gz; \
+    mkdir -p /usr/lib/jvm && tar -xzf /tmp/jdk.tar.gz -C /usr/lib/jvm; \
+    ln -s /usr/lib/jvm/jdk-* /usr/lib/jvm/temurin; \
+    MVN_VER=$(curl -sfL https://api.github.com/repos/apache/maven/releases/latest | jq -r .tag_name | sed 's/maven-//'); \
+    curl -sfL "https://archive.apache.org/dist/maven/maven-3/${MVN_VER}/binaries/apache-maven-${MVN_VER}-bin.tar.gz" | tar -xz -C /opt; \
+    ln -s /opt/apache-maven-${MVN_VER}/bin/mvn /usr/local/bin/mvn; \
     rm -f /tmp/jdk.tar.gz
 ENV JAVA_HOME=/usr/lib/jvm/temurin PATH=$JAVA_HOME/bin:$PATH
 
 # pnpm (latest)
 RUN npm install -g pnpm --force && npm cache clean --force
-{ENTRYPOINT_SETUP}
+
+USER node
 """
 
 
