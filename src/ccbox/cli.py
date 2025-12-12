@@ -17,6 +17,7 @@ from rich.table import Table
 
 from . import __version__
 from .config import (
+    STACK_DEPENDENCIES,
     STACK_INFO,
     LanguageStack,
     get_config_dir,
@@ -100,6 +101,17 @@ def image_exists(stack: LanguageStack) -> bool:
         return False
 
 
+def ensure_base_image() -> bool:
+    """Ensure base image exists, build if needed (first-time setup).
+
+    Called automatically when building WEB or FULL stacks that depend on base.
+    """
+    if image_exists(LanguageStack.BASE):
+        return True
+    console.print("[dim]Building base image (first-time setup)...[/dim]")
+    return build_image(LanguageStack.BASE, run_cco_install=False)
+
+
 def _run_cco_install(stack: LanguageStack) -> bool:
     """Run CCO install after image build."""
     image_name = get_image_name(stack)
@@ -147,7 +159,18 @@ def _run_cco_install(stack: LanguageStack) -> bool:
 
 
 def build_image(stack: LanguageStack, run_cco_install: bool = True) -> bool:
-    """Build Docker image for stack with BuildKit optimization."""
+    """Build Docker image for stack with BuildKit optimization.
+
+    Automatically builds base image first if the stack depends on it.
+    """
+    # Check if this stack depends on base image
+    dependency = STACK_DEPENDENCIES.get(stack)
+    if dependency is not None and not image_exists(dependency):
+        console.print(f"[dim]Building dependency: ccbox:{dependency.value}...[/dim]")
+        if not build_image(dependency, run_cco_install=False):
+            console.print(f"[red]✗ Failed to build dependency ccbox:{dependency.value}[/red]")
+            return False
+
     image_name = get_image_name(stack)
     console.print(f"[bold]Building {image_name}...[/bold]")
 

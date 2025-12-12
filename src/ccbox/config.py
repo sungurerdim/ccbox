@@ -33,6 +33,18 @@ STACK_INFO: dict[LanguageStack, tuple[str, int]] = {
     LanguageStack.FULL: ("All: Go + Rust + Java", 1350),
 }
 
+# Stack dependencies: stacks that require ccbox:base to be built first
+# WEB and FULL use FROM ccbox:base for layer sharing
+# GO, RUST, JAVA use their own base images (golang:latest, rust:latest, etc.)
+STACK_DEPENDENCIES: dict[LanguageStack, LanguageStack | None] = {
+    LanguageStack.BASE: None,
+    LanguageStack.GO: None,
+    LanguageStack.RUST: None,
+    LanguageStack.JAVA: None,
+    LanguageStack.WEB: LanguageStack.BASE,
+    LanguageStack.FULL: LanguageStack.BASE,
+}
+
 
 @dataclass
 class Config:

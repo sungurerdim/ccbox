@@ -15,6 +15,7 @@ from ccbox.cli import (
     build_image,
     check_docker,
     cli,
+    ensure_base_image,
     get_git_config,
     image_exists,
 )
@@ -161,8 +162,9 @@ class TestGenerator:
         assert "maven" in dockerfile.lower()
 
     def test_generate_dockerfile_full(self) -> None:
-        """Test FULL Dockerfile generation."""
+        """Test FULL Dockerfile generation - layered on base."""
         dockerfile = generate_dockerfile(LanguageStack.FULL)
+        assert "FROM ccbox:base" in dockerfile
         assert "go.dev" in dockerfile
         assert "rustup" in dockerfile
         assert "adoptium" in dockerfile.lower()
@@ -325,6 +327,74 @@ class TestCLIFunctions:
             mock_run.side_effect = CalledProcessError(1, "docker")
             result = build_image(LanguageStack.BASE)
             assert result is False
+
+    def test_ensure_base_image_exists(self) -> None:
+        """Test ensure_base_image when base image already exists."""
+        with patch("ccbox.cli.image_exists", return_value=True):
+            result = ensure_base_image()
+            assert result is True
+
+    def test_ensure_base_image_builds(self, tmp_path: Path) -> None:
+        """Test ensure_base_image builds when base image doesn't exist."""
+        with (
+            patch("ccbox.cli.image_exists", return_value=False),
+            patch("ccbox.cli.write_build_files", return_value=tmp_path),
+            patch("subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            result = ensure_base_image()
+            assert result is True
+
+    def test_build_image_with_dependency(self, tmp_path: Path) -> None:
+        """Test build_image builds dependency (base) first for WEB stack."""
+        build_calls = []
+
+        def mock_write_build_files(stack: LanguageStack) -> Path:
+            build_calls.append(stack)
+            return tmp_path
+
+        with (
+            patch("ccbox.cli.image_exists", return_value=False),
+            patch("ccbox.cli.write_build_files", side_effect=mock_write_build_files),
+            patch("subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            result = build_image(LanguageStack.WEB)
+            assert result is True
+            # BASE should be built before WEB
+            assert build_calls == [LanguageStack.BASE, LanguageStack.WEB]
+
+    def test_build_image_dependency_failure(self, tmp_path: Path) -> None:
+        """Test build_image fails if dependency fails."""
+        from subprocess import CalledProcessError
+
+        with (
+            patch("ccbox.cli.image_exists", return_value=False),
+            patch("ccbox.cli.write_build_files", return_value=tmp_path),
+            patch("subprocess.run") as mock_run,
+        ):
+            mock_run.side_effect = CalledProcessError(1, "docker")
+            result = build_image(LanguageStack.WEB)
+            assert result is False
+
+    def test_build_image_skips_dependency_if_exists(self, tmp_path: Path) -> None:
+        """Test build_image skips dependency build if base already exists."""
+        build_calls = []
+
+        def mock_write_build_files(stack: LanguageStack) -> Path:
+            build_calls.append(stack)
+            return tmp_path
+
+        with (
+            patch("ccbox.cli.image_exists", return_value=True),  # Base exists
+            patch("ccbox.cli.write_build_files", side_effect=mock_write_build_files),
+            patch("subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            result = build_image(LanguageStack.WEB)
+            assert result is True
+            # Only WEB should be built since BASE exists
+            assert build_calls == [LanguageStack.WEB]
 
 
 class TestDetector:
@@ -930,9 +1000,9 @@ class TestGeneratorExtended:
     """Extended tests for generator functions."""
 
     def test_generate_dockerfile_web(self) -> None:
-        """Test WEB Dockerfile generation."""
+        """Test WEB Dockerfile generation - layered on base."""
         dockerfile = generate_dockerfile(LanguageStack.WEB)
-        assert "FROM node:slim" in dockerfile
+        assert "FROM ccbox:base" in dockerfile
         assert "pnpm" in dockerfile
 
     def test_generate_dockerignore(self) -> None:
@@ -1017,28 +1087,34 @@ class TestSelectStack:
         """Test interactive stack selection."""
         from ccbox.cli import _select_stack
 
-        with patch("ccbox.cli.image_exists", return_value=False):
-            with patch("click.prompt", return_value="1"):
-                result = _select_stack(LanguageStack.BASE, ["python"])
-                assert result == LanguageStack.BASE
+        with (
+            patch("ccbox.cli.image_exists", return_value=False),
+            patch("click.prompt", return_value="1"),
+        ):
+            result = _select_stack(LanguageStack.BASE, ["python"])
+            assert result == LanguageStack.BASE
 
     def test_select_stack_cancelled(self) -> None:
         """Test stack selection cancelled."""
         from ccbox.cli import _select_stack
 
-        with patch("ccbox.cli.image_exists", return_value=False):
-            with patch("click.prompt", return_value="0"):
-                result = _select_stack(LanguageStack.BASE, [])
-                assert result is None
+        with (
+            patch("ccbox.cli.image_exists", return_value=False),
+            patch("click.prompt", return_value="0"),
+        ):
+            result = _select_stack(LanguageStack.BASE, [])
+            assert result is None
 
     def test_select_stack_invalid_then_valid(self) -> None:
         """Test invalid choice then valid choice."""
         from ccbox.cli import _select_stack
 
-        with patch("ccbox.cli.image_exists", return_value=False):
-            with patch("click.prompt", side_effect=["invalid", "1"]):
-                result = _select_stack(LanguageStack.BASE, [])
-                assert result == LanguageStack.BASE
+        with (
+            patch("ccbox.cli.image_exists", return_value=False),
+            patch("click.prompt", side_effect=["invalid", "1"]),
+        ):
+            result = _select_stack(LanguageStack.BASE, [])
+            assert result == LanguageStack.BASE
 
 
 class TestCheckAndPromptUpdates:
@@ -1137,7 +1213,10 @@ class TestRunFlowExtended:
         ):
             from ccbox.detector import DetectionResult
 
-            mock_detect.return_value = DetectionResult(["python"], LanguageStack.BASE)
+            mock_detect.return_value = DetectionResult(
+                recommended_stack=LanguageStack.BASE,
+                detected_languages=["python"],
+            )
             result = runner.invoke(cli, ["-p", str(tmp_path), "--no-update-check"])
             assert result.exit_code == 0
             assert "Cancelled" in result.output
@@ -1316,7 +1395,12 @@ class TestGeneratorFallback:
         for stack in LanguageStack:
             dockerfile = generate_dockerfile(stack)
             assert "FROM" in dockerfile
-            assert "claude-code" in dockerfile
+            # BASE, GO, RUST, JAVA include claude-code directly
+            # WEB and FULL inherit from ccbox:base
+            if stack in (LanguageStack.WEB, LanguageStack.FULL):
+                assert "FROM ccbox:base" in dockerfile
+            else:
+                assert "claude-code" in dockerfile
 
 
 class TestCleanCommand:
