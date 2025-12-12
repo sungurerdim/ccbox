@@ -34,10 +34,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \\
 ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 """
 
-# CCO only (no extra dev tools - users install what they need)
+# Python tools for CCO slash commands
 PYTHON_TOOLS = """
-# CCO (ClaudeCodeOptimizer)
+# Python dev tools (ruff, mypy, pytest) + CCO
 RUN pip install --break-system-packages --no-cache-dir \\
+    ruff mypy pytest \\
     git+https://github.com/sungurerdim/ClaudeCodeOptimizer.git
 """
 
@@ -302,28 +303,39 @@ def get_docker_run_cmd(
 
     # Use centralized container naming with unique suffix
     from ccbox.config import get_container_name
+
     container_name = get_container_name(project_name)
 
     # Use directory name (not full path) for workdir
     dirname = project_path.name
 
     cmd = [
-        "docker", "run",
-        "--rm",                          # Remove container on exit
-        "-it",                           # Interactive TTY
-        "--name", container_name,
+        "docker",
+        "run",
+        "--rm",  # Remove container on exit
+        "-it",  # Interactive TTY
+        "--name",
+        container_name,
         # Mounts: project (rw) and claude config (rw)
-        "-v", f"{project_path}:/home/node/{dirname}:rw",
-        "-v", f"{claude_config}:/home/node/.claude:rw",
+        "-v",
+        f"{project_path}:/home/node/{dirname}:rw",
+        "-v",
+        f"{claude_config}:/home/node/.claude:rw",
         # Workdir: dynamic based on directory name
-        "-w", f"/home/node/{dirname}",
+        "-w",
+        f"/home/node/{dirname}",
         # Temp directories in memory (no disk residue)
-        "--tmpfs", "/tmp:rw,noexec,nosuid,size=512m",
-        "--tmpfs", "/var/tmp:rw,noexec,nosuid,size=256m",
+        "--tmpfs",
+        "/tmp:rw,noexec,nosuid,size=512m",
+        "--tmpfs",
+        "/var/tmp:rw,noexec,nosuid,size=256m",
         # Environment
-        "-e", "TERM=xterm-256color",
-        "-e", "CLAUDE_CONFIG_DIR=/home/node/.claude",
-        "-e", "DEBUG=False",  # Disable Claude Code debug mode (prevents 20GB+ log files)
+        "-e",
+        "TERM=xterm-256color",
+        "-e",
+        "CLAUDE_CONFIG_DIR=/home/node/.claude",
+        "-e",
+        "DEBUG=False",  # Disable Claude Code debug mode (prevents 20GB+ log files)
     ]
 
     if config.git_name:
