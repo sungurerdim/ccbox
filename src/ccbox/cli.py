@@ -282,7 +282,7 @@ def _check_and_prompt_updates(stack: LanguageStack) -> bool:
 
 @click.group(invoke_without_command=True)
 @click.option("--stack", "-s", type=click.Choice([s.value for s in LanguageStack]), help="Stack")
-@click.option("--build", "-b", is_flag=True, help="Force rebuild image")
+@click.option("--build", "-b", is_flag=True, help="Build image only (no start)")
 @click.option("--path", "-p", default=".", type=click.Path(exists=True), help="Project path")
 @click.option("--no-update-check", is_flag=True, help="Skip update check")
 @click.pass_context
@@ -350,7 +350,10 @@ def _select_stack(
 
 
 def _run(
-    stack_name: str | None, force_build: bool, path: str, no_update_check: bool = False
+    stack_name: str | None,
+    build_only: bool,
+    path: str,
+    no_update_check: bool = False,
 ) -> None:
     """Run Claude Code in Docker container."""
     if not check_docker():
@@ -376,6 +379,17 @@ def _run(
 
     project_path = Path(path).resolve()
     project_name = project_path.name
+
+    # Ensure base image exists first (required for all stacks)
+    if not image_exists(LanguageStack.BASE):
+        console.print("[bold]First-time setup: building base image...[/bold]")
+        desc, size = STACK_INFO[LanguageStack.BASE]
+        if not click.confirm(f"Build ccbox:base (~{size}MB)?", default=True):
+            console.print("[yellow]Cancelled.[/yellow]")
+            sys.exit(0)
+        if not build_image(LanguageStack.BASE):
+            sys.exit(1)
+        console.print()
 
     # Detect project type
     detection = detect_project_type(project_path)
@@ -407,11 +421,11 @@ def _run(
     # Check for updates only if image exists (new builds get latest anyway)
     update_rebuild = False
     has_image = image_exists(selected_stack)
-    if has_image and not no_update_check:
+    if has_image and not no_update_check and not build_only:
         update_rebuild = _check_and_prompt_updates(selected_stack)
 
     # Build if needed (with confirmation) or if update requested
-    needs_build = force_build or update_rebuild or not has_image
+    needs_build = build_only or update_rebuild or not has_image
     if needs_build:
         # Skip confirmation if update already confirmed rebuild
         if not update_rebuild:
@@ -421,6 +435,11 @@ def _run(
                 sys.exit(0)
         if not build_image(selected_stack):
             sys.exit(1)
+
+    # Build-only mode: exit after build
+    if build_only:
+        console.print("[green]✓ Build complete[/green]")
+        return
 
     console.print("[dim]Starting Claude Code...[/dim]\n")
 

@@ -1202,6 +1202,11 @@ class TestRunFlowExtended:
     def test_run_with_interactive_selection(self, tmp_path: Path) -> None:
         """Test run with interactive stack selection."""
         runner = CliRunner()
+
+        # Base image exists, but detected stack (GO) doesn't - triggers selection
+        def image_exists_side_effect(stack: LanguageStack) -> bool:
+            return stack == LanguageStack.BASE
+
         with (
             patch("ccbox.cli.check_docker", return_value=True),
             patch("ccbox.cli.load_config", return_value=Config()),
@@ -1209,13 +1214,14 @@ class TestRunFlowExtended:
             patch("ccbox.cli.save_config"),
             patch("click.confirm", return_value=True),  # Confirm git config
             patch("ccbox.cli.detect_project_type") as mock_detect,
+            patch("ccbox.cli.image_exists", side_effect=image_exists_side_effect),
             patch("ccbox.cli._select_stack", return_value=None),  # User cancels
         ):
             from ccbox.detector import DetectionResult
 
             mock_detect.return_value = DetectionResult(
-                recommended_stack=LanguageStack.BASE,
-                detected_languages=["python"],
+                recommended_stack=LanguageStack.GO,  # Not BASE
+                detected_languages=["go"],
             )
             result = runner.invoke(cli, ["-p", str(tmp_path), "--no-update-check"])
             assert result.exit_code == 0
@@ -1224,20 +1230,25 @@ class TestRunFlowExtended:
     def test_run_build_success_and_run(self, tmp_path: Path) -> None:
         """Test successful build and run."""
         runner = CliRunner()
+
+        # Base exists, but selected stack (go) needs build
+        def image_exists_side_effect(stack: LanguageStack) -> bool:
+            return stack == LanguageStack.BASE
+
         with (
             patch("ccbox.cli.check_docker", return_value=True),
             patch("ccbox.cli.load_config", return_value=Config()),
             patch("ccbox.cli.get_git_config", return_value=("", "")),
             patch("ccbox.cli._check_and_prompt_updates", return_value=False),
             patch("ccbox.cli.detect_project_type") as mock_detect,
-            patch("ccbox.cli.image_exists", return_value=False),
+            patch("ccbox.cli.image_exists", side_effect=image_exists_side_effect),
             patch("ccbox.cli.build_image", return_value=True),
             patch("subprocess.run"),
         ):
             from ccbox.detector import DetectionResult
 
-            mock_detect.return_value = DetectionResult([], LanguageStack.BASE)
-            result = runner.invoke(cli, ["-s", "base", "-p", str(tmp_path)], input="y\n")
+            mock_detect.return_value = DetectionResult([], LanguageStack.GO)
+            result = runner.invoke(cli, ["-s", "go", "-p", str(tmp_path)], input="y\n")
             assert result.exit_code == 0
 
     def test_run_build_failure(self, tmp_path: Path) -> None:
