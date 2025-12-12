@@ -100,17 +100,17 @@ def image_exists(stack: LanguageStack) -> bool:
         return False
 
 
-def _run_cco_setup(stack: LanguageStack) -> bool:
-    """Run CCO setup after image build."""
+def _run_cco_install(stack: LanguageStack) -> bool:
+    """Run CCO install after image build."""
     image_name = get_image_name(stack)
     config = load_config()
     claude_dir = Path(os.path.expanduser(config.claude_config_dir))
 
     if not claude_dir.exists():
-        console.print("[dim]Skipping cco-setup (no claude config)[/dim]")
+        console.print("[dim]Skipping cco-install (no claude config)[/dim]")
         return True
 
-    console.print("[dim]Running cco-setup...[/dim]")
+    console.print("[dim]Running cco-install...[/dim]")
     try:
         result = subprocess.run(
             [
@@ -118,7 +118,7 @@ def _run_cco_setup(stack: LanguageStack) -> bool:
                 "run",
                 "--rm",
                 "--entrypoint",
-                "cco-setup",
+                "cco-install",
                 "-e",
                 "CLAUDE_CONFIG_DIR=/home/node/.claude",
                 "-v",
@@ -131,22 +131,22 @@ def _run_cco_setup(stack: LanguageStack) -> bool:
             check=False,
         )
         if result.returncode == 0:
-            console.print("[green]✓ CCO setup complete[/green]")
+            console.print("[green]✓ CCO install complete[/green]")
             return True
-        # cco-setup might not exist, that's ok
+        # cco-install might not exist, that's ok
         if "executable file not found" in result.stderr:
-            console.print("[dim]cco-setup not available, skipping[/dim]")
+            console.print("[dim]cco-install not available, skipping[/dim]")
             return True
-        console.print(f"[yellow]⚠ cco-setup warning: {result.stderr.strip()}[/yellow]")
+        console.print(f"[yellow]⚠ cco-install warning: {result.stderr.strip()}[/yellow]")
         return True
     except subprocess.TimeoutExpired:
-        console.print("[yellow]⚠ cco-setup timed out[/yellow]")
+        console.print("[yellow]⚠ cco-install timed out[/yellow]")
         return True
     except FileNotFoundError:
         return True
 
 
-def build_image(stack: LanguageStack, run_cco_setup: bool = True) -> bool:
+def build_image(stack: LanguageStack, run_cco_install: bool = True) -> bool:
     """Build Docker image for stack with BuildKit optimization."""
     image_name = get_image_name(stack)
     console.print(f"[bold]Building {image_name}...[/bold]")
@@ -175,9 +175,9 @@ def build_image(stack: LanguageStack, run_cco_setup: bool = True) -> bool:
         )
         console.print(f"[green]✓ Built {image_name}[/green]")
 
-        # Run CCO setup after successful build
-        if run_cco_setup:
-            _run_cco_setup(stack)
+        # Run CCO install after successful build
+        if run_cco_install:
+            _run_cco_install(stack)
 
         return True
     except subprocess.CalledProcessError:
