@@ -19,9 +19,13 @@ from . import __version__
 from .config import (
     STACK_DEPENDENCIES,
     STACK_INFO,
+    Config,
+    ConfigPathError,
     LanguageStack,
+    get_claude_config_dir,
     get_config_dir,
     get_image_name,
+    image_exists,
     load_config,
     save_config,
 )
@@ -30,6 +34,26 @@ from .generator import get_docker_run_cmd, write_build_files
 from .updater import check_all_updates, format_changelog
 
 console = Console()
+
+# Constants
+DOCKER_STARTUP_TIMEOUT_SECONDS = 30
+CCO_INSTALL_TIMEOUT_SECONDS = 60
+DOCKER_CHECK_INTERVAL_SECONDS = 5
+ERR_DOCKER_NOT_RUNNING = "[red]Error: Docker is not running.[/red]"
+
+
+def _check_docker_status() -> bool:
+    """Check if Docker daemon is responsive."""
+    try:
+        result = subprocess.run(
+            ["docker", "info"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return result.returncode == 0
+    except FileNotFoundError:
+        return False
 
 
 def _start_docker_desktop() -> bool:
@@ -57,48 +81,20 @@ def _start_docker_desktop() -> bool:
 
 def check_docker(auto_start: bool = True) -> bool:
     """Check if Docker is available and running, optionally auto-start."""
-    try:
-        result = subprocess.run(
-            ["docker", "info"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode == 0:
-            return True
+    if _check_docker_status():
+        return True
 
-        if auto_start:
-            console.print("[dim]Docker not running, attempting to start...[/dim]")
-            if _start_docker_desktop():
-                for i in range(30):
-                    time.sleep(1)
-                    result = subprocess.run(
-                        ["docker", "info"],
-                        capture_output=True,
-                        text=True,
-                        check=False,
-                    )
-                    if result.returncode == 0:
-                        console.print("[green]Docker started successfully[/green]")
-                        return True
-                    if i % 5 == 4:
-                        console.print(f"[dim]Waiting for Docker... ({i + 1}s)[/dim]")
-        return False
-    except FileNotFoundError:
-        return False
-
-
-def image_exists(stack: LanguageStack) -> bool:
-    """Check if Docker image exists for stack."""
-    try:
-        result = subprocess.run(
-            ["docker", "image", "inspect", get_image_name(stack)],
-            capture_output=True,
-            check=False,
-        )
-        return result.returncode == 0
-    except FileNotFoundError:
-        return False
+    if auto_start:
+        console.print("[dim]Docker not running, attempting to start...[/dim]")
+        if _start_docker_desktop():
+            for i in range(DOCKER_STARTUP_TIMEOUT_SECONDS):
+                time.sleep(1)
+                if _check_docker_status():
+                    console.print("[green]Docker started successfully[/green]")
+                    return True
+                if i % DOCKER_CHECK_INTERVAL_SECONDS == DOCKER_CHECK_INTERVAL_SECONDS - 1:
+                    console.print(f"[dim]Waiting for Docker... ({i + 1}s)[/dim]")
+    return False
 
 
 def ensure_base_image() -> bool:
@@ -116,7 +112,12 @@ def _run_cco_install(stack: LanguageStack) -> bool:
     """Run CCO install after image build."""
     image_name = get_image_name(stack)
     config = load_config()
-    claude_dir = Path(os.path.expanduser(config.claude_config_dir))
+
+    try:
+        claude_dir = get_claude_config_dir(config)
+    except ConfigPathError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        return False
 
     if not claude_dir.exists():
         console.print("[dim]Skipping cco-install (no claude config)[/dim]")
@@ -139,7 +140,7 @@ def _run_cco_install(stack: LanguageStack) -> bool:
             ],
             capture_output=True,
             text=True,
-            timeout=60,
+            timeout=CCO_INSTALL_TIMEOUT_SECONDS,
             check=False,
         )
         if result.returncode == 0:
@@ -212,30 +213,25 @@ def build_image(stack: LanguageStack, run_cco_install: bool = True) -> bool:
         return False
 
 
-def get_git_config() -> tuple[str, str]:
-    """Get git user.name and user.email from system."""
-    name = email = ""
+def _get_git_config_value(key: str) -> str:
+    """Get a single git config value."""
     try:
         result = subprocess.run(
-            ["git", "config", "--global", "user.name"],
+            ["git", "config", "--global", key],
             capture_output=True,
             text=True,
             check=False,
         )
         if result.returncode == 0:
-            name = result.stdout.strip()
-
-        result = subprocess.run(
-            ["git", "config", "--global", "user.email"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode == 0:
-            email = result.stdout.strip()
+            return result.stdout.strip()
     except FileNotFoundError:
         pass
-    return name, email
+    return ""
+
+
+def get_git_config() -> tuple[str, str]:
+    """Get git user.name and user.email from system."""
+    return _get_git_config_value("user.name"), _get_git_config_value("user.email")
 
 
 def _check_and_prompt_updates(stack: LanguageStack) -> bool:
@@ -353,6 +349,114 @@ def _select_stack(
         console.print("[red]Invalid choice. Try again.[/red]")
 
 
+def _setup_git_config(config: Config) -> Config:
+    """Auto-detect git config and prompt user if needed.
+
+    Args:
+        config: Current configuration.
+
+    Returns:
+        Updated configuration (may be modified and saved).
+    """
+    if config.git_name and config.git_email:
+        return config
+
+    name, email = get_git_config()
+    if not (name or email):
+        return config
+
+    detected_name = name if name and not config.git_name else config.git_name
+    detected_email = email if email and not config.git_email else config.git_email
+    console.print(f"[dim]Detected git config: {detected_name} <{detected_email}>[/dim]")
+
+    if click.confirm("Use this git config?", default=True):
+        config.git_name = detected_name
+        config.git_email = detected_email
+        save_config(config)
+    else:
+        console.print("[dim]Run 'ccbox setup' to configure git credentials.[/dim]")
+
+    return config
+
+
+def _resolve_stack(
+    stack_name: str | None, project_path: Path
+) -> LanguageStack | None:
+    """Resolve the stack to use based on user input or detection.
+
+    Args:
+        stack_name: Explicitly requested stack name, or None for auto-detection.
+        project_path: Path to the project directory.
+
+    Returns:
+        Selected stack, or None if user cancelled.
+    """
+    detection = detect_project_type(project_path)
+
+    if stack_name:
+        return LanguageStack(stack_name)
+
+    if image_exists(detection.recommended_stack):
+        console.print(f"[dim]Using existing image: ccbox:{detection.recommended_stack.value}[/dim]")
+        return detection.recommended_stack
+
+    return _select_stack(detection.recommended_stack, detection.detected_languages)
+
+
+def _ensure_image_ready(
+    stack: LanguageStack, no_update_check: bool, build_only: bool
+) -> bool:
+    """Ensure the image is ready (built and optionally updated).
+
+    Args:
+        stack: Stack to ensure is ready.
+        no_update_check: Skip update check if True.
+        build_only: Only build, don't prompt for updates.
+
+    Returns:
+        True if image is ready, False on build failure.
+    """
+    has_image = image_exists(stack)
+    update_rebuild = False
+
+    if has_image and not no_update_check and not build_only:
+        update_rebuild = _check_and_prompt_updates(stack)
+
+    needs_build = build_only or update_rebuild or not has_image
+    if needs_build:
+        return build_image(stack)
+
+    return True
+
+
+def _execute_container(
+    config: Config, project_path: Path, project_name: str, stack: LanguageStack
+) -> None:
+    """Execute the container with Claude Code.
+
+    Args:
+        config: ccbox configuration.
+        project_path: Path to the project.
+        project_name: Name of the project.
+        stack: Stack to run.
+    """
+    console.print("[dim]Starting Claude Code...[/dim]\n")
+
+    try:
+        cmd = get_docker_run_cmd(config, project_path, project_name, stack)
+    except ConfigPathError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
+
+    try:
+        subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError as e:
+        if e.returncode != 130:
+            sys.exit(e.returncode)
+    except KeyboardInterrupt:
+        pass
+
+
 def _run(
     stack_name: str | None,
     build_only: bool,
@@ -361,54 +465,26 @@ def _run(
 ) -> None:
     """Run Claude Code in Docker container."""
     if not check_docker():
-        console.print("[red]Error: Docker is not running.[/red]")
+        console.print(ERR_DOCKER_NOT_RUNNING)
         console.print("Start Docker and try again.")
         sys.exit(1)
 
-    config = load_config()
-
-    # Auto-detect git config and prompt user
-    if not config.git_name or not config.git_email:
-        name, email = get_git_config()
-        if name or email:
-            detected_name = name if name and not config.git_name else config.git_name
-            detected_email = email if email and not config.git_email else config.git_email
-            console.print(f"[dim]Detected git config: {detected_name} <{detected_email}>[/dim]")
-            if click.confirm("Use this git config?", default=True):
-                config.git_name = detected_name
-                config.git_email = detected_email
-                save_config(config)
-            else:
-                console.print("[dim]Run 'ccbox setup' to configure git credentials.[/dim]")
-
+    config = _setup_git_config(load_config())
     project_path = Path(path).resolve()
     project_name = project_path.name
 
-    # Ensure base image exists first (required for all stacks)
+    # Ensure base image exists (required for all stacks)
     if not image_exists(LanguageStack.BASE):
         console.print("[bold]First-time setup: building base image...[/bold]")
         if not build_image(LanguageStack.BASE):
             sys.exit(1)
         console.print()
 
-    # Detect project type
-    detection = detect_project_type(project_path)
-
-    # Stack selection: use provided, auto-detect if image exists, or show menu
-    if stack_name:
-        selected_stack = LanguageStack(stack_name)
-    elif image_exists(detection.recommended_stack):
-        # Auto-select detected stack if image already exists
-        selected_stack = detection.recommended_stack
-        console.print(f"[dim]Using existing image: ccbox:{selected_stack.value}[/dim]")
-    else:
-        selected_stack_or_none = _select_stack(
-            detection.recommended_stack, detection.detected_languages
-        )
-        if selected_stack_or_none is None:
-            console.print("[yellow]Cancelled.[/yellow]")
-            sys.exit(0)
-        selected_stack = selected_stack_or_none
+    # Resolve stack
+    selected_stack = _resolve_stack(stack_name, project_path)
+    if selected_stack is None:
+        console.print("[yellow]Cancelled.[/yellow]")
+        sys.exit(0)
 
     console.print()
     console.print(
@@ -418,33 +494,15 @@ def _run(
         )
     )
 
-    # Check for updates only if image exists (new builds get latest anyway)
-    update_rebuild = False
-    has_image = image_exists(selected_stack)
-    if has_image and not no_update_check and not build_only:
-        update_rebuild = _check_and_prompt_updates(selected_stack)
-
-    # Build if needed or if update requested
-    needs_build = build_only or update_rebuild or not has_image
-    if needs_build and not build_image(selected_stack):
+    # Ensure image is ready
+    if not _ensure_image_ready(selected_stack, no_update_check, build_only):
         sys.exit(1)
 
-    # Build-only mode: exit after build
     if build_only:
         console.print("[green]✓ Build complete[/green]")
         return
 
-    console.print("[dim]Starting Claude Code...[/dim]\n")
-
-    cmd = get_docker_run_cmd(config, project_path, project_name, selected_stack)
-
-    try:
-        subprocess.run(cmd, check=True)
-    except subprocess.CalledProcessError as e:
-        if e.returncode != 130:
-            sys.exit(e.returncode)
-    except KeyboardInterrupt:
-        pass
+    _execute_container(config, project_path, project_name, selected_stack)
 
 
 @cli.command()
@@ -472,7 +530,7 @@ def setup() -> None:
 def update(stack: str | None, build_all: bool) -> None:
     """Rebuild Docker image(s) with latest Claude Code."""
     if not check_docker():
-        console.print("[red]Error: Docker is not running.[/red]")
+        console.print(ERR_DOCKER_NOT_RUNNING)
         sys.exit(1)
 
     stacks_to_build: list[LanguageStack] = []
@@ -494,12 +552,35 @@ def update(stack: str | None, build_all: bool) -> None:
         build_image(s)
 
 
+def _get_installed_ccbox_images() -> set[str]:
+    """Get all installed ccbox images in a single Docker call.
+
+    Returns:
+        Set of installed ccbox image names (e.g., {"ccbox:base", "ccbox:go"}).
+    """
+    try:
+        result = subprocess.run(
+            ["docker", "images", "--format", "{{.Repository}}:{{.Tag}}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            return set()
+
+        # Filter to only ccbox images
+        all_images = result.stdout.strip().split("\n")
+        return {img for img in all_images if img.startswith("ccbox:")}
+    except FileNotFoundError:
+        return set()
+
+
 @cli.command()
 @click.option("--force", "-f", is_flag=True, help="Skip confirmation")
 def clean(force: bool) -> None:
     """Remove ccbox containers and images."""
     if not check_docker():
-        console.print("[red]Error: Docker is not running.[/red]")
+        console.print(ERR_DOCKER_NOT_RUNNING)
         sys.exit(1)
 
     if not force and not click.confirm("Remove all ccbox containers and images?", default=False):
@@ -517,10 +598,13 @@ def clean(force: bool) -> None:
             subprocess.run(["docker", "rm", "-f", name], capture_output=True, check=False)
 
     console.print("[dim]Removing images...[/dim]")
+    # Get all ccbox images in a single call (avoid N+1 pattern)
+    installed_images = _get_installed_ccbox_images()
     for stack in LanguageStack:
-        if image_exists(stack):
+        image_name = get_image_name(stack)
+        if image_name in installed_images:
             subprocess.run(
-                ["docker", "rmi", "-f", get_image_name(stack)],
+                ["docker", "rmi", "-f", image_name],
                 capture_output=True,
                 check=False,
             )

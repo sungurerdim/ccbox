@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Callable
 
-from .config import Config, LanguageStack, get_config_dir, get_image_name
+from .config import (
+    Config,
+    LanguageStack,
+    get_claude_config_dir,
+    get_config_dir,
+    get_container_name,
+    get_image_name,
+)
 
 # Common system packages (minimal - matches original)
 COMMON_TOOLS = """
@@ -32,6 +38,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \\
     && chmod +x /usr/local/bin/yq
 
 ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+"""
+
+# Node.js installation snippet for non-node base images
+NODE_INSTALL = """
+# Node.js (current)
+RUN curl -fsSL https://deb.nodesource.com/setup_current.x | bash - \\
+    && apt-get install -y --no-install-recommends nodejs \\
+    && rm -rf /var/lib/apt/lists/*
 """
 
 # Python tools for CCO slash commands (with cache bust)
@@ -93,12 +107,7 @@ FROM golang:latest
 LABEL org.opencontainers.image.title="ccbox:go"
 
 ENV DEBIAN_FRONTEND=noninteractive
-
-# Node.js (current)
-RUN curl -fsSL https://deb.nodesource.com/setup_current.x | bash - \\
-    && apt-get install -y --no-install-recommends nodejs \\
-    && rm -rf /var/lib/apt/lists/*
-{COMMON_TOOLS}
+{NODE_INSTALL}{COMMON_TOOLS}
 {PYTHON_TOOLS}
 {NODE_TOOLS}
 # golangci-lint (latest)
@@ -116,12 +125,7 @@ FROM rust:latest
 LABEL org.opencontainers.image.title="ccbox:rust"
 
 ENV DEBIAN_FRONTEND=noninteractive
-
-# Node.js (current)
-RUN curl -fsSL https://deb.nodesource.com/setup_current.x | bash - \\
-    && apt-get install -y --no-install-recommends nodejs \\
-    && rm -rf /var/lib/apt/lists/*
-{COMMON_TOOLS}
+{NODE_INSTALL}{COMMON_TOOLS}
 {PYTHON_TOOLS}
 {NODE_TOOLS}
 # Rust tools (clippy + rustfmt)
@@ -139,12 +143,7 @@ FROM eclipse-temurin:latest
 LABEL org.opencontainers.image.title="ccbox:java"
 
 ENV DEBIAN_FRONTEND=noninteractive
-
-# Node.js (current)
-RUN curl -fsSL https://deb.nodesource.com/setup_current.x | bash - \\
-    && apt-get install -y --no-install-recommends nodejs \\
-    && rm -rf /var/lib/apt/lists/*
-{COMMON_TOOLS}
+{NODE_INSTALL}{COMMON_TOOLS}
 {PYTHON_TOOLS}
 {NODE_TOOLS}
 # Maven (latest from Apache)
@@ -300,13 +299,15 @@ def get_docker_run_cmd(
     project_name: str,
     stack: LanguageStack,
 ) -> list[str]:
-    """Generate docker run command with full cleanup on exit."""
+    """Generate docker run command with full cleanup on exit.
+
+    Raises:
+        ConfigPathError: If claude_config_dir path validation fails.
+    """
     image_name = get_image_name(stack)
-    claude_config = Path(os.path.expanduser(config.claude_config_dir))
+    claude_config = get_claude_config_dir(config)
 
     # Use centralized container naming with unique suffix
-    from ccbox.config import get_container_name
-
     container_name = get_container_name(project_name)
 
     # Use directory name (not full path) for workdir
