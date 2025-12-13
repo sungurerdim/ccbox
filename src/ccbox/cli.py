@@ -22,7 +22,6 @@ from .config import (
     Config,
     ConfigPathError,
     LanguageStack,
-    get_claude_config_dir,
     get_config_dir,
     get_image_name,
     image_exists,
@@ -37,7 +36,6 @@ console = Console()
 
 # Constants
 DOCKER_STARTUP_TIMEOUT_SECONDS = 30
-CCO_INSTALL_TIMEOUT_SECONDS = 60
 DOCKER_CHECK_INTERVAL_SECONDS = 5
 ERR_DOCKER_NOT_RUNNING = "[red]Error: Docker is not running.[/red]"
 
@@ -110,61 +108,10 @@ def ensure_base_image() -> bool:
     if image_exists(LanguageStack.BASE):
         return True
     console.print("[dim]Building base image (first-time setup)...[/dim]")
-    return build_image(LanguageStack.BASE, run_cco_install=False)
+    return build_image(LanguageStack.BASE)
 
 
-def _run_cco_install(stack: LanguageStack) -> bool:
-    """Run CCO install after image build."""
-    image_name = get_image_name(stack)
-    config = load_config()
-
-    try:
-        claude_dir = get_claude_config_dir(config)
-    except ConfigPathError as e:
-        console.print(f"[red]Error: {e}[/red]")
-        return False
-
-    if not claude_dir.exists():
-        console.print("[dim]Skipping cco-install (no claude config)[/dim]")
-        return True
-
-    console.print("[dim]Running cco-install...[/dim]")
-    try:
-        result = subprocess.run(
-            [
-                "docker",
-                "run",
-                "--rm",
-                "--entrypoint",
-                "cco-install",
-                "-e",
-                "CLAUDE_CONFIG_DIR=/home/node/.claude",
-                "-v",
-                f"{claude_dir}:/home/node/.claude",
-                image_name,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=CCO_INSTALL_TIMEOUT_SECONDS,
-            check=False,
-        )
-        if result.returncode == 0:
-            console.print("[green]✓ CCO install complete[/green]")
-            return True
-        # cco-install might not exist, that's ok
-        if "executable file not found" in result.stderr:
-            console.print("[dim]cco-install not available, skipping[/dim]")
-            return True
-        console.print(f"[yellow]⚠ cco-install warning: {result.stderr.strip()}[/yellow]")
-        return True
-    except subprocess.TimeoutExpired:
-        console.print("[yellow]⚠ cco-install timed out[/yellow]")
-        return True
-    except FileNotFoundError:
-        return True
-
-
-def build_image(stack: LanguageStack, run_cco_install: bool = True) -> bool:
+def build_image(stack: LanguageStack) -> bool:
     """Build Docker image for stack with BuildKit optimization.
 
     Automatically builds base image first if the stack depends on it.
@@ -173,7 +120,7 @@ def build_image(stack: LanguageStack, run_cco_install: bool = True) -> bool:
     dependency = STACK_DEPENDENCIES.get(stack)
     if dependency is not None and not image_exists(dependency):
         console.print(f"[dim]Building dependency: ccbox:{dependency.value}...[/dim]")
-        if not build_image(dependency, run_cco_install=False):
+        if not build_image(dependency):
             console.print(f"[red]✗ Failed to build dependency ccbox:{dependency.value}[/red]")
             return False
 
@@ -207,11 +154,6 @@ def build_image(stack: LanguageStack, run_cco_install: bool = True) -> bool:
             env=env,
         )
         console.print(f"[green]✓ Built {image_name}[/green]")
-
-        # Run CCO install after successful build
-        if run_cco_install:
-            _run_cco_install(stack)
-
         return True
     except subprocess.CalledProcessError:
         console.print(f"[red]✗ Failed to build {image_name}[/red]")

@@ -32,7 +32,6 @@ from ccbox.config import (
 )
 from ccbox.generator import (
     generate_dockerfile,
-    generate_dockerignore,
     generate_entrypoint,
     get_docker_run_cmd,
     write_build_files,
@@ -960,13 +959,6 @@ class TestGeneratorExtended:
         dockerfile = generate_dockerfile(LanguageStack.WEB)
         assert "FROM ccbox:base" in dockerfile
         assert "pnpm" in dockerfile
-
-    def test_generate_dockerignore(self) -> None:
-        """Test .dockerignore generation."""
-        dockerignore = generate_dockerignore()
-        assert ".git" in dockerignore
-        assert "node_modules" in dockerignore
-        assert "__pycache__" in dockerignore
 
     def test_get_docker_run_cmd_no_git(self) -> None:
         """Test docker run command without git config."""

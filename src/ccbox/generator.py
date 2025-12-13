@@ -21,19 +21,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \\
     git curl ca-certificates bash \\
     python3 python3-pip python3-venv python-is-python3 \\
     ripgrep jq procps openssh-client locales \\
-    # Standard CLI tools used by Claude Code
+    fd-find gh \\
     gawk sed grep findutils coreutils less file unzip \\
     && rm -rf /var/lib/apt/lists/* \\
     && sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen \\
-    # fd (latest)
-    && FD_VER=$(curl -sL https://api.github.com/repos/sharkdp/fd/releases/latest | jq -r .tag_name) \\
-    && curl -sL "https://github.com/sharkdp/fd/releases/download/${FD_VER}/fd_${FD_VER#v}_amd64.deb" -o /tmp/fd.deb \\
-    && dpkg -i /tmp/fd.deb && rm /tmp/fd.deb \\
-    # GitHub CLI (latest)
-    && GH_VER=$(curl -sL https://api.github.com/repos/cli/cli/releases/latest | jq -r .tag_name) \\
-    && curl -sL "https://github.com/cli/cli/releases/download/${GH_VER}/gh_${GH_VER#v}_linux_amd64.tar.gz" \\
-    | tar xz --strip-components=2 -C /usr/local/bin "gh_${GH_VER#v}_linux_amd64/bin/gh" \\
-    # yq (latest)
+    # Create fd symlink (Debian package installs as fdfind)
+    && ln -s $(which fdfind) /usr/local/bin/fd \\
+    # yq (not in apt, install from GitHub)
     && curl -sL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq \\
     && chmod +x /usr/local/bin/yq
 
@@ -59,12 +53,13 @@ RUN pip install --break-system-packages --no-cache-dir \\
     git+https://github.com/sungurerdim/ClaudeCodeOptimizer.git
 """
 
-# Claude Code only (no extra dev tools - users install what they need)
+# Claude Code + CCO install (no extra dev tools - users install what they need)
 NODE_TOOLS = """
 # Claude Code
 RUN npm config set fund false && npm config set update-notifier false \\
     && npm install -g @anthropic-ai/claude-code --force \\
-    && npm cache clean --force
+    && npm cache clean --force \\
+    && (cco-install 2>/dev/null || true)
 """
 
 # Entrypoint setup
@@ -253,33 +248,6 @@ exec claude --dangerously-skip-permissions "$@"
 """
 
 
-def generate_dockerignore() -> str:
-    """Generate .dockerignore for faster builds."""
-    return """# ccbox .dockerignore - minimize build context
-**/.git
-**/.svn
-**/.hg
-**/node_modules
-**/__pycache__
-**/.venv
-**/venv
-**/.env
-**/*.pyc
-**/*.pyo
-**/dist
-**/build
-**/.cache
-**/coverage
-**/.pytest_cache
-**/.mypy_cache
-**/.ruff_cache
-**/target
-**/*.log
-**/.DS_Store
-**/Thumbs.db
-"""
-
-
 def write_build_files(stack: LanguageStack) -> Path:
     """Write Dockerfile and entrypoint to build directory."""
     build_dir = get_config_dir() / "build" / stack.value
@@ -289,7 +257,6 @@ def write_build_files(stack: LanguageStack) -> Path:
     for filename, content in [
         ("Dockerfile", generate_dockerfile(stack)),
         ("entrypoint.sh", generate_entrypoint()),
-        (".dockerignore", generate_dockerignore()),
     ]:
         with open(build_dir / filename, "w", encoding="utf-8", newline="\n") as f:
             f.write(content)
@@ -337,6 +304,9 @@ def get_docker_run_cmd(
         "/tmp:rw,noexec,nosuid,size=512m",
         "--tmpfs",
         "/var/tmp:rw,noexec,nosuid,size=256m",
+        # Security hardening
+        "--security-opt=no-new-privileges",  # Prevent privilege escalation
+        "--pids-limit=512",  # Fork bomb protection
         # Environment
         "-e",
         "TERM=xterm-256color",
