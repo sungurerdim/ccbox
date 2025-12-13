@@ -263,6 +263,7 @@ def _check_and_prompt_updates(stack: LanguageStack) -> bool:
                     [sys.executable, "-m", "pip", "install", "--upgrade", "ccbox"],
                     capture_output=True,
                     check=False,
+                    timeout=300,
                 )
                 if result.returncode == 0:
                     console.print("[green]✓ ccbox updated[/green]")
@@ -630,7 +631,8 @@ def doctor(path: str) -> None:
         _, _, free = shutil.disk_usage("/")
         free_gb = free // (1024**3)
         checks.append((f"Disk space ({free_gb}GB)", free_gb >= 5, "Need 5GB+"))
-    except Exception:
+    except (OSError, PermissionError) as e:
+        console.print(f"[dim]Disk space check error: {e}[/dim]")
         checks.append(("Disk space", False, "Cannot check"))
 
     py_ok = sys.version_info >= (3, 8)
