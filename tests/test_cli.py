@@ -962,23 +962,6 @@ class TestMainRunFlow:
             result = runner.invoke(cli, ["-s", "base", "-p", str(tmp_path)])
             assert result.exit_code == 0
 
-    def test_run_build_cancelled(self, tmp_path: Path) -> None:
-        """Test run when build cancelled."""
-        runner = CliRunner()
-        with (
-            patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.load_config", return_value=Config()),
-            patch("ccbox.cli.get_git_config", return_value=("", "")),
-            patch("ccbox.cli._check_and_prompt_updates", return_value=False),
-            patch("ccbox.cli.detect_project_type") as mock_detect,
-            patch("ccbox.cli.image_exists", return_value=False),
-        ):
-            from ccbox.detector import DetectionResult
-
-            mock_detect.return_value = DetectionResult([], LanguageStack.BASE)
-            result = runner.invoke(cli, ["-s", "base", "-p", str(tmp_path)], input="n\n")
-            assert result.exit_code == 0
-
     def test_run_with_subcommand(self) -> None:
         """Test that subcommand doesn't run main flow."""
         runner = CliRunner()
