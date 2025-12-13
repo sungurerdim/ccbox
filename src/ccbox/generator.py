@@ -34,8 +34,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \\
 ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 """
 
-# Python tools for CCO slash commands
+# Python tools for CCO slash commands (with cache bust)
 PYTHON_TOOLS = """
+# Cache bust for ccbox/cco updates (changes each build)
+ARG CACHEBUST=1
+
 # Python dev tools (ruff, mypy, pytest) + CCO
 RUN pip install --break-system-packages --no-cache-dir \\
     ruff mypy pytest \\

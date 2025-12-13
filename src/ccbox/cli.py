@@ -181,6 +181,9 @@ def build_image(stack: LanguageStack, run_cco_install: bool = True) -> bool:
     env["DOCKER_BUILDKIT"] = "1"
 
     try:
+        # Use timestamp-based cache bust to force rebuild of ccbox/cco layers only
+        # Base layers (apt packages, etc.) remain cached for faster builds
+        cachebust = str(int(time.time()))
         subprocess.run(
             [
                 "docker",
@@ -189,7 +192,8 @@ def build_image(stack: LanguageStack, run_cco_install: bool = True) -> bool:
                 image_name,
                 "-f",
                 str(build_dir / "Dockerfile"),
-                "--no-cache",
+                "--build-arg",
+                f"CACHEBUST={cachebust}",
                 "--progress=auto",
                 str(build_dir),
             ],
@@ -383,10 +387,6 @@ def _run(
     # Ensure base image exists first (required for all stacks)
     if not image_exists(LanguageStack.BASE):
         console.print("[bold]First-time setup: building base image...[/bold]")
-        desc, size = STACK_INFO[LanguageStack.BASE]
-        if not click.confirm(f"Build ccbox:base (~{size}MB)?", default=True):
-            console.print("[yellow]Cancelled.[/yellow]")
-            sys.exit(0)
         if not build_image(LanguageStack.BASE):
             sys.exit(1)
         console.print()
@@ -424,17 +424,10 @@ def _run(
     if has_image and not no_update_check and not build_only:
         update_rebuild = _check_and_prompt_updates(selected_stack)
 
-    # Build if needed (with confirmation) or if update requested
+    # Build if needed or if update requested
     needs_build = build_only or update_rebuild or not has_image
-    if needs_build:
-        # Skip confirmation if update already confirmed rebuild
-        if not update_rebuild:
-            desc, size = STACK_INFO[selected_stack]
-            if not click.confirm(f"Build ccbox:{selected_stack.value} (~{size}MB)?", default=True):
-                console.print("[yellow]Cancelled.[/yellow]")
-                sys.exit(0)
-        if not build_image(selected_stack):
-            sys.exit(1)
+    if needs_build and not build_image(selected_stack):
+        sys.exit(1)
 
     # Build-only mode: exit after build
     if build_only:
