@@ -244,6 +244,9 @@ export NODE_OPTIONS="--max-old-space-size=$NODE_MEM"
 # Dynamic CPU allocation
 export UV_THREADPOOL_SIZE=$(nproc)
 
+# Set installation method to prevent "config mismatch" warning
+claude config set -g installMethod npm-global 2>/dev/null || true
+
 # Execute Claude Code with bypass permissions
 exec claude --dangerously-skip-permissions "$@"
 """
@@ -340,6 +343,8 @@ def get_docker_run_cmd(
         "CLAUDE_CONFIG_DIR=/home/node/.claude",
         "-e",
         "DEBUG=False",  # Disable Claude Code debug mode (prevents 20GB+ log files)
+        "-e",
+        "DISABLE_AUTOUPDATER=1",  # Disable auto-updates (requires docker rebuild)
     ]
 
     if config.git_name:
