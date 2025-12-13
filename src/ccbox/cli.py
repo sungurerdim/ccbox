@@ -41,6 +41,11 @@ CCO_INSTALL_TIMEOUT_SECONDS = 60
 DOCKER_CHECK_INTERVAL_SECONDS = 5
 ERR_DOCKER_NOT_RUNNING = "[red]Error: Docker is not running.[/red]"
 
+# Timeout constants (seconds)
+DOCKER_BUILD_TIMEOUT = 600  # 10 min for image builds
+DOCKER_COMMAND_TIMEOUT = 30  # 30s for docker info/inspect/version
+PIP_INSTALL_TIMEOUT = 300  # 5 min for pip operations
+
 
 def _check_docker_status() -> bool:
     """Check if Docker daemon is responsive."""
@@ -234,6 +239,22 @@ def get_git_config() -> tuple[str, str]:
     return _get_git_config_value("user.name"), _get_git_config_value("user.email")
 
 
+def _update_ccbox_package() -> bool:
+    """Update ccbox via pip. Returns True if successful."""
+    console.print("[dim]Updating ccbox...[/dim]")
+    result = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--upgrade", "ccbox"],
+        capture_output=True,
+        check=False,
+        timeout=PIP_INSTALL_TIMEOUT,
+    )
+    if result.returncode == 0:
+        console.print("[green]✓ ccbox updated[/green]")
+        return True
+    console.print("[red]✗ Failed to update ccbox[/red]")
+    return False
+
+
 def _check_and_prompt_updates(stack: LanguageStack) -> bool:
     """Check for updates and prompt user. Returns True if rebuild needed."""
     console.print("[dim]Checking for updates...[/dim]")
@@ -258,18 +279,7 @@ def _check_and_prompt_updates(stack: LanguageStack) -> bool:
         ccbox_updated = False
         for update in updates:
             if update.package == "ccbox":
-                console.print("[dim]Updating ccbox...[/dim]")
-                result = subprocess.run(
-                    [sys.executable, "-m", "pip", "install", "--upgrade", "ccbox"],
-                    capture_output=True,
-                    check=False,
-                    timeout=300,
-                )
-                if result.returncode == 0:
-                    console.print("[green]✓ ccbox updated[/green]")
-                    ccbox_updated = True
-                else:
-                    console.print("[red]✗ Failed to update ccbox[/red]")
+                ccbox_updated = _update_ccbox_package()
 
         if ccbox_updated:
             console.print("\n[yellow]Please restart ccbox to use the new version.[/yellow]")
@@ -317,13 +327,16 @@ def _select_stack(
         is_detected = stack == detected_stack
         options.append((f"{stack.value}", stack, is_detected))
 
+    # Get all installed images in a single Docker call (avoid N+1 queries)
+    installed_images = _get_installed_ccbox_images()
+
     # Display options
     console.print("[bold]Available stacks:[/bold]")
     for idx, (name, stack, is_detected) in enumerate(options, 1):
         desc, size = STACK_INFO[stack]
         marker = "[green]→[/green] " if is_detected else "  "
         detected_label = " [green](detected)[/green]" if is_detected else ""
-        installed = " [dim][installed][/dim]" if image_exists(stack) else ""
+        installed = " [dim][installed][/dim]" if get_image_name(stack) in installed_images else ""
         console.print(f"  {marker}[cyan]{idx}[/cyan]. {name}{detected_label}{installed}")
         console.print(f"      [dim]{desc} (~{size}MB)[/dim]")
 
@@ -599,16 +612,13 @@ def clean(force: bool) -> None:
             subprocess.run(["docker", "rm", "-f", name], capture_output=True, check=False)
 
     console.print("[dim]Removing images...[/dim]")
-    # Get all ccbox images in a single call (avoid N+1 pattern)
-    installed_images = _get_installed_ccbox_images()
+    # docker rmi -f handles non-existent images gracefully, no need to check
     for stack in LanguageStack:
-        image_name = get_image_name(stack)
-        if image_name in installed_images:
-            subprocess.run(
-                ["docker", "rmi", "-f", image_name],
-                capture_output=True,
-                check=False,
-            )
+        subprocess.run(
+            ["docker", "rmi", "-f", get_image_name(stack)],
+            capture_output=True,
+            check=False,
+        )
 
     console.print("[green]✓ Cleanup complete[/green]")
 
