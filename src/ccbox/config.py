@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import uuid
 from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
@@ -78,8 +80,9 @@ def load_config() -> Config:
         try:
             data = json.loads(config_path.read_text(encoding="utf-8"))
             return Config(**data)
-        except (json.JSONDecodeError, ValueError):
-            pass
+        except (json.JSONDecodeError, ValueError) as e:
+            import sys
+            print(f"Warning: Failed to load config ({e}), using defaults", file=sys.stderr)
 
     return Config()
 
@@ -96,14 +99,63 @@ def save_config(config: Config) -> None:
     )
 
 
+class ConfigPathError(ValueError):
+    """Raised when a config path is invalid or unsafe."""
+
+
+def validate_safe_path(path: Path, description: str = "path") -> Path:
+    """Validate that a path is safe (within user's home directory).
+
+    Args:
+        path: Path to validate (should already be expanded/resolved).
+        description: Human-readable description for error messages.
+
+    Returns:
+        The validated path.
+
+    Raises:
+        ConfigPathError: If path is outside user's home directory.
+    """
+    home = Path.home().resolve()
+    resolved = path.resolve()
+
+    # Check if path is within home directory
+    try:
+        resolved.relative_to(home)
+    except ValueError as e:
+        raise ConfigPathError(
+            f"Invalid {description}: '{resolved}' must be within home directory '{home}'"
+        ) from e
+
+    return resolved
+
+
 def get_claude_config_dir(config: Config) -> Path:
-    """Get expanded Claude config directory path."""
-    return Path(os.path.expanduser(config.claude_config_dir))
+    """Get expanded and validated Claude config directory path.
+
+    Raises:
+        ConfigPathError: If path traversal is detected.
+    """
+    expanded = Path(os.path.expanduser(config.claude_config_dir))
+    return validate_safe_path(expanded, "claude_config_dir")
 
 
 def get_image_name(stack: LanguageStack) -> str:
     """Get Docker image name for a language stack."""
     return f"ccbox:{stack.value}"
+
+
+def image_exists(stack: LanguageStack) -> bool:
+    """Check if Docker image exists for stack."""
+    try:
+        result = subprocess.run(
+            ["docker", "image", "inspect", get_image_name(stack)],
+            capture_output=True,
+            check=False,
+        )
+        return result.returncode == 0
+    except FileNotFoundError:
+        return False
 
 
 def get_container_name(project_name: str, unique: bool = True) -> str:
@@ -113,8 +165,6 @@ def get_container_name(project_name: str, unique: bool = True) -> str:
         project_name: Name of the project directory.
         unique: If True, append a short unique suffix to allow multiple instances.
     """
-    import uuid
-
     safe_name = "".join(c if c.isalnum() or c in "-_" else "-" for c in project_name.lower())
     if unique:
         suffix = uuid.uuid4().hex[:6]

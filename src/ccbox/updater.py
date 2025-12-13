@@ -6,14 +6,33 @@ import json
 import re
 import subprocess
 from dataclasses import dataclass
+from typing import Any
 
 import requests
 
 from . import __version__
-from .config import LanguageStack, get_image_name
+from .config import LanguageStack, get_image_name, image_exists
 
-# Timeout for HTTP requests
+# Timeout for HTTP requests (seconds)
 REQUEST_TIMEOUT = 5
+DOCKER_VERSION_TIMEOUT = 30
+
+
+def _safe_http_get(
+    url: str, headers: dict[str, str] | None = None
+) -> dict[str, Any] | None:
+    """Make an HTTP GET request with standard error handling.
+
+    Returns parsed JSON response or None on any error.
+    """
+    try:
+        resp = requests.get(url, timeout=REQUEST_TIMEOUT, headers=headers)
+        if resp.status_code != 200:
+            return None
+        result: dict[str, Any] = resp.json()
+        return result
+    except (requests.RequestException, json.JSONDecodeError):
+        return None
 
 
 @dataclass
@@ -42,15 +61,11 @@ class UpdateInfo:
 
 def check_ccbox_update() -> UpdateInfo | None:
     """Check PyPI for ccbox updates."""
-    try:
-        resp = requests.get(
-            "https://pypi.org/pypi/ccbox/json",
-            timeout=REQUEST_TIMEOUT,
-        )
-        if resp.status_code != 200:
-            return None
+    data = _safe_http_get("https://pypi.org/pypi/ccbox/json")
+    if not data:
+        return None
 
-        data = resp.json()
+    try:
         latest = data.get("info", {}).get("version", "")
         if not latest:
             return None
@@ -69,21 +84,8 @@ def check_ccbox_update() -> UpdateInfo | None:
             latest=latest,
             changelog=changelog,
         )
-    except (requests.RequestException, json.JSONDecodeError, KeyError):
+    except KeyError:
         return None
-
-
-def _image_exists(stack: LanguageStack = LanguageStack.BASE) -> bool:
-    """Check if docker image exists."""
-    try:
-        result = subprocess.run(
-            ["docker", "image", "inspect", get_image_name(stack)],
-            capture_output=True,
-            check=False,
-        )
-        return result.returncode == 0
-    except FileNotFoundError:
-        return False
 
 
 def _get_docker_version(command: str, stack: LanguageStack = LanguageStack.BASE) -> str | None:
@@ -93,7 +95,7 @@ def _get_docker_version(command: str, stack: LanguageStack = LanguageStack.BASE)
             ["docker", "run", "--rm", get_image_name(stack), "bash", "-c", command],
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=DOCKER_VERSION_TIMEOUT,
             check=False,
         )
         if result.returncode == 0 and result.stdout.strip():
@@ -106,20 +108,17 @@ def _get_docker_version(command: str, stack: LanguageStack = LanguageStack.BASE)
 def check_cco_update(stack: LanguageStack = LanguageStack.BASE) -> UpdateInfo | None:
     """Check GitHub for CCO updates (version from docker image)."""
     # Skip if no image exists
-    if not _image_exists(stack):
+    if not image_exists(stack):
+        return None
+
+    data = _safe_http_get(
+        "https://api.github.com/repos/sungurerdim/ClaudeCodeOptimizer/releases/latest",
+        headers={"Accept": "application/vnd.github.v3+json"},
+    )
+    if not data:
         return None
 
     try:
-        # Get latest release from GitHub
-        resp = requests.get(
-            "https://api.github.com/repos/sungurerdim/ClaudeCodeOptimizer/releases/latest",
-            timeout=REQUEST_TIMEOUT,
-            headers={"Accept": "application/vnd.github.v3+json"},
-        )
-        if resp.status_code != 200:
-            return None
-
-        data = resp.json()
         latest = data.get("tag_name", "")
         if not latest:
             return None
@@ -140,26 +139,21 @@ def check_cco_update(stack: LanguageStack = LanguageStack.BASE) -> UpdateInfo | 
             latest=latest,
             changelog=changelog,
         )
-    except (requests.RequestException, json.JSONDecodeError, KeyError):
+    except KeyError:
         return None
 
 
 def check_claude_code_update(stack: LanguageStack = LanguageStack.BASE) -> UpdateInfo | None:
     """Check npm for Claude Code updates (version from docker image)."""
     # Skip if no image exists
-    if not _image_exists(stack):
+    if not image_exists(stack):
+        return None
+
+    data = _safe_http_get("https://registry.npmjs.org/@anthropic-ai/claude-code/latest")
+    if not data:
         return None
 
     try:
-        # Get latest version from npm
-        resp = requests.get(
-            "https://registry.npmjs.org/@anthropic-ai/claude-code/latest",
-            timeout=REQUEST_TIMEOUT,
-        )
-        if resp.status_code != 200:
-            return None
-
-        data = resp.json()
         latest = data.get("version", "")
         if not latest:
             return None
@@ -175,17 +169,7 @@ def check_claude_code_update(stack: LanguageStack = LanguageStack.BASE) -> Updat
             current=current,
             latest=latest,
         )
-    except (requests.RequestException, json.JSONDecodeError, KeyError):
-        return None
-
-
-def _get_installed_cco_version() -> str | None:
-    """Get currently installed CCO version (host - deprecated, kept for compatibility)."""
-    try:
-        from importlib.metadata import version
-
-        return version("claudecodeoptimizer")
-    except Exception:
+    except KeyError:
         return None
 
 
