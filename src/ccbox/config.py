@@ -10,6 +10,10 @@ from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
 
+from rich.console import Console
+
+console = Console(stderr=True)
+
 
 class LanguageStack(str, Enum):
     """Supported language stacks for Docker images.
@@ -81,8 +85,7 @@ def load_config() -> Config:
             data = json.loads(config_path.read_text(encoding="utf-8"))
             return Config(**data)
         except (json.JSONDecodeError, ValueError) as e:
-            import sys
-            print(f"Warning: Failed to load config ({e}), using defaults", file=sys.stderr)
+            console.print(f"[yellow]Warning: Failed to load config ({e}), using defaults[/yellow]")
 
     return Config()
 
@@ -114,9 +117,14 @@ def validate_safe_path(path: Path, description: str = "path") -> Path:
         The validated path.
 
     Raises:
-        ConfigPathError: If path is outside user's home directory.
+        ConfigPathError: If path is outside user's home directory or is a symlink.
     """
     home = Path.home().resolve()
+
+    # Security: reject symlinks to prevent symlink attacks
+    if path.is_symlink():
+        raise ConfigPathError(f"{description} cannot be a symlink: {path}")
+
     resolved = path.resolve()
 
     # Check if path is within home directory
