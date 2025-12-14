@@ -27,8 +27,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \\
     && sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen \\
     # Create fd symlink (Debian package installs as fdfind)
     && ln -s $(which fdfind) /usr/local/bin/fd \\
-    # yq (not in apt, install from GitHub)
-    && curl -sL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq \\
+    # yq (not in apt, install from GitHub - auto-detect architecture)
+    && YQ_ARCH=$(dpkg --print-architecture | sed 's/armhf/arm/;s/i386/386/') \\
+    && curl -sL "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_${YQ_ARCH}" -o /usr/local/bin/yq \\
     && chmod +x /usr/local/bin/yq
 
 ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
@@ -175,10 +176,11 @@ LABEL org.opencontainers.image.title="ccbox:full"
 
 USER root
 
-# Go (latest) + golangci-lint
+# Go (latest) + golangci-lint - auto-detect architecture
 RUN set -eux; \
+    GO_ARCH=$(dpkg --print-architecture); \
     GO_VER=$(curl -fsSL https://go.dev/VERSION?m=text | head -1); \
-    curl -fsSL "https://go.dev/dl/${GO_VER}.linux-amd64.tar.gz" | tar -C /usr/local -xzf -; \
+    curl -fsSL "https://go.dev/dl/${GO_VER}.linux-${GO_ARCH}.tar.gz" | tar -C /usr/local -xzf -; \
     curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b /usr/local/bin
 ENV PATH=$PATH:/usr/local/go/bin GOPATH=/home/node/go
 ENV PATH=$PATH:$GOPATH/bin
@@ -188,10 +190,11 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
     && /root/.cargo/bin/rustup component add clippy rustfmt
 ENV PATH="/root/.cargo/bin:$PATH"
 
-# Java (Temurin LTS) + Maven
+# Java (Temurin LTS) + Maven - auto-detect architecture
 RUN set -eux; \
+    JAVA_ARCH=$(dpkg --print-architecture | sed 's/amd64/x64/;s/arm64/aarch64/'); \
     TEMURIN_VER=$(curl -sfL "https://api.adoptium.net/v3/info/available_releases" | jq -r '.most_recent_lts'); \
-    curl -sfL "https://api.adoptium.net/v3/binary/latest/${TEMURIN_VER}/ga/linux/x64/jdk/hotspot/normal/eclipse" -o /tmp/jdk.tar.gz; \
+    curl -sfL "https://api.adoptium.net/v3/binary/latest/${TEMURIN_VER}/ga/linux/${JAVA_ARCH}/jdk/hotspot/normal/eclipse" -o /tmp/jdk.tar.gz; \
     mkdir -p /usr/lib/jvm && tar -xzf /tmp/jdk.tar.gz -C /usr/lib/jvm; \
     ln -s /usr/lib/jvm/jdk-* /usr/lib/jvm/temurin; \
     MVN_VER=$(curl -sfL https://api.github.com/repos/apache/maven/releases/latest | jq -r .tag_name | sed 's/maven-//'); \

@@ -580,7 +580,8 @@ def doctor(path: str) -> None:
     checks.append(("Docker running", docker_ok, "Start Docker"))
 
     try:
-        _, _, free = shutil.disk_usage("/")
+        # Use home directory for cross-platform disk check (works on Windows/Linux/macOS)
+        _, _, free = shutil.disk_usage(Path.home())
         free_gb = free // (1024**3)
         checks.append((f"Disk space ({free_gb}GB)", free_gb >= 5, "Need 5GB+"))
     except (OSError, PermissionError) as e:
