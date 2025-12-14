@@ -18,32 +18,36 @@ console = Console(stderr=True)
 class LanguageStack(str, Enum):
     """Supported language stacks for Docker images.
 
-    All stacks include base tools: Node.js + Python + CCO + linting/testing
+    Hierarchy: minimal (no CCO) -> base (+ CCO) -> web/full (+ extras)
+    Standalone: go, rust, java (own base images + CCO)
     """
 
-    BASE = "base"      # Node + Python + CCO + eslint/prettier/ruff/pytest (~450MB)
-    GO = "go"          # + Go + golangci-lint (~750MB)
-    RUST = "rust"      # + Rust + clippy (~900MB)
-    JAVA = "java"      # + JDK (Temurin LTS) + Maven (~1GB)
-    WEB = "web"        # + pnpm (fullstack) (~500MB)
-    FULL = "full"      # All languages (~1.35GB)
+    MINIMAL = "minimal"  # Node + Python + tools (no CCO) (~400MB)
+    BASE = "base"        # minimal + CCO (~450MB)
+    GO = "go"            # Go + Node + Python + CCO (~750MB)
+    RUST = "rust"        # Rust + Node + Python + CCO (~900MB)
+    JAVA = "java"        # JDK (Temurin LTS) + Maven + CCO (~1GB)
+    WEB = "web"          # base + pnpm (fullstack) (~500MB)
+    FULL = "full"        # base + Go + Rust + Java (~1.35GB)
 
 
-# Stack descriptions for CLI help (sizes are estimates, no dev tools)
+# Stack descriptions for CLI help (sizes are estimates)
 STACK_INFO: dict[LanguageStack, tuple[str, int]] = {
-    LanguageStack.BASE: ("Node + Python + CCO + lint/test tools", 450),
-    LanguageStack.GO: ("+ Go (latest) + golangci-lint", 750),
-    LanguageStack.RUST: ("+ Rust (latest) + clippy", 900),
-    LanguageStack.JAVA: ("+ JDK (Temurin LTS) + Maven", 1000),
-    LanguageStack.WEB: ("+ pnpm (fullstack)", 500),
-    LanguageStack.FULL: ("All: Go + Rust + Java", 1350),
+    LanguageStack.MINIMAL: ("Node + Python + tools (no CCO)", 400),
+    LanguageStack.BASE: ("minimal + CCO (default)", 450),
+    LanguageStack.GO: ("Go + Node + Python + CCO", 750),
+    LanguageStack.RUST: ("Rust + Node + Python + CCO", 900),
+    LanguageStack.JAVA: ("JDK (Temurin) + Maven + CCO", 1000),
+    LanguageStack.WEB: ("base + pnpm (fullstack)", 500),
+    LanguageStack.FULL: ("base + Go + Rust + Java", 1350),
 }
 
-# Stack dependencies: stacks that require ccbox:base to be built first
-# WEB and FULL use FROM ccbox:base for layer sharing
+# Stack dependencies: which stack must be built first
+# Hierarchy: minimal -> base -> web/full
 # GO, RUST, JAVA use their own base images (golang:latest, rust:latest, etc.)
 STACK_DEPENDENCIES: dict[LanguageStack, LanguageStack | None] = {
-    LanguageStack.BASE: None,
+    LanguageStack.MINIMAL: None,
+    LanguageStack.BASE: LanguageStack.MINIMAL,
     LanguageStack.GO: None,
     LanguageStack.RUST: None,
     LanguageStack.JAVA: None,
