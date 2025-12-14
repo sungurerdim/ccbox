@@ -43,24 +43,29 @@ RUN curl -fsSL https://deb.nodesource.com/setup_current.x | bash - \\
     && rm -rf /var/lib/apt/lists/*
 """
 
-# Python tools for CCO slash commands (with cache bust)
-PYTHON_TOOLS = """
-# Cache bust for ccbox/cco updates (changes each build)
-ARG CACHEBUST=1
-
-# Python dev tools (ruff, mypy, pytest) + CCO
-RUN pip install --break-system-packages --no-cache-dir \\
-    ruff mypy pytest \\
-    git+https://github.com/sungurerdim/ClaudeCodeOptimizer.git
+# Python dev tools (without CCO)
+PYTHON_TOOLS_BASE = """
+# Python dev tools (ruff, mypy, pytest)
+RUN pip install --break-system-packages --no-cache-dir ruff mypy pytest
 """
 
-# Claude Code + CCO install (no extra dev tools - users install what they need)
-NODE_TOOLS = """
+# CCO installation (separate for layering)
+CCO_INSTALL = """
+# Cache bust for CCO updates
+ARG CACHEBUST=1
+
+# Claude Code Optimizer (CCO)
+RUN pip install --break-system-packages --no-cache-dir \\
+    git+https://github.com/sungurerdim/ClaudeCodeOptimizer.git \\
+    && (cco-install 2>/dev/null || true)
+"""
+
+# Claude Code only (no CCO setup)
+NODE_TOOLS_BASE = """
 # Claude Code
 RUN npm config set fund false && npm config set update-notifier false \\
     && npm install -g @anthropic-ai/claude-code --force \\
-    && npm cache clean --force \\
-    && (cco-install 2>/dev/null || true)
+    && npm cache clean --force
 """
 
 # Entrypoint setup
@@ -78,19 +83,30 @@ ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 """
 
 
-def _base_dockerfile() -> str:
-    """BASE stack: node:slim + Python + CCO."""
+def _minimal_dockerfile() -> str:
+    """MINIMAL stack: node:slim + Python (no CCO)."""
     return f"""# syntax=docker/dockerfile:1
-# ccbox:base - Node.js + Python + CCO
+# ccbox:minimal - Node.js + Python (no CCO)
 FROM node:slim
 
-LABEL org.opencontainers.image.title="ccbox:base"
+LABEL org.opencontainers.image.title="ccbox:minimal"
 
 ENV DEBIAN_FRONTEND=noninteractive
 {COMMON_TOOLS}
-{PYTHON_TOOLS}
-{NODE_TOOLS}
+{PYTHON_TOOLS_BASE}
+{NODE_TOOLS_BASE}
 {ENTRYPOINT_SETUP}
+"""
+
+
+def _base_dockerfile() -> str:
+    """BASE stack: minimal + CCO."""
+    return f"""# syntax=docker/dockerfile:1
+# ccbox:base - minimal + CCO (default)
+FROM ccbox:minimal
+
+LABEL org.opencontainers.image.title="ccbox:base"
+{CCO_INSTALL}
 """
 
 
@@ -104,8 +120,9 @@ LABEL org.opencontainers.image.title="ccbox:go"
 
 ENV DEBIAN_FRONTEND=noninteractive
 {NODE_INSTALL}{COMMON_TOOLS}
-{PYTHON_TOOLS}
-{NODE_TOOLS}
+{PYTHON_TOOLS_BASE}
+{NODE_TOOLS_BASE}
+{CCO_INSTALL}
 # golangci-lint (latest)
 RUN curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b /usr/local/bin
 {ENTRYPOINT_SETUP}
@@ -122,8 +139,9 @@ LABEL org.opencontainers.image.title="ccbox:rust"
 
 ENV DEBIAN_FRONTEND=noninteractive
 {NODE_INSTALL}{COMMON_TOOLS}
-{PYTHON_TOOLS}
-{NODE_TOOLS}
+{PYTHON_TOOLS_BASE}
+{NODE_TOOLS_BASE}
+{CCO_INSTALL}
 # Rust tools (clippy + rustfmt)
 RUN rustup component add clippy rustfmt
 {ENTRYPOINT_SETUP}
@@ -140,8 +158,9 @@ LABEL org.opencontainers.image.title="ccbox:java"
 
 ENV DEBIAN_FRONTEND=noninteractive
 {NODE_INSTALL}{COMMON_TOOLS}
-{PYTHON_TOOLS}
-{NODE_TOOLS}
+{PYTHON_TOOLS_BASE}
+{NODE_TOOLS_BASE}
+{CCO_INSTALL}
 # Maven (latest from Apache)
 RUN set -eux; \\
     MVN_VER=$(curl -sfL https://api.github.com/repos/apache/maven/releases/latest | jq -r .tag_name | sed 's/maven-//'); \\
@@ -212,6 +231,7 @@ USER node
 
 # Stack to Dockerfile generator mapping
 DOCKERFILE_GENERATORS: dict[LanguageStack, Callable[[], str]] = {
+    LanguageStack.MINIMAL: _minimal_dockerfile,
     LanguageStack.BASE: _base_dockerfile,
     LanguageStack.GO: _go_dockerfile,
     LanguageStack.RUST: _rust_dockerfile,
@@ -226,7 +246,7 @@ def generate_dockerfile(stack: LanguageStack) -> str:
     generator = DOCKERFILE_GENERATORS.get(stack)
     if generator:
         return generator()
-    return _base_dockerfile()  # pragma: no cover - fallback for unknown stacks
+    return _minimal_dockerfile()  # pragma: no cover - fallback for unknown stacks
 
 
 def generate_entrypoint() -> str:

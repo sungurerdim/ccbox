@@ -15,7 +15,6 @@ from ccbox.cli import (
     build_image,
     check_docker,
     cli,
-    ensure_base_image,
     get_git_config,
     image_exists,
 )
@@ -103,6 +102,7 @@ class TestConfigFunctions:
 
     def test_image_name(self) -> None:
         """Test image name generation."""
+        assert get_image_name(LanguageStack.MINIMAL) == "ccbox:minimal"
         assert get_image_name(LanguageStack.BASE) == "ccbox:base"
         assert get_image_name(LanguageStack.GO) == "ccbox:go"
         assert get_image_name(LanguageStack.RUST) == "ccbox:rust"
@@ -129,12 +129,19 @@ class TestConfigFunctions:
 class TestGenerator:
     """Tests for Dockerfile and entrypoint generation."""
 
-    def test_generate_dockerfile_base(self) -> None:
-        """Test BASE Dockerfile generation."""
-        dockerfile = generate_dockerfile(LanguageStack.BASE)
+    def test_generate_dockerfile_minimal(self) -> None:
+        """Test MINIMAL Dockerfile generation (no CCO)."""
+        dockerfile = generate_dockerfile(LanguageStack.MINIMAL)
         assert "FROM node:slim" in dockerfile
         assert "@anthropic-ai/claude-code" in dockerfile
         assert "python3" in dockerfile
+        assert "ClaudeCodeOptimizer" not in dockerfile  # No CCO in minimal
+        assert "syntax=docker/dockerfile:1" in dockerfile  # BuildKit
+
+    def test_generate_dockerfile_base(self) -> None:
+        """Test BASE Dockerfile generation (minimal + CCO)."""
+        dockerfile = generate_dockerfile(LanguageStack.BASE)
+        assert "FROM ccbox:minimal" in dockerfile
         assert "ClaudeCodeOptimizer" in dockerfile
         assert "syntax=docker/dockerfile:1" in dockerfile  # BuildKit
 
@@ -318,6 +325,7 @@ class TestCLIFunctions:
         from subprocess import CalledProcessError
 
         with (
+            patch("ccbox.cli.image_exists", return_value=True),  # Skip dependency check
             patch("ccbox.cli.write_build_files", return_value=tmp_path),
             patch("subprocess.run") as mock_run,
         ):
@@ -325,25 +333,8 @@ class TestCLIFunctions:
             result = build_image(LanguageStack.BASE)
             assert result is False
 
-    def test_ensure_base_image_exists(self) -> None:
-        """Test ensure_base_image when base image already exists."""
-        with patch("ccbox.cli.image_exists", return_value=True):
-            result = ensure_base_image()
-            assert result is True
-
-    def test_ensure_base_image_builds(self, tmp_path: Path) -> None:
-        """Test ensure_base_image builds when base image doesn't exist."""
-        with (
-            patch("ccbox.cli.image_exists", return_value=False),
-            patch("ccbox.cli.write_build_files", return_value=tmp_path),
-            patch("subprocess.run") as mock_run,
-        ):
-            mock_run.return_value = MagicMock(returncode=0)
-            result = ensure_base_image()
-            assert result is True
-
     def test_build_image_with_dependency(self, tmp_path: Path) -> None:
-        """Test build_image builds dependency (base) first for WEB stack."""
+        """Test build_image builds dependencies first for WEB stack."""
         build_calls = []
 
         def mock_write_build_files(stack: LanguageStack) -> Path:
@@ -358,8 +349,8 @@ class TestCLIFunctions:
             mock_run.return_value = MagicMock(returncode=0)
             result = build_image(LanguageStack.WEB)
             assert result is True
-            # BASE should be built before WEB
-            assert build_calls == [LanguageStack.BASE, LanguageStack.WEB]
+            # MINIMAL -> BASE -> WEB
+            assert build_calls == [LanguageStack.MINIMAL, LanguageStack.BASE, LanguageStack.WEB]
 
     def test_build_image_dependency_failure(self, tmp_path: Path) -> None:
         """Test build_image fails if dependency fails."""
@@ -810,6 +801,7 @@ class TestCLICommands:
         runner = CliRunner()
         result = runner.invoke(cli, ["stacks"])
         assert result.exit_code == 0
+        assert "minimal" in result.output
         assert "base" in result.output
         assert "go" in result.output
         assert "rust" in result.output
@@ -1039,8 +1031,9 @@ class TestSelectStack:
             patch("ccbox.cli.image_exists", return_value=False),
             patch("click.prompt", return_value="1"),
         ):
+            # Choice "1" selects first stack (MINIMAL)
             result = _select_stack(LanguageStack.BASE, ["python"])
-            assert result == LanguageStack.BASE
+            assert result == LanguageStack.MINIMAL
 
     def test_select_stack_cancelled(self) -> None:
         """Test stack selection cancelled."""
@@ -1061,8 +1054,9 @@ class TestSelectStack:
             patch("ccbox.cli.image_exists", return_value=False),
             patch("click.prompt", side_effect=["invalid", "1"]),
         ):
+            # Choice "1" selects first stack (MINIMAL)
             result = _select_stack(LanguageStack.BASE, [])
-            assert result == LanguageStack.BASE
+            assert result == LanguageStack.MINIMAL
 
 
 class TestCheckAndPromptUpdates:
@@ -1346,17 +1340,18 @@ class TestUpdaterExtended:
 class TestGeneratorFallback:
     """Test generator fallback behavior."""
 
-    def test_generate_dockerfile_unknown_stack(self) -> None:
-        """Test that unknown stack falls back to base."""
-        # This tests line 243 - the fallback case
-        # We can't easily create an unknown stack, but we can verify
-        # the function works for all known stacks
+    def test_generate_dockerfile_all_stacks(self) -> None:
+        """Test that all stacks generate valid Dockerfiles."""
         for stack in LanguageStack:
             dockerfile = generate_dockerfile(stack)
             assert "FROM" in dockerfile
-            # BASE, GO, RUST, JAVA include claude-code directly
+            # MINIMAL, GO, RUST, JAVA include claude-code directly
+            # BASE inherits from ccbox:minimal
             # WEB and FULL inherit from ccbox:base
-            if stack in (LanguageStack.WEB, LanguageStack.FULL):
+            if stack == LanguageStack.BASE:
+                assert "FROM ccbox:minimal" in dockerfile
+                assert "ClaudeCodeOptimizer" in dockerfile
+            elif stack in (LanguageStack.WEB, LanguageStack.FULL):
                 assert "FROM ccbox:base" in dockerfile
             else:
                 assert "claude-code" in dockerfile

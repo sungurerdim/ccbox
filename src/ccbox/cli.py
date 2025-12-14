@@ -100,17 +100,6 @@ def check_docker(auto_start: bool = True) -> bool:
     return False
 
 
-def ensure_base_image() -> bool:
-    """Ensure base image exists, build if needed (first-time setup).
-
-    Called automatically when building WEB or FULL stacks that depend on base.
-    """
-    if image_exists(LanguageStack.BASE):
-        return True
-    console.print("[dim]Building base image (first-time setup)...[/dim]")
-    return build_image(LanguageStack.BASE)
-
-
 def build_image(stack: LanguageStack) -> bool:
     """Build Docker image for stack with BuildKit optimization.
 
@@ -643,7 +632,8 @@ def stacks() -> None:
 
     console.print(table)
     console.print("\n[dim]Usage: ccbox --stack=go[/dim]")
-    console.print("[dim]All stacks include: Python + JS/TS + CCO + lint/test tools[/dim]")
+    console.print("[dim]All stacks include: Python + Node.js + lint/test tools[/dim]")
+    console.print("[dim]All except 'minimal' include CCO[/dim]")
 
 
 if __name__ == "__main__":  # pragma: no cover
