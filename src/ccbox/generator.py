@@ -49,15 +49,15 @@ PYTHON_TOOLS_BASE = """
 RUN pip install --break-system-packages --no-cache-dir ruff mypy pytest
 """
 
-# CCO installation (separate for layering)
+# CCO installation (pip only - cco-install runs at runtime via entrypoint)
 CCO_INSTALL = """
 # Cache bust for CCO updates
 ARG CACHEBUST=1
 
-# Claude Code Optimizer (CCO)
+# Claude Code Optimizer (CCO) - install package only
+# cco-install runs at container start because ~/.claude is mounted from host
 RUN pip install --break-system-packages --no-cache-dir \\
-    git+https://github.com/sungurerdim/ClaudeCodeOptimizer.git \\
-    && (cco-install 2>/dev/null || true)
+    git+https://github.com/sungurerdim/ClaudeCodeOptimizer.git
 """
 
 # Claude Code only (no CCO setup)
