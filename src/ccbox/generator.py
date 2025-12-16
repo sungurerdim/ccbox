@@ -56,8 +56,11 @@ ARG CACHEBUST=1
 
 # Claude Code Optimizer (CCO) - install package only
 # cco-install runs at container start because ~/.claude is mounted from host
+# Must run as root for system-wide installation (USER node set by minimal base)
+USER root
 RUN pip install --break-system-packages --no-cache-dir \\
     git+https://github.com/sungurerdim/ClaudeCodeOptimizer.git
+USER node
 """
 
 # Claude Code only (no CCO setup)
