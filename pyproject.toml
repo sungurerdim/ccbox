@@ -8,7 +8,7 @@ version = "1.0.0"
 description = "Secure Docker environment for Claude Code CLI - isolated sandbox per project"
 readme = "README.md"
 license = {text = "MIT"}
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 keywords = ["claude", "docker", "cli", "sandbox", "ai", "claude-code", "isolation"]
 authors = [
     {name = "Sungur Zahid Erdim", email = "sungurerdim@gmail.com"}
@@ -20,7 +20,6 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -37,7 +36,6 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",
-    "pytest-cov>=4.0",
     "ruff>=0.1.0",
     "mypy>=1.0",
     "types-requests>=2.28",
