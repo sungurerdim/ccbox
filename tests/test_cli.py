@@ -384,6 +384,32 @@ class TestCLIFunctions:
             # Only WEB should be built since BASE exists
             assert build_calls == [LanguageStack.WEB]
 
+    def test_build_image_skips_cco_install_for_minimal(self, tmp_path: Path) -> None:
+        """Test that cco-install is NOT called for MINIMAL stack."""
+        with (
+            patch("ccbox.cli.image_exists", return_value=True),
+            patch("ccbox.cli.write_build_files", return_value=tmp_path),
+            patch("ccbox.cli._run_cco_install") as mock_cco_install,
+            patch("subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            result = build_image(LanguageStack.MINIMAL)
+            assert result is True
+            mock_cco_install.assert_not_called()
+
+    def test_build_image_runs_cco_install_for_base(self, tmp_path: Path) -> None:
+        """Test that cco-install IS called for BASE stack."""
+        with (
+            patch("ccbox.cli.image_exists", return_value=True),
+            patch("ccbox.cli.write_build_files", return_value=tmp_path),
+            patch("ccbox.cli._run_cco_install") as mock_cco_install,
+            patch("subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            result = build_image(LanguageStack.BASE)
+            assert result is True
+            mock_cco_install.assert_called_once_with(LanguageStack.BASE)
+
 
 class TestDetector:
     """Tests for project type detection."""

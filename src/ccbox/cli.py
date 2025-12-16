@@ -204,7 +204,9 @@ def build_image(stack: LanguageStack) -> bool:
         console.print(f"[green]✓ Built {image_name}[/green]")
 
         # Run cco-install post-build (installs to host's ~/.claude)
-        _run_cco_install(stack)
+        # Skip for MINIMAL stack which doesn't include CCO
+        if stack != LanguageStack.MINIMAL:
+            _run_cco_install(stack)
 
         return True
     except subprocess.CalledProcessError:
