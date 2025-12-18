@@ -182,9 +182,7 @@ def build_image(stack: LanguageStack) -> bool:
     env["DOCKER_BUILDKIT"] = "1"
 
     try:
-        # Use timestamp-based cache bust to force rebuild of ccbox/cco layers only
-        # Base layers (apt packages, etc.) remain cached for faster builds
-        cachebust = str(int(time.time()))
+        # Disable all Docker cache to ensure fresh builds (Claude Code + CCO updates)
         subprocess.run(
             [
                 "docker",
@@ -193,8 +191,7 @@ def build_image(stack: LanguageStack) -> bool:
                 image_name,
                 "-f",
                 str(build_dir / "Dockerfile"),
-                "--build-arg",
-                f"CACHEBUST={cachebust}",
+                "--no-cache",
                 "--progress=auto",
                 str(build_dir),
             ],

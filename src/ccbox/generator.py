@@ -51,9 +51,6 @@ RUN pip install --break-system-packages --no-cache-dir ruff mypy pytest
 
 # CCO installation (pip only - cco-install runs at runtime via entrypoint)
 CCO_INSTALL = """
-# Cache bust for CCO updates
-ARG CACHEBUST=1
-
 # Claude Code Optimizer (CCO) - install package only
 # cco-install runs at container start because ~/.claude is mounted from host
 # Must run as root for system-wide installation (USER node set by minimal base)
