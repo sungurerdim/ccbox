@@ -990,8 +990,8 @@ class TestGeneratorExtended:
         assert "docker" in cmd
         assert not any("GIT_AUTHOR_NAME" in arg for arg in cmd)
 
-    def test_get_docker_run_cmd_debug_disabled(self) -> None:
-        """Test docker run command has DEBUG=False to prevent log explosion."""
+    def test_get_docker_run_cmd_debug_logs_tmpfs_default(self) -> None:
+        """Test docker run command uses tmpfs for debug logs by default."""
         config = Config()
         cmd = get_docker_run_cmd(
             config,
@@ -999,7 +999,93 @@ class TestGeneratorExtended:
             "test",
             LanguageStack.BASE,
         )
-        assert any("DEBUG=False" in arg for arg in cmd)
+        # Debug logs use tmpfs by default (ephemeral)
+        cmd_str = " ".join(cmd)
+        assert "/home/node/.claude/debug" in cmd_str
+        assert "--tmpfs" in cmd_str
+
+    def test_get_docker_run_cmd_debug_logs_persistent(self) -> None:
+        """Test docker run command skips tmpfs when debug_logs=True."""
+        config = Config()
+        cmd = get_docker_run_cmd(
+            config,
+            Path("/project/test"),
+            "test",
+            LanguageStack.BASE,
+            debug_logs=True,
+        )
+        # Debug logs persistent - no tmpfs for debug dir
+        cmd_str = " ".join(cmd)
+        assert "/home/node/.claude/debug" not in cmd_str
+
+    def test_get_docker_run_cmd_bare_mode_with_credentials(self) -> None:
+        """Test bare mode only mounts credentials file."""
+        # Create fake credentials file in home dir to pass validation
+        claude_dir = Path.home() / ".claude-test-bare"
+        claude_dir.mkdir(exist_ok=True)
+        creds_file = claude_dir / ".credentials.json"
+        creds_file.write_text('{"key": "test"}')
+
+        try:
+            config = Config(claude_config_dir=str(claude_dir))
+            cmd = get_docker_run_cmd(
+                config,
+                Path("/project/test"),
+                "test",
+                LanguageStack.BASE,
+                bare=True,
+            )
+            cmd_str = " ".join(cmd)
+            # Should mount only credentials file, not full .claude dir
+            assert ".credentials.json:/home/node/.claude/.credentials.json:ro" in cmd_str
+            assert f"{claude_dir}:/home/node/.claude:rw" not in cmd_str
+        finally:
+            # Cleanup
+            creds_file.unlink(missing_ok=True)
+            claude_dir.rmdir()
+
+    def test_get_docker_run_cmd_bare_mode_no_credentials(self) -> None:
+        """Test bare mode without credentials file doesn't mount anything."""
+        claude_dir = Path.home() / ".claude-test-bare-nocreds"
+        claude_dir.mkdir(exist_ok=True)
+        # No credentials file created
+
+        try:
+            config = Config(claude_config_dir=str(claude_dir))
+            cmd = get_docker_run_cmd(
+                config,
+                Path("/project/test"),
+                "test",
+                LanguageStack.BASE,
+                bare=True,
+            )
+            cmd_str = " ".join(cmd)
+            # Should not mount .credentials.json (file doesn't exist)
+            assert ".credentials.json" not in cmd_str
+        finally:
+            # Cleanup
+            claude_dir.rmdir()
+
+    def test_get_docker_run_cmd_normal_mode(self) -> None:
+        """Test normal mode mounts full .claude directory."""
+        claude_dir = Path.home() / ".claude-test-normal"
+        claude_dir.mkdir(exist_ok=True)
+
+        try:
+            config = Config(claude_config_dir=str(claude_dir))
+            cmd = get_docker_run_cmd(
+                config,
+                Path("/project/test"),
+                "test",
+                LanguageStack.BASE,
+                bare=False,
+            )
+            cmd_str = " ".join(cmd)
+            # Should mount full .claude dir
+            assert f"{claude_dir}:/home/node/.claude:rw" in cmd_str
+        finally:
+            # Cleanup
+            claude_dir.rmdir()
 
 
 class TestImageExistsEdgeCases:

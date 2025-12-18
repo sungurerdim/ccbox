@@ -292,8 +292,19 @@ def get_docker_run_cmd(
     project_path: Path,
     project_name: str,
     stack: LanguageStack,
+    *,
+    bare: bool = False,
+    debug_logs: bool = False,
 ) -> list[str]:
     """Generate docker run command with full cleanup on exit.
+
+    Args:
+        config: ccbox configuration.
+        project_path: Path to the project directory.
+        project_name: Name of the project.
+        stack: Language stack to use.
+        bare: If True, only mount credentials (no CCO agents/commands/rules).
+        debug_logs: If True, persist debug logs; otherwise use tmpfs (ephemeral).
 
     Raises:
         ConfigPathError: If claude_config_dir path validation fails.
@@ -314,11 +325,20 @@ def get_docker_run_cmd(
         "-it",  # Interactive TTY
         "--name",
         container_name,
-        # Mounts: project (rw) and claude config (rw)
+        # Mounts: project (rw)
         "-v",
         f"{project_path}:/home/node/{dirname}:rw",
-        "-v",
-        f"{claude_config}:/home/node/.claude:rw",
+    ]
+
+    # Claude config mount: bare mode only mounts credentials (no CCO)
+    if bare:
+        creds_file = claude_config / ".credentials.json"
+        if creds_file.exists():
+            cmd.extend(["-v", f"{creds_file}:/home/node/.claude/.credentials.json:ro"])
+    else:
+        cmd.extend(["-v", f"{claude_config}:/home/node/.claude:rw"])
+
+    cmd.extend([
         # Workdir: dynamic based on directory name
         "-w",
         f"/home/node/{dirname}",
@@ -336,10 +356,12 @@ def get_docker_run_cmd(
         "-e",
         "CLAUDE_CONFIG_DIR=/home/node/.claude",
         "-e",
-        "CLAUDE_CODE_DEBUG_LOG_DIR=",  # Disable debug logging
-        "-e",
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",  # Disable auto-updates, telemetry, error reporting
-    ]
+    ])
+
+    # Debug logs: tmpfs by default (ephemeral), persistent with --debug-logs
+    if not debug_logs:
+        cmd.extend(["--tmpfs", "/home/node/.claude/debug:rw,size=64m"])
 
     if config.git_name:
         cmd.extend(["-e", f"GIT_AUTHOR_NAME={config.git_name}"])
