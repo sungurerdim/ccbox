@@ -336,7 +336,7 @@ def get_docker_run_cmd(
         "-e",
         "CLAUDE_CONFIG_DIR=/home/node/.claude",
         "-e",
-        "DEBUG=False",  # Disable Claude Code debug mode (prevents 20GB+ log files)
+        "CLAUDE_CODE_DEBUG_LOG_DIR=",  # Disable debug logging
         "-e",
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",  # Disable auto-updates, telemetry, error reporting
     ]
