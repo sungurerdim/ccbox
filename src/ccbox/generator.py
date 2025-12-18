@@ -361,7 +361,7 @@ def get_docker_run_cmd(
 
     # Debug logs: tmpfs by default (ephemeral), persistent with --debug-logs
     if not debug_logs:
-        cmd.extend(["--tmpfs", "/home/node/.claude/debug:rw,size=64m"])
+        cmd.extend(["--tmpfs", "/home/node/.claude/debug:rw,size=512m,uid=1000,gid=1000,mode=0700"])
 
     if config.git_name:
         cmd.extend(["-e", f"GIT_AUTHOR_NAME={config.git_name}"])
