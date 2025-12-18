@@ -289,10 +289,18 @@ def _check_and_prompt_updates(stack: LanguageStack) -> bool:
 @click.option("--build", "-b", is_flag=True, help="Build image only (no start)")
 @click.option("--path", "-p", default=".", type=click.Path(exists=True), help="Project path")
 @click.option("--no-update-check", is_flag=True, help="Skip update check")
+@click.option("--bare", is_flag=True, help="Bare mode: only mount credentials (no CCO)")
+@click.option("--debug-logs", is_flag=True, help="Persist debug logs (default: ephemeral tmpfs)")
 @click.pass_context
 @click.version_option(version=__version__, prog_name="ccbox")
 def cli(
-    ctx: click.Context, stack: str | None, build: bool, path: str, no_update_check: bool
+    ctx: click.Context,
+    stack: str | None,
+    build: bool,
+    path: str,
+    no_update_check: bool,
+    bare: bool,
+    debug_logs: bool,
 ) -> None:
     """ccbox - Run Claude Code in isolated Docker containers.
 
@@ -301,7 +309,7 @@ def cli(
     if ctx.invoked_subcommand is not None:
         return
 
-    _run(stack, build, path, no_update_check)
+    _run(stack, build, path, no_update_check, bare=bare, debug_logs=debug_logs)
 
 
 def _select_stack(
@@ -437,7 +445,13 @@ def _ensure_image_ready(
 
 
 def _execute_container(
-    config: Config, project_path: Path, project_name: str, stack: LanguageStack
+    config: Config,
+    project_path: Path,
+    project_name: str,
+    stack: LanguageStack,
+    *,
+    bare: bool = False,
+    debug_logs: bool = False,
 ) -> None:
     """Execute the container with Claude Code.
 
@@ -446,11 +460,15 @@ def _execute_container(
         project_path: Path to the project.
         project_name: Name of the project.
         stack: Stack to run.
+        bare: If True, only mount credentials (no CCO).
+        debug_logs: If True, persist debug logs; otherwise use tmpfs.
     """
     console.print("[dim]Starting Claude Code...[/dim]\n")
 
     try:
-        cmd = get_docker_run_cmd(config, project_path, project_name, stack)
+        cmd = get_docker_run_cmd(
+            config, project_path, project_name, stack, bare=bare, debug_logs=debug_logs
+        )
     except ConfigPathError as e:
         console.print(f"[red]Error: {e}[/red]")
         sys.exit(1)
@@ -469,6 +487,9 @@ def _run(
     build_only: bool,
     path: str,
     no_update_check: bool = False,
+    *,
+    bare: bool = False,
+    debug_logs: bool = False,
 ) -> None:
     """Run Claude Code in Docker container."""
     if not check_docker():
@@ -509,7 +530,9 @@ def _run(
         console.print("[green]✓ Build complete[/green]")
         return
 
-    _execute_container(config, project_path, project_name, selected_stack)
+    _execute_container(
+        config, project_path, project_name, selected_stack, bare=bare, debug_logs=debug_logs
+    )
 
 
 @cli.command()
