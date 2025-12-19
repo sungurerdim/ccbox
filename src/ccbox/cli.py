@@ -289,7 +289,7 @@ def _check_and_prompt_updates(stack: LanguageStack) -> bool:
 @click.option("--build", "-b", is_flag=True, help="Build image only (no start)")
 @click.option("--path", "-p", default=".", type=click.Path(exists=True), help="Project path")
 @click.option("--no-update-check", is_flag=True, help="Skip update check")
-@click.option("--bare", is_flag=True, help="Bare mode: only mount credentials (no CCO)")
+@click.option("--bare", is_flag=True, help="Vanilla mode: auth only, no CCO/settings/rules")
 @click.option("--debug-logs", is_flag=True, help="Persist debug logs (default: ephemeral tmpfs)")
 @click.pass_context
 @click.version_option(version=__version__, prog_name="ccbox")
