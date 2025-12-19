@@ -1,3 +1,3 @@
 @echo off
-
-start "" powershell -NoExit -Command "ccbox --debug-logs"
+REM start "" powershell -NoExit -Command "ccbox --debug-logs"
+start "" powershell -NoExit -Command "ccbox"

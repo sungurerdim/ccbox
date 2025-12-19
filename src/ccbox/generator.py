@@ -303,7 +303,10 @@ def get_docker_run_cmd(
         project_path: Path to the project directory.
         project_name: Name of the project.
         stack: Language stack to use.
-        bare: If True, only mount credentials (no CCO agents/commands/rules).
+        bare: Vanilla mode - fresh Claude Code with NO host config mounted.
+            Only .credentials.json is mounted (read-only) for authentication.
+            Creates ephemeral tmpfs for .claude directory (all changes lost on exit).
+            Use this to test vanilla Claude Code without CCO rules/commands/settings.
         debug_logs: If True, persist debug logs; otherwise use tmpfs (ephemeral).
 
     Raises:
@@ -330,12 +333,22 @@ def get_docker_run_cmd(
         f"{project_path}:/home/node/{dirname}:rw",
     ]
 
-    # Claude config mount: bare mode only mounts credentials (no CCO)
+    # Claude config: bare mode = vanilla Claude Code (auth only, no CCO)
     if bare:
+        # Vanilla mode: ephemeral .claude directory with only auth credentials
+        # - tmpfs owned by node user (uid=1000) for write access
+        # - NO CLAUDE.md, commands, rules, settings, MCP servers from host
+        # - Only .credentials.json mounted for authentication
+        # - All changes lost on container exit (true vanilla experience)
+        cmd.extend([
+            "--tmpfs",
+            "/home/node/.claude:rw,size=256m,uid=1000,gid=1000,mode=0700",
+        ])
         creds_file = claude_config / ".credentials.json"
         if creds_file.exists():
             cmd.extend(["-v", f"{creds_file}:/home/node/.claude/.credentials.json:ro"])
     else:
+        # Full mode: mount entire .claude directory (CCO + settings + everything)
         cmd.extend(["-v", f"{claude_config}:/home/node/.claude:rw"])
 
     cmd.extend([
