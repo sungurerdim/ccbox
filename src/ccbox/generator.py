@@ -262,10 +262,6 @@ export NODE_OPTIONS="--max-old-space-size=$NODE_MEM"
 # Dynamic CPU allocation
 export UV_THREADPOOL_SIZE=$(nproc)
 
-# Configure Claude Code for container environment
-claude config set -g installMethod npm-global 2>/dev/null || true
-claude config set -g spinnerTipsEnabled false 2>/dev/null || true
-
 # Execute Claude Code with bypass permissions
 exec claude --dangerously-skip-permissions "$@"
 """
@@ -333,22 +329,20 @@ def get_docker_run_cmd(
         f"{project_path}:/home/node/{dirname}:rw",
     ]
 
-    # Claude config: bare mode = vanilla Claude Code (auth only, no CCO)
     if bare:
-        # Vanilla mode: ephemeral .claude directory with only auth credentials
-        # - tmpfs owned by node user (uid=1000) for write access
-        # - NO CLAUDE.md, commands, rules, settings, MCP servers from host
-        # - Only .credentials.json mounted for authentication
-        # - All changes lost on container exit (true vanilla experience)
+        # Bare mode: tmpfs + credentials + .claude.json (no CLAUDE.md/rules/commands/skills)
         cmd.extend([
             "--tmpfs",
             "/home/node/.claude:rw,size=256m,uid=1000,gid=1000,mode=0700",
+            "-e", "CCBOX_BARE=1",
         ])
-        creds_file = claude_config / ".credentials.json"
-        if creds_file.exists():
-            cmd.extend(["-v", f"{creds_file}:/home/node/.claude/.credentials.json:ro"])
+        # Mount auth and config from host (no CLAUDE.md/rules/commands/skills)
+        for filename in [".credentials.json", ".claude.json", "settings.json"]:
+            filepath = claude_config / filename
+            if filepath.exists():
+                cmd.extend(["-v", f"{filepath}:/home/node/.claude/{filename}:rw"])
     else:
-        # Full mode: mount entire .claude directory (CCO + settings + everything)
+        # Normal mode: full rw mount (host settings persist)
         cmd.extend(["-v", f"{claude_config}:/home/node/.claude:rw"])
 
     cmd.extend([
@@ -369,7 +363,9 @@ def get_docker_run_cmd(
         "-e",
         "CLAUDE_CONFIG_DIR=/home/node/.claude",
         "-e",
-        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",  # Disable auto-updates, telemetry, error reporting
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",  # Disable telemetry, error reporting
+        "-e",
+        "DISABLE_AUTOUPDATER=1",  # Disable auto-updates (use image rebuild)
     ])
 
     # Debug logs: tmpfs by default (ephemeral), persistent with --debug-logs

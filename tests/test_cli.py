@@ -208,6 +208,7 @@ class TestGenerator:
         assert any("GIT_AUTHOR_NAME=Test" in arg for arg in cmd)
         # Verify mounts use directory name
         assert any("/project/myproject:/home/node/myproject:rw" in arg for arg in cmd)
+        # .claude mounted from host (rw)
         assert any(".claude:/home/node/.claude:rw" in arg for arg in cmd)
         # Verify workdir uses directory name
         assert any("/home/node/myproject" in arg for arg in cmd)
@@ -1036,9 +1037,11 @@ class TestGeneratorExtended:
                 bare=True,
             )
             cmd_str = " ".join(cmd)
-            # Should mount only credentials file, not full .claude dir
-            assert ".credentials.json:/home/node/.claude/.credentials.json:ro" in cmd_str
+            # Should mount only credentials file (rw for token refresh), not full .claude dir
+            assert ".credentials.json:/home/node/.claude/.credentials.json:rw" in cmd_str
             assert f"{claude_dir}:/home/node/.claude:rw" not in cmd_str
+            # Should signal bare mode to entrypoint
+            assert "CCBOX_BARE=1" in cmd_str
         finally:
             # Cleanup
             creds_file.unlink(missing_ok=True)
@@ -1061,13 +1064,15 @@ class TestGeneratorExtended:
             )
             cmd_str = " ".join(cmd)
             # Should not mount .credentials.json (file doesn't exist)
-            assert ".credentials.json" not in cmd_str
+            assert ".credentials.json:/home/node" not in cmd_str
+            # Should still signal bare mode
+            assert "CCBOX_BARE=1" in cmd_str
         finally:
             # Cleanup
             claude_dir.rmdir()
 
     def test_get_docker_run_cmd_normal_mode(self) -> None:
-        """Test normal mode mounts full .claude directory."""
+        """Test normal mode mounts host .claude directory rw."""
         claude_dir = Path.home() / ".claude-test-normal"
         claude_dir.mkdir(exist_ok=True)
 
@@ -1081,8 +1086,10 @@ class TestGeneratorExtended:
                 bare=False,
             )
             cmd_str = " ".join(cmd)
-            # Should mount full .claude dir
+            # Should mount host .claude directory rw
             assert f"{claude_dir}:/home/node/.claude:rw" in cmd_str
+            # Should NOT have CCBOX_BARE env var
+            assert "CCBOX_BARE=1" not in cmd_str
         finally:
             # Cleanup
             claude_dir.rmdir()
