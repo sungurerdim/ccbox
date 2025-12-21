@@ -30,7 +30,6 @@ from .config import (
 )
 from .detector import detect_project_type
 from .generator import get_docker_run_cmd, write_build_files
-from .updater import check_all_updates, format_changelog
 
 console = Console()
 
@@ -42,7 +41,6 @@ ERR_DOCKER_NOT_RUNNING = "[red]Error: Docker is not running.[/red]"
 # Timeout constants (seconds)
 DOCKER_BUILD_TIMEOUT = 600  # 10 min for image builds
 DOCKER_COMMAND_TIMEOUT = 30  # 30s for docker info/inspect/version
-PIP_INSTALL_TIMEOUT = 300  # 5 min for pip operations
 
 
 def _check_docker_status() -> bool:
@@ -232,63 +230,10 @@ def get_git_config() -> tuple[str, str]:
     return _get_git_config_value("user.name"), _get_git_config_value("user.email")
 
 
-def _update_ccbox_package() -> bool:
-    """Update ccbox via pip. Returns True if successful."""
-    console.print("[dim]Updating ccbox...[/dim]")
-    result = subprocess.run(
-        [sys.executable, "-m", "pip", "install", "--upgrade", "ccbox"],
-        capture_output=True,
-        check=False,
-        timeout=PIP_INSTALL_TIMEOUT,
-    )
-    if result.returncode == 0:
-        console.print("[green]✓ ccbox updated[/green]")
-        return True
-    console.print("[red]✗ Failed to update ccbox[/red]")
-    return False
-
-
-def _check_and_prompt_updates(stack: LanguageStack) -> bool:
-    """Check for updates and prompt user. Returns True if rebuild needed."""
-    console.print("[dim]Checking for updates...[/dim]")
-
-    updates = check_all_updates(stack)
-    if not updates:
-        return False
-
-    console.print()
-    console.print(Panel.fit("[bold yellow]Updates Available[/bold yellow]", border_style="yellow"))
-
-    for update in updates:
-        ver_info = f"{update.current} → [green]{update.latest}[/green]"
-        console.print(f"\n[bold]{update.package}[/bold]: {ver_info}")
-        if update.changelog:
-            console.print("[dim]Changelog:[/dim]")
-            console.print(format_changelog(update.changelog))
-
-    console.print()
-    if click.confirm("Update and rebuild images?", default=True):
-        # Update ccbox if needed
-        ccbox_updated = False
-        for update in updates:
-            if update.package == "ccbox":
-                ccbox_updated = _update_ccbox_package()
-
-        if ccbox_updated:
-            console.print("\n[yellow]Please restart ccbox to use the new version.[/yellow]")
-            sys.exit(0)
-
-        # CCO will be updated during image rebuild
-        return True
-
-    return False
-
-
 @click.group(invoke_without_command=True)
 @click.option("--stack", "-s", type=click.Choice([s.value for s in LanguageStack]), help="Stack")
 @click.option("--build", "-b", is_flag=True, help="Build image only (no start)")
 @click.option("--path", "-p", default=".", type=click.Path(exists=True), help="Project path")
-@click.option("--no-update-check", is_flag=True, help="Skip update check")
 @click.option("--bare", is_flag=True, help="Vanilla mode: auth only, no CCO/settings/rules")
 @click.option("--debug-logs", is_flag=True, help="Persist debug logs (default: ephemeral tmpfs)")
 @click.pass_context
@@ -298,7 +243,6 @@ def cli(
     stack: str | None,
     build: bool,
     path: str,
-    no_update_check: bool,
     bare: bool,
     debug_logs: bool,
 ) -> None:
@@ -309,7 +253,7 @@ def cli(
     if ctx.invoked_subcommand is not None:
         return
 
-    _run(stack, build, path, no_update_check, bare=bare, debug_logs=debug_logs)
+    _run(stack, build, path, bare=bare, debug_logs=debug_logs)
 
 
 def _select_stack(
@@ -394,9 +338,7 @@ def _setup_git_config(config: Config) -> Config:
     return config
 
 
-def _resolve_stack(
-    stack_name: str | None, project_path: Path
-) -> LanguageStack | None:
+def _resolve_stack(stack_name: str | None, project_path: Path) -> LanguageStack | None:
     """Resolve the stack to use based on user input or detection.
 
     Args:
@@ -418,26 +360,17 @@ def _resolve_stack(
     return _select_stack(detection.recommended_stack, detection.detected_languages)
 
 
-def _ensure_image_ready(
-    stack: LanguageStack, no_update_check: bool, build_only: bool
-) -> bool:
-    """Ensure the image is ready (built and optionally updated).
+def _ensure_image_ready(stack: LanguageStack, build_only: bool) -> bool:
+    """Ensure the image is ready (built if needed).
 
     Args:
         stack: Stack to ensure is ready.
-        no_update_check: Skip update check if True.
-        build_only: Only build, don't prompt for updates.
+        build_only: Only build, don't run container.
 
     Returns:
         True if image is ready, False on build failure.
     """
-    has_image = image_exists(stack)
-    update_rebuild = False
-
-    if has_image and not no_update_check and not build_only:
-        update_rebuild = _check_and_prompt_updates(stack)
-
-    needs_build = build_only or update_rebuild or not has_image
+    needs_build = build_only or not image_exists(stack)
     if needs_build:
         return build_image(stack)
 
@@ -486,7 +419,6 @@ def _run(
     stack_name: str | None,
     build_only: bool,
     path: str,
-    no_update_check: bool = False,
     *,
     bare: bool = False,
     debug_logs: bool = False,
@@ -523,7 +455,7 @@ def _run(
     )
 
     # Ensure image is ready
-    if not _ensure_image_ready(selected_stack, no_update_check, build_only):
+    if not _ensure_image_ready(selected_stack, build_only):
         sys.exit(1)
 
     if build_only:

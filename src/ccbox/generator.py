@@ -331,11 +331,14 @@ def get_docker_run_cmd(
 
     if bare:
         # Bare mode: tmpfs + credentials + .claude.json (no CLAUDE.md/rules/commands/skills)
-        cmd.extend([
-            "--tmpfs",
-            "/home/node/.claude:rw,size=256m,uid=1000,gid=1000,mode=0700",
-            "-e", "CCBOX_BARE=1",
-        ])
+        cmd.extend(
+            [
+                "--tmpfs",
+                "/home/node/.claude:rw,size=256m,uid=1000,gid=1000,mode=0700",
+                "-e",
+                "CCBOX_BARE=1",
+            ]
+        )
         # Mount auth and config from host (no CLAUDE.md/rules/commands/skills)
         for filename in [".credentials.json", ".claude.json", "settings.json"]:
             filepath = claude_config / filename
@@ -345,28 +348,30 @@ def get_docker_run_cmd(
         # Normal mode: full rw mount (host settings persist)
         cmd.extend(["-v", f"{claude_config}:/home/node/.claude:rw"])
 
-    cmd.extend([
-        # Workdir: dynamic based on directory name
-        "-w",
-        f"/home/node/{dirname}",
-        # Temp directories in memory (no disk residue)
-        "--tmpfs",
-        "/tmp:rw,noexec,nosuid,size=512m",
-        "--tmpfs",
-        "/var/tmp:rw,noexec,nosuid,size=256m",
-        # Security hardening
-        "--security-opt=no-new-privileges",  # Prevent privilege escalation
-        "--pids-limit=512",  # Fork bomb protection
-        # Environment
-        "-e",
-        "TERM=xterm-256color",
-        "-e",
-        "CLAUDE_CONFIG_DIR=/home/node/.claude",
-        "-e",
-        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",  # Disable telemetry, error reporting
-        "-e",
-        "DISABLE_AUTOUPDATER=1",  # Disable auto-updates (use image rebuild)
-    ])
+    cmd.extend(
+        [
+            # Workdir: dynamic based on directory name
+            "-w",
+            f"/home/node/{dirname}",
+            # Temp directories in memory (no disk residue)
+            "--tmpfs",
+            "/tmp:rw,noexec,nosuid,size=512m",
+            "--tmpfs",
+            "/var/tmp:rw,noexec,nosuid,size=256m",
+            # Security hardening
+            "--security-opt=no-new-privileges",  # Prevent privilege escalation
+            "--pids-limit=512",  # Fork bomb protection
+            # Environment
+            "-e",
+            "TERM=xterm-256color",
+            "-e",
+            "CLAUDE_CONFIG_DIR=/home/node/.claude",
+            "-e",
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",  # Disable telemetry, error reporting
+            "-e",
+            "DISABLE_AUTOUPDATER=1",  # Disable auto-updates (use image rebuild)
+        ]
+    )
 
     # Debug logs: tmpfs by default (ephemeral), persistent with --debug-logs
     if not debug_logs:
