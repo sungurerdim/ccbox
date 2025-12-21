@@ -23,12 +23,12 @@ class LanguageStack(str, Enum):
     """
 
     MINIMAL = "minimal"  # Node + Python + tools (no CCO) (~400MB)
-    BASE = "base"        # minimal + CCO (~450MB)
-    GO = "go"            # Go + Node + Python + CCO (~750MB)
-    RUST = "rust"        # Rust + Node + Python + CCO (~900MB)
-    JAVA = "java"        # JDK (Temurin LTS) + Maven + CCO (~1GB)
-    WEB = "web"          # base + pnpm (fullstack) (~500MB)
-    FULL = "full"        # base + Go + Rust + Java (~1.35GB)
+    BASE = "base"  # minimal + CCO (~450MB)
+    GO = "go"  # Go + Node + Python + CCO (~750MB)
+    RUST = "rust"  # Rust + Node + Python + CCO (~900MB)
+    JAVA = "java"  # JDK (Temurin LTS) + Maven + CCO (~1GB)
+    WEB = "web"  # base + pnpm (fullstack) (~500MB)
+    FULL = "full"  # base + Go + Rust + Java (~1.35GB)
 
 
 # Stack descriptions for CLI help (sizes are estimates)

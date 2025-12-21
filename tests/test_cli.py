@@ -6,8 +6,6 @@ from dataclasses import asdict
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-import requests
 from click.testing import CliRunner
 
 from ccbox.cli import (
@@ -34,15 +32,6 @@ from ccbox.generator import (
     generate_entrypoint,
     get_docker_run_cmd,
     write_build_files,
-)
-from ccbox.updater import (
-    UpdateInfo,
-    _get_docker_version,
-    check_all_updates,
-    check_ccbox_update,
-    check_cco_update,
-    check_claude_code_update,
-    format_changelog,
 )
 
 
@@ -489,294 +478,6 @@ class TestDetector:
         assert result.recommended_stack == LanguageStack.BASE
 
 
-class TestUpdater:
-    """Tests for update checker module."""
-
-    def test_update_info_has_update_true(self) -> None:
-        """Test UpdateInfo.has_update when update available."""
-        info = UpdateInfo(package="test", current="1.0.0", latest="2.0.0")
-        assert info.has_update is True
-
-    def test_update_info_has_update_false(self) -> None:
-        """Test UpdateInfo.has_update when no update."""
-        info = UpdateInfo(package="test", current="2.0.0", latest="1.0.0")
-        assert info.has_update is False
-
-    def test_update_info_has_update_same_version(self) -> None:
-        """Test UpdateInfo.has_update when same version."""
-        info = UpdateInfo(package="test", current="1.0.0", latest="1.0.0")
-        assert info.has_update is False
-
-    def test_update_info_version_with_v_prefix(self) -> None:
-        """Test UpdateInfo handles v prefix in versions."""
-        info = UpdateInfo(package="test", current="v1.0.0", latest="v2.0.0")
-        assert info.has_update is True
-
-    def test_check_ccbox_update_success(self) -> None:
-        """Test successful ccbox update check."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "info": {"version": "99.0.0"},
-            "releases": {"99.0.0": [{"comment_text": "New features"}]},
-        }
-        with patch("requests.get", return_value=mock_response):
-            result = check_ccbox_update()
-            assert result is not None
-            assert result.package == "ccbox"
-            assert result.latest == "99.0.0"
-
-    def test_check_ccbox_update_no_version(self) -> None:
-        """Test ccbox update check with no version."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"info": {}}
-        with patch("requests.get", return_value=mock_response):
-            result = check_ccbox_update()
-            assert result is None
-
-    def test_check_ccbox_update_http_error(self) -> None:
-        """Test ccbox update check with HTTP error."""
-        mock_response = MagicMock()
-        mock_response.status_code = 500
-        with patch("requests.get", return_value=mock_response):
-            result = check_ccbox_update()
-            assert result is None
-
-    def test_check_ccbox_update_network_error(self) -> None:
-        """Test ccbox update check with network error."""
-        import requests
-
-        with patch("requests.get", side_effect=requests.RequestException):
-            result = check_ccbox_update()
-            assert result is None
-
-    def test_check_cco_update_success(self) -> None:
-        """Test successful CCO update check."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "tag_name": "v99.0.0",
-            "body": "Release notes",
-        }
-        with (
-            patch("ccbox.updater.image_exists", return_value=True),
-            patch("requests.get", return_value=mock_response),
-            patch("ccbox.updater._get_docker_version", return_value="1.0.0"),
-        ):
-            result = check_cco_update()
-            assert result is not None
-            assert result.package == "CCO"
-            assert result.latest == "v99.0.0"
-
-    def test_check_cco_update_no_image(self) -> None:
-        """Test CCO update check when no docker image exists."""
-        with patch("ccbox.updater.image_exists", return_value=False):
-            result = check_cco_update()
-            assert result is None
-
-    def test_check_cco_update_no_tag(self) -> None:
-        """Test CCO update check with no tag."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {}
-        with (
-            patch("ccbox.updater.image_exists", return_value=True),
-            patch("requests.get", return_value=mock_response),
-        ):
-            result = check_cco_update()
-            assert result is None
-
-    def test_check_cco_update_http_error(self) -> None:
-        """Test CCO update check with HTTP error."""
-        mock_response = MagicMock()
-        mock_response.status_code = 404
-        with (
-            patch("ccbox.updater.image_exists", return_value=True),
-            patch("requests.get", return_value=mock_response),
-        ):
-            result = check_cco_update()
-            assert result is None
-
-    def test_check_cco_update_no_installed_version(self) -> None:
-        """Test CCO update check when not installed in container (fail-fast)."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"tag_name": "v1.0.0"}
-        with (
-            patch("ccbox.updater.image_exists", return_value=True),
-            patch("requests.get", return_value=mock_response),
-            patch("ccbox.updater._get_docker_version", return_value=None),
-        ):
-            result = check_cco_update()
-            assert result is None  # Fail-fast: no fallback to 0.0.0
-
-    def test_check_all_updates_with_updates(self) -> None:
-        """Test check_all_updates when updates available."""
-        ccbox_update = UpdateInfo("ccbox", "1.0.0", "2.0.0")
-        cco_update = UpdateInfo("CCO", "1.0.0", "2.0.0")
-        with (
-            patch("ccbox.updater.check_ccbox_update", return_value=ccbox_update),
-            patch("ccbox.updater.check_cco_update", return_value=cco_update),
-        ):
-            updates = check_all_updates()
-            assert len(updates) == 2
-
-    def test_check_all_updates_no_updates(self) -> None:
-        """Test check_all_updates when no updates."""
-        with (
-            patch("ccbox.updater.check_ccbox_update", return_value=None),
-            patch("ccbox.updater.check_claude_code_update", return_value=None),
-            patch("ccbox.updater.check_cco_update", return_value=None),
-        ):
-            updates = check_all_updates()
-            assert len(updates) == 0
-
-    def test_check_all_updates_same_version(self) -> None:
-        """Test check_all_updates when same version."""
-        ccbox_update = UpdateInfo("ccbox", "1.0.0", "1.0.0")
-        with (
-            patch("ccbox.updater.check_ccbox_update", return_value=ccbox_update),
-            patch("ccbox.updater.check_claude_code_update", return_value=None),
-            patch("ccbox.updater.check_cco_update", return_value=None),
-        ):
-            updates = check_all_updates()
-            assert len(updates) == 0
-
-    def test_format_changelog_with_content(self) -> None:
-        """Test format_changelog with content."""
-        result = format_changelog("Line 1\nLine 2")
-        assert "Line 1" in result
-        assert "Line 2" in result
-
-    def test_format_changelog_empty(self) -> None:
-        """Test format_changelog with no content."""
-        result = format_changelog(None)
-        assert "No changelog available" in result
-
-    def test_format_changelog_truncation(self) -> None:
-        """Test format_changelog truncates long content."""
-        long_content = "\n".join(f"Line {i}" for i in range(20))
-        result = format_changelog(long_content, max_lines=5)
-        assert "..." in result
-
-
-class TestDockerVersionCheck:
-    """Tests for docker-based version checking."""
-
-    def test_get_docker_version_success(self) -> None:
-        """Test _get_docker_version returns version."""
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "1.2.3\n"
-        with patch("subprocess.run", return_value=mock_result):
-            result = _get_docker_version("some command")
-            assert result == "1.2.3"
-
-    def test_get_docker_version_failure(self) -> None:
-        """Test _get_docker_version returns None on failure."""
-        mock_result = MagicMock()
-        mock_result.returncode = 1
-        mock_result.stdout = ""
-        with patch("subprocess.run", return_value=mock_result):
-            result = _get_docker_version("some command")
-            assert result is None
-
-    def test_get_docker_version_timeout(self) -> None:
-        """Test _get_docker_version handles timeout."""
-        import subprocess as sp
-        with patch("subprocess.run", side_effect=sp.TimeoutExpired("cmd", 30)):
-            result = _get_docker_version("some command")
-            assert result is None
-
-    def test_check_claude_code_update_success(self) -> None:
-        """Test successful Claude Code update check."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"version": "99.0.0"}
-        with (
-            patch("ccbox.updater.image_exists", return_value=True),
-            patch("requests.get", return_value=mock_response),
-            patch("ccbox.updater._get_docker_version", return_value="1.0.0"),
-        ):
-            result = check_claude_code_update()
-            assert result is not None
-            assert result.package == "Claude Code"
-            assert result.latest == "99.0.0"
-
-    def test_check_claude_code_update_no_image(self) -> None:
-        """Test Claude Code update check when no image."""
-        with patch("ccbox.updater.image_exists", return_value=False):
-            result = check_claude_code_update()
-            assert result is None
-
-    def test_check_claude_code_update_http_error(self) -> None:
-        """Test Claude Code update check with HTTP error."""
-        mock_response = MagicMock()
-        mock_response.status_code = 404
-        with (
-            patch("ccbox.updater.image_exists", return_value=True),
-            patch("requests.get", return_value=mock_response),
-        ):
-            result = check_claude_code_update()
-            assert result is None
-
-    def test_check_claude_code_update_no_version_in_container(self) -> None:
-        """Test Claude Code update check when not installed in container (fail-fast)."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"version": "1.0.0"}
-        with (
-            patch("ccbox.updater.image_exists", return_value=True),
-            patch("requests.get", return_value=mock_response),
-            patch("ccbox.updater._get_docker_version", return_value=None),
-        ):
-            result = check_claude_code_update()
-            assert result is None  # Fail-fast: no fallback to 0.0.0
-
-    def test_check_claude_code_update_no_version_in_response(self) -> None:
-        """Test Claude Code update check when no version in npm response."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {}  # No version field
-        with (
-            patch("ccbox.updater.image_exists", return_value=True),
-            patch("requests.get", return_value=mock_response),
-        ):
-            result = check_claude_code_update()
-            assert result is None
-
-    def test_check_claude_code_update_network_error(self) -> None:
-        """Test Claude Code update check with network error."""
-        with (
-            patch("ccbox.updater.image_exists", return_value=True),
-            patch("requests.get", side_effect=requests.RequestException),
-        ):
-            result = check_claude_code_update()
-            assert result is None
-
-    def test_check_cco_update_network_error(self) -> None:
-        """Test CCO update check with network error."""
-        with (
-            patch("ccbox.updater.image_exists", return_value=True),
-            patch("requests.get", side_effect=requests.RequestException),
-        ):
-            result = check_cco_update()
-            assert result is None
-
-    def test_check_all_updates_with_claude_update(self) -> None:
-        """Test check_all_updates includes Claude Code update."""
-        claude_update = UpdateInfo("Claude Code", "1.0.0", "2.0.0")
-        with (
-            patch("ccbox.updater.check_ccbox_update", return_value=None),
-            patch("ccbox.updater.check_claude_code_update", return_value=claude_update),
-            patch("ccbox.updater.check_cco_update", return_value=None),
-        ):
-            updates = check_all_updates()
-            assert len(updates) == 1
-            assert updates[0].package == "Claude Code"
-
-
 class TestDockerDesktopStart:
     """Tests for Docker Desktop auto-start functionality."""
 
@@ -942,7 +643,6 @@ class TestMainRunFlow:
             patch("ccbox.cli.check_docker", return_value=True),
             patch("ccbox.cli.load_config", return_value=Config()),
             patch("ccbox.cli.get_git_config", return_value=("", "")),
-            patch("ccbox.cli._check_and_prompt_updates", return_value=False),
             patch("ccbox.cli.detect_project_type") as mock_detect,
             patch("ccbox.cli.image_exists", return_value=True),
             patch("subprocess.run"),
@@ -1178,85 +878,6 @@ class TestSelectStack:
             assert result == LanguageStack.MINIMAL
 
 
-class TestCheckAndPromptUpdates:
-    """Tests for update prompt flow."""
-
-    def test_check_and_prompt_updates_no_updates(self) -> None:
-        """Test when no updates available."""
-        from ccbox.cli import _check_and_prompt_updates
-
-        with patch("ccbox.cli.check_all_updates", return_value=[]):
-            result = _check_and_prompt_updates(LanguageStack.BASE)
-            assert result is False
-
-    def test_check_and_prompt_updates_declined(self) -> None:
-        """Test when updates declined."""
-        from ccbox.cli import _check_and_prompt_updates
-
-        update = UpdateInfo("ccbox", "1.0.0", "2.0.0")
-        with (
-            patch("ccbox.cli.check_all_updates", return_value=[update]),
-            patch("click.confirm", return_value=False),
-        ):
-            result = _check_and_prompt_updates(LanguageStack.BASE)
-            assert result is False
-
-    def test_check_and_prompt_updates_cco_only(self) -> None:
-        """Test when CCO update accepted (triggers rebuild)."""
-        from ccbox.cli import _check_and_prompt_updates
-
-        update = UpdateInfo("CCO", "1.0.0", "2.0.0")
-        with (
-            patch("ccbox.cli.check_all_updates", return_value=[update]),
-            patch("click.confirm", return_value=True),
-        ):
-            result = _check_and_prompt_updates(LanguageStack.BASE)
-            assert result is True
-
-    def test_check_and_prompt_updates_ccbox_success(self) -> None:
-        """Test ccbox update success exits."""
-        from ccbox.cli import _check_and_prompt_updates
-
-        update = UpdateInfo("ccbox", "1.0.0", "2.0.0")
-        mock_run = MagicMock()
-        mock_run.returncode = 0
-        with (
-            patch("ccbox.cli.check_all_updates", return_value=[update]),
-            patch("click.confirm", return_value=True),
-            patch("subprocess.run", return_value=mock_run),
-            pytest.raises(SystemExit),
-        ):
-            _check_and_prompt_updates(LanguageStack.BASE)
-
-    def test_check_and_prompt_updates_ccbox_failure(self) -> None:
-        """Test ccbox update failure continues."""
-        from ccbox.cli import _check_and_prompt_updates
-
-        update = UpdateInfo("ccbox", "1.0.0", "2.0.0")
-        mock_run = MagicMock()
-        mock_run.returncode = 1
-        with (
-            patch("ccbox.cli.check_all_updates", return_value=[update]),
-            patch("click.confirm", return_value=True),
-            patch("subprocess.run", return_value=mock_run),
-        ):
-            result = _check_and_prompt_updates(LanguageStack.BASE)
-            # Returns True because rebuild is still triggered (CCO gets rebuilt)
-            assert result is True
-
-    def test_check_and_prompt_updates_with_changelog(self) -> None:
-        """Test update prompt displays changelog when available."""
-        from ccbox.cli import _check_and_prompt_updates
-
-        update = UpdateInfo("CCO", "1.0.0", "2.0.0", changelog="- New feature\n- Bug fix")
-        with (
-            patch("ccbox.cli.check_all_updates", return_value=[update]),
-            patch("click.confirm", return_value=True),
-        ):
-            result = _check_and_prompt_updates(LanguageStack.BASE)
-            assert result is True
-
-
 class TestRunFlowExtended:
     """Extended tests for run flow."""
 
@@ -1284,7 +905,7 @@ class TestRunFlowExtended:
                 recommended_stack=LanguageStack.GO,  # Not BASE
                 detected_languages=["go"],
             )
-            result = runner.invoke(cli, ["-p", str(tmp_path), "--no-update-check"])
+            result = runner.invoke(cli, ["-p", str(tmp_path)])
             assert result.exit_code == 0
             assert "Cancelled" in result.output
 
@@ -1300,7 +921,6 @@ class TestRunFlowExtended:
             patch("ccbox.cli.check_docker", return_value=True),
             patch("ccbox.cli.load_config", return_value=Config()),
             patch("ccbox.cli.get_git_config", return_value=("", "")),
-            patch("ccbox.cli._check_and_prompt_updates", return_value=False),
             patch("ccbox.cli.detect_project_type") as mock_detect,
             patch("ccbox.cli.image_exists", side_effect=image_exists_side_effect),
             patch("ccbox.cli.build_image", return_value=True),
@@ -1319,7 +939,6 @@ class TestRunFlowExtended:
             patch("ccbox.cli.check_docker", return_value=True),
             patch("ccbox.cli.load_config", return_value=Config()),
             patch("ccbox.cli.get_git_config", return_value=("", "")),
-            patch("ccbox.cli._check_and_prompt_updates", return_value=False),
             patch("ccbox.cli.detect_project_type") as mock_detect,
             patch("ccbox.cli.image_exists", return_value=False),
             patch("ccbox.cli.build_image", return_value=False),
@@ -1339,7 +958,6 @@ class TestRunFlowExtended:
             patch("ccbox.cli.check_docker", return_value=True),
             patch("ccbox.cli.load_config", return_value=Config()),
             patch("ccbox.cli.get_git_config", return_value=("", "")),
-            patch("ccbox.cli._check_and_prompt_updates", return_value=False),
             patch("ccbox.cli.detect_project_type") as mock_detect,
             patch("ccbox.cli.image_exists", return_value=True),
             patch("subprocess.run", side_effect=CalledProcessError(1, "docker")),
@@ -1357,29 +975,9 @@ class TestRunFlowExtended:
             patch("ccbox.cli.check_docker", return_value=True),
             patch("ccbox.cli.load_config", return_value=Config()),
             patch("ccbox.cli.get_git_config", return_value=("", "")),
-            patch("ccbox.cli._check_and_prompt_updates", return_value=False),
             patch("ccbox.cli.detect_project_type") as mock_detect,
             patch("ccbox.cli.image_exists", return_value=True),
             patch("subprocess.run", side_effect=KeyboardInterrupt),
-        ):
-            from ccbox.detector import DetectionResult
-
-            mock_detect.return_value = DetectionResult([], LanguageStack.BASE)
-            result = runner.invoke(cli, ["-s", "base", "-p", str(tmp_path)])
-            assert result.exit_code == 0
-
-    def test_run_with_update_rebuild(self, tmp_path: Path) -> None:
-        """Test run with update triggering rebuild."""
-        runner = CliRunner()
-        with (
-            patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.load_config", return_value=Config()),
-            patch("ccbox.cli.get_git_config", return_value=("", "")),
-            patch("ccbox.cli._check_and_prompt_updates", return_value=True),  # Rebuild needed
-            patch("ccbox.cli.detect_project_type") as mock_detect,
-            patch("ccbox.cli.image_exists", return_value=True),
-            patch("ccbox.cli.build_image", return_value=True),
-            patch("subprocess.run"),
         ):
             from ccbox.detector import DetectionResult
 
@@ -1406,7 +1004,7 @@ class TestGitConfigSave:
             from ccbox.detector import DetectionResult
 
             mock_detect.return_value = DetectionResult([], LanguageStack.BASE)
-            runner.invoke(cli, ["-p", str(tmp_path), "--no-update-check"])
+            runner.invoke(cli, ["-p", str(tmp_path)])
             mock_save.assert_called_once()
 
     def test_run_skips_git_config_when_declined(self, tmp_path: Path) -> None:
@@ -1424,36 +1022,8 @@ class TestGitConfigSave:
             from ccbox.detector import DetectionResult
 
             mock_detect.return_value = DetectionResult([], LanguageStack.BASE)
-            runner.invoke(cli, ["-p", str(tmp_path), "--no-update-check"])
+            runner.invoke(cli, ["-p", str(tmp_path)])
             mock_save.assert_not_called()
-
-
-class TestUpdaterExtended:
-    """Extended tests for updater edge cases."""
-
-    def test_check_cco_update_json_error(self) -> None:
-        """Test CCO update check with JSON decode error."""
-        import json
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.side_effect = json.JSONDecodeError("err", "doc", 0)
-        with patch("requests.get", return_value=mock_response):
-            result = check_cco_update()
-            assert result is None
-
-    def test_check_ccbox_update_with_changelog(self) -> None:
-        """Test ccbox update with changelog from releases."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "info": {"version": "99.0.0"},
-            "releases": {"99.0.0": []},  # Empty release list
-        }
-        with patch("requests.get", return_value=mock_response):
-            result = check_ccbox_update()
-            assert result is not None
-            assert result.changelog is None
 
 
 class TestGeneratorFallback:
@@ -1552,7 +1122,6 @@ class TestInteractiveStackSelection:
             patch("ccbox.cli.check_docker", return_value=True),
             patch("ccbox.cli.load_config", return_value=Config()),
             patch("ccbox.cli.get_git_config", return_value=("", "")),
-            patch("ccbox.cli._check_and_prompt_updates", return_value=False),
             patch("ccbox.cli.detect_project_type") as mock_detect,
             patch("ccbox.cli.image_exists", return_value=True),
             patch("subprocess.run"),
@@ -1564,5 +1133,5 @@ class TestInteractiveStackSelection:
                 detected_languages=["python"],
             )
             # Input "1" to select first stack, then no build confirmation
-            result = runner.invoke(cli, ["-p", str(tmp_path), "--no-update-check"], input="1\n")
+            result = runner.invoke(cli, ["-p", str(tmp_path)], input="1\n")
             assert result.exit_code == 0
