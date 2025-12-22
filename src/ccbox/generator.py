@@ -21,7 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \\
     git curl ca-certificates bash \\
     python3 python3-pip python3-venv python-is-python3 \\
     ripgrep jq procps openssh-client locales \\
-    fd-find gh \\
+    fd-find gh gosu \\
     gawk sed grep findutils coreutils less file unzip \\
     && rm -rf /var/lib/apt/lists/* \\
     && sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen \\
@@ -69,16 +69,15 @@ RUN npm config set fund false && npm config set update-notifier false \\
 """
 
 # Entrypoint setup
-# Optimized: combined operations, COPY --chmod (BuildKit)
+# Starts as root, entrypoint switches to host UID dynamically (cross-platform)
 ENTRYPOINT_SETUP = """
 WORKDIR /home/node/project
 
 COPY --chmod=755 entrypoint.sh /usr/local/bin/entrypoint.sh
 
 ENV HOME=/home/node
-USER node
-RUN git config --global --add safe.directory '*'
 
+# Start as root - entrypoint will switch to host user's UID/GID
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 """
 
@@ -252,17 +251,37 @@ def generate_dockerfile(stack: LanguageStack) -> str:
 def generate_entrypoint() -> str:
     """Generate entrypoint script."""
     return """#!/bin/bash
-# ccbox entrypoint
+# ccbox entrypoint - cross-platform UID handling
+set -e
 
-# Dynamic RAM allocation (75% of available)
+# Detect UID/GID from project directory (PWD = mounted host directory)
+HOST_UID=$(stat -c '%u' "$PWD" 2>/dev/null || stat -f '%u' "$PWD" 2>/dev/null || echo "1000")
+HOST_GID=$(stat -c '%g' "$PWD" 2>/dev/null || stat -f '%g' "$PWD" 2>/dev/null || echo "1000")
+
+# Switch to host user if running as root
+if [[ "$(id -u)" == "0" && "$HOST_UID" != "0" ]]; then
+    # Check for UID mismatch with .claude (edge case warning)
+    CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-/home/node/.claude}"
+    if [[ -d "$CLAUDE_DIR" ]]; then
+        CLAUDE_UID=$(stat -c '%u' "$CLAUDE_DIR" 2>/dev/null || stat -f '%u' "$CLAUDE_DIR" 2>/dev/null || echo "$HOST_UID")
+        if [[ "$CLAUDE_UID" != "$HOST_UID" ]]; then
+            echo "[ccbox] Warning: Project UID ($HOST_UID) differs from .claude UID ($CLAUDE_UID)" >&2
+            echo "[ccbox] You may need to re-login if credentials are inaccessible" >&2
+        fi
+    fi
+
+    usermod -u "$HOST_UID" node 2>/dev/null || true
+    groupmod -g "$HOST_GID" node 2>/dev/null || true
+    chown -R "$HOST_UID:$HOST_GID" /home/node 2>/dev/null || true
+    exec gosu node "$0" "$@"
+fi
+
+# Runtime config
 TOTAL_MEM=$(free -m | awk '/^Mem:/{print $2}')
-NODE_MEM=$((TOTAL_MEM * 3 / 4))
-export NODE_OPTIONS="--max-old-space-size=$NODE_MEM"
-
-# Dynamic CPU allocation
+export NODE_OPTIONS="--max-old-space-size=$((TOTAL_MEM * 3 / 4))"
 export UV_THREADPOOL_SIZE=$(nproc)
+git config --global --add safe.directory '*' 2>/dev/null || true
 
-# Execute Claude Code with bypass permissions
 exec claude --dangerously-skip-permissions "$@"
 """
 
@@ -331,10 +350,11 @@ def get_docker_run_cmd(
 
     if bare:
         # Bare mode: tmpfs + credentials + .claude.json (no CLAUDE.md/rules/commands/skills)
+        # UID/GID handled dynamically by entrypoint (chown)
         cmd.extend(
             [
                 "--tmpfs",
-                "/home/node/.claude:rw,size=256m,uid=1000,gid=1000,mode=0700",
+                "/home/node/.claude:rw,size=256m,mode=0777",
                 "-e",
                 "CCBOX_BARE=1",
             ]
@@ -375,7 +395,7 @@ def get_docker_run_cmd(
 
     # Debug logs: tmpfs by default (ephemeral), persistent with --debug-logs
     if not debug_logs:
-        cmd.extend(["--tmpfs", "/home/node/.claude/debug:rw,size=512m,uid=1000,gid=1000,mode=0700"])
+        cmd.extend(["--tmpfs", "/home/node/.claude/debug:rw,size=512m,mode=0777"])
 
     if config.git_name:
         cmd.extend(["-e", f"GIT_AUTHOR_NAME={config.git_name}"])
