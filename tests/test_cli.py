@@ -1112,6 +1112,85 @@ class TestUpdateDefaultStack:
             mock_build.assert_called_once_with(LanguageStack.BASE)
 
 
+class TestChdirOption:
+    """Tests for --chdir/-C option."""
+
+    def test_chdir_option_changes_directory(self, tmp_path: Path) -> None:
+        """Test that --chdir changes working directory before running."""
+        runner = CliRunner()
+
+        # Create a project marker in tmp_path
+        (tmp_path / "go.mod").touch()
+
+        captured_cwd = []
+
+        def capture_cwd(*args: object, **kwargs: object) -> Config:
+            captured_cwd.append(Path.cwd())
+            return Config()
+
+        with (
+            patch("ccbox.cli.check_docker", return_value=True),
+            patch("ccbox.cli.load_config", side_effect=capture_cwd),
+            patch("ccbox.cli.get_git_config", return_value=("", "")),
+            patch("ccbox.cli.detect_project_type") as mock_detect,
+            patch("ccbox.cli._select_stack", return_value=None),  # User cancels
+            runner.isolated_filesystem(),
+        ):
+            from ccbox.detector import DetectionResult
+
+            mock_detect.return_value = DetectionResult([], LanguageStack.BASE)
+            runner.invoke(cli, ["-C", str(tmp_path)])
+
+            # Should have changed to tmp_path before running
+            assert len(captured_cwd) > 0
+            assert captured_cwd[0] == tmp_path
+
+    def test_chdir_option_with_invalid_path(self) -> None:
+        """Test --chdir with non-existent path shows error."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["-C", "/nonexistent/path/12345"])
+        assert result.exit_code != 0
+        assert "does not exist" in result.output.lower() or "invalid" in result.output.lower()
+
+    def test_chdir_option_with_file_not_directory(self, tmp_path: Path) -> None:
+        """Test --chdir with file (not directory) shows error."""
+        test_file = tmp_path / "file.txt"
+        test_file.touch()
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["-C", str(test_file)])
+        assert result.exit_code != 0
+
+    def test_chdir_short_option(self, tmp_path: Path) -> None:
+        """Test -C short option works."""
+        runner = CliRunner()
+
+        with (
+            patch("ccbox.cli.check_docker", return_value=True),
+            patch("ccbox.cli.load_config", return_value=Config()),
+            patch("ccbox.cli.get_git_config", return_value=("", "")),
+            patch("ccbox.cli.detect_project_type") as mock_detect,
+            patch("ccbox.cli.image_exists", return_value=True),
+            patch("subprocess.run"),  # Mock docker run
+        ):
+            from ccbox.detector import DetectionResult
+
+            mock_detect.return_value = DetectionResult(
+                detected_languages=[],
+                recommended_stack=LanguageStack.BASE,
+            )
+            result = runner.invoke(cli, ["-C", str(tmp_path)])
+            # Should run without CLI error
+            assert result.exit_code == 0
+
+    def test_help_shows_chdir_option(self) -> None:
+        """Test --help shows --chdir/-C option."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--help"])
+        assert result.exit_code == 0
+        assert "--chdir" in result.output or "-C" in result.output
+
+
 class TestInteractiveStackSelection:
     """Tests for full interactive stack selection flow."""
 

@@ -234,6 +234,12 @@ def get_git_config() -> tuple[str, str]:
 @click.option("--stack", "-s", type=click.Choice([s.value for s in LanguageStack]), help="Stack")
 @click.option("--build", "-b", is_flag=True, help="Build image only (no start)")
 @click.option("--path", "-p", default=".", type=click.Path(exists=True), help="Project path")
+@click.option(
+    "--chdir",
+    "-C",
+    type=click.Path(exists=True, file_okay=False, resolve_path=True),
+    help="Change to directory before running (like git -C)",
+)
 @click.option("--bare", is_flag=True, help="Vanilla mode: auth only, no CCO/settings/rules")
 @click.option("--debug-logs", is_flag=True, help="Persist debug logs (default: ephemeral tmpfs)")
 @click.pass_context
@@ -243,6 +249,7 @@ def cli(
     stack: str | None,
     build: bool,
     path: str,
+    chdir: str | None,
     bare: bool,
     debug_logs: bool,
 ) -> None:
@@ -252,6 +259,10 @@ def cli(
     """
     if ctx.invoked_subcommand is not None:
         return
+
+    # Change directory if --chdir/-C specified (like git -C)
+    if chdir:
+        os.chdir(chdir)
 
     _run(stack, build, path, bare=bare, debug_logs=debug_logs)
 
