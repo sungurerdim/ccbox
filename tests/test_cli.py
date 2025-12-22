@@ -700,10 +700,10 @@ class TestGeneratorExtended:
             "test",
             LanguageStack.BASE,
         )
-        # Debug logs use tmpfs by default (ephemeral) with node user ownership
+        # Debug logs use tmpfs by default (ephemeral), mode 0777 for dynamic UID
         cmd_str = " ".join(cmd)
         assert "--tmpfs" in cmd_str
-        assert "/home/node/.claude/debug:rw,size=512m,uid=1000,gid=1000,mode=0700" in cmd_str
+        assert "/home/node/.claude/debug:rw,size=512m,mode=0777" in cmd_str
 
     def test_get_docker_run_cmd_debug_logs_persistent(self) -> None:
         """Test docker run command skips tmpfs when debug_logs=True."""
