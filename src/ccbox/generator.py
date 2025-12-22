@@ -258,18 +258,18 @@ set -e
 HOST_UID=$(stat -c '%u' "$PWD" 2>/dev/null || stat -f '%u' "$PWD" 2>/dev/null || echo "1000")
 HOST_GID=$(stat -c '%g' "$PWD" 2>/dev/null || stat -f '%g' "$PWD" 2>/dev/null || echo "1000")
 
+# Bare mode: create ephemeral .claude with only credentials from host
+if [[ -n "$CCBOX_BARE" && -d "/home/node/.claude-host" ]]; then
+    mkdir -p /home/node/.claude
+    # Copy only essential auth files (rest is ephemeral)
+    for f in .credentials.json .claude.json settings.json; do
+        [[ -f "/home/node/.claude-host/$f" ]] && cp "/home/node/.claude-host/$f" "/home/node/.claude/$f"
+    done
+    chown -R "$HOST_UID:$HOST_GID" /home/node/.claude 2>/dev/null || true
+fi
+
 # Switch to host user if running as root
 if [[ "$(id -u)" == "0" && "$HOST_UID" != "0" ]]; then
-    # Check for UID mismatch with .claude (edge case warning)
-    CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-/home/node/.claude}"
-    if [[ -d "$CLAUDE_DIR" ]]; then
-        CLAUDE_UID=$(stat -c '%u' "$CLAUDE_DIR" 2>/dev/null || stat -f '%u' "$CLAUDE_DIR" 2>/dev/null || echo "$HOST_UID")
-        if [[ "$CLAUDE_UID" != "$HOST_UID" ]]; then
-            echo "[ccbox] Warning: Project UID ($HOST_UID) differs from .claude UID ($CLAUDE_UID)" >&2
-            echo "[ccbox] You may need to re-login if credentials are inaccessible" >&2
-        fi
-    fi
-
     usermod -u "$HOST_UID" node 2>/dev/null || true
     groupmod -g "$HOST_GID" node 2>/dev/null || true
     chown -R "$HOST_UID:$HOST_GID" /home/node 2>/dev/null || true
@@ -349,21 +349,16 @@ def get_docker_run_cmd(
     ]
 
     if bare:
-        # Bare mode: tmpfs + credentials + .claude.json (no CLAUDE.md/rules/commands/skills)
-        # UID/GID handled dynamically by entrypoint (chown)
+        # Bare mode: mount host .claude read-only, entrypoint creates ephemeral copy
+        # Only credentials + settings preserved, all other state discarded on exit
         cmd.extend(
             [
-                "--tmpfs",
-                "/home/node/.claude:rw,size=256m,mode=0777",
+                "-v",
+                f"{claude_config}:/home/node/.claude-host:ro",
                 "-e",
                 "CCBOX_BARE=1",
             ]
         )
-        # Mount auth and config from host (no CLAUDE.md/rules/commands/skills)
-        for filename in [".credentials.json", ".claude.json", "settings.json"]:
-            filepath = claude_config / filename
-            if filepath.exists():
-                cmd.extend(["-v", f"{filepath}:/home/node/.claude/{filename}:rw"])
     else:
         # Normal mode: full rw mount (host settings persist)
         cmd.extend(["-v", f"{claude_config}:/home/node/.claude:rw"])
