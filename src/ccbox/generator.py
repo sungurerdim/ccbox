@@ -252,24 +252,24 @@ def generate_dockerfile(stack: LanguageStack) -> str:
 def generate_entrypoint() -> str:
     """Generate entrypoint script."""
     return """#!/bin/bash
-# ccbox entrypoint - cross-platform UID handling
 set -e
 
-# Detect UID/GID from project directory (PWD = mounted host directory)
 HOST_UID=$(stat -c '%u' "$PWD" 2>/dev/null || stat -f '%u' "$PWD" 2>/dev/null || echo "1000")
 HOST_GID=$(stat -c '%g' "$PWD" 2>/dev/null || stat -f '%g' "$PWD" 2>/dev/null || echo "1000")
 
-# Switch to host user if running as root
-if [[ "$(id -u)" == "0" && "$HOST_UID" != "0" ]]; then
-    usermod -u "$HOST_UID" node 2>/dev/null || true
-    groupmod -g "$HOST_GID" node 2>/dev/null || true
-    chown -R "$HOST_UID:$HOST_GID" /home/node 2>/dev/null || true
+# If root, switch to node user (with optional UID remapping)
+if [[ "$(id -u)" == "0" ]]; then
+    if [[ "$HOST_UID" != "0" && "$HOST_UID" != "1000" ]]; then
+        usermod -u "$HOST_UID" node 2>/dev/null || true
+        groupmod -g "$HOST_GID" node 2>/dev/null || true
+        chown "$HOST_UID:$HOST_GID" /home/node 2>/dev/null || true
+        chown -R "$HOST_UID:$HOST_GID" /home/node/.claude /home/node/.npm /home/node/.config 2>/dev/null || true
+    fi
     exec gosu node "$0" "$@"
 fi
 
-# Runtime config
-TOTAL_MEM=$(free -m | awk '/^Mem:/{print $2}')
-export NODE_OPTIONS="--max-old-space-size=$((TOTAL_MEM * 3 / 4))"
+# Runtime config (as node user)
+export NODE_OPTIONS="--max-old-space-size=$(( $(free -m | awk '/^Mem:/{print $2}') * 3 / 4 ))"
 export UV_THREADPOOL_SIZE=$(nproc)
 git config --global --add safe.directory '*' 2>/dev/null || true
 
