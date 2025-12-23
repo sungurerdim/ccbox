@@ -352,14 +352,16 @@ def get_docker_run_cmd(
     docker_claude_config = resolve_for_docker(claude_config)
 
     if bare:
-        # Bare mode: mount only essential files (no CCO rules/commands/agents)
+        # Bare mode: tmpfs base for .claude + mount only essential files
         # This provides vanilla Claude Code experience with host auth/settings
+        # tmpfs first, then file mounts on top (order matters!)
+        cmd.extend(["--tmpfs", "/home/node/.claude:rw,size=256m,uid=1000,gid=1000,mode=0755"])
         bare_files = [".credentials.json", ".claude.json", "settings.json"]
         for filename in bare_files:
             filepath = claude_config / filename
             if filepath.exists():
                 docker_filepath = resolve_for_docker(filepath)
-                cmd.extend(["-v", f"{docker_filepath}:/home/node/.claude/{filename}:rw"])
+                cmd.extend(["-v", f"{docker_filepath}:/home/node/.claude/{filename}:ro"])
     else:
         # Normal mode: full rw mount (host settings persist)
         cmd.extend(["-v", f"{docker_claude_config}:/home/node/.claude:rw"])
