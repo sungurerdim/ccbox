@@ -741,10 +741,11 @@ class TestGeneratorExtended:
                 bare=True,
             )
             cmd_str = " ".join(cmd)
-            # Bare mode mounts only essential files
-            assert f"{creds_file}:/home/node/.claude/.credentials.json:rw" in cmd_str
-            assert f"{claude_json}:/home/node/.claude/.claude.json:rw" in cmd_str
-            assert f"{settings_file}:/home/node/.claude/settings.json:rw" in cmd_str
+            # Bare mode uses tmpfs base + read-only file mounts
+            assert "--tmpfs /home/node/.claude:rw,size=256m,uid=1000,gid=1000,mode=0755" in cmd_str
+            assert f"{creds_file}:/home/node/.claude/.credentials.json:ro" in cmd_str
+            assert f"{claude_json}:/home/node/.claude/.claude.json:ro" in cmd_str
+            assert f"{settings_file}:/home/node/.claude/settings.json:ro" in cmd_str
             # Should NOT mount full .claude directory
             assert f"{claude_dir}:/home/node/.claude:rw" not in cmd_str
         finally:
@@ -772,8 +773,10 @@ class TestGeneratorExtended:
                 bare=True,
             )
             cmd_str = " ".join(cmd)
-            # Should mount credentials (exists)
-            assert f"{creds_file}:/home/node/.claude/.credentials.json:rw" in cmd_str
+            # Should have tmpfs base
+            assert "--tmpfs /home/node/.claude:rw,size=256m,uid=1000,gid=1000,mode=0755" in cmd_str
+            # Should mount credentials (exists) as read-only
+            assert f"{creds_file}:/home/node/.claude/.credentials.json:ro" in cmd_str
             # Should NOT mount missing files
             assert ".claude.json:/home/node/.claude" not in cmd_str
             assert "settings.json:/home/node/.claude" not in cmd_str
