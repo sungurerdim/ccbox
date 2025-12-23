@@ -51,9 +51,7 @@ def is_wsl() -> bool:
         pass
 
     # Fallback: check WSL env vars
-    _is_wsl_cached = bool(
-        os.environ.get("WSL_DISTRO_NAME") or os.environ.get("WSLENV")
-    )
+    _is_wsl_cached = bool(os.environ.get("WSL_DISTRO_NAME") or os.environ.get("WSLENV"))
     return _is_wsl_cached
 
 

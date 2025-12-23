@@ -1346,7 +1346,7 @@ class TestBenchmarkCLIOptions:
         claude_dir.mkdir(exist_ok=True)
         try:
             config = Config(claude_config_dir=str(claude_dir))
-            special_prompt = 'Test "quotes" and \'apostrophes\' & symbols <>'
+            special_prompt = "Test \"quotes\" and 'apostrophes' & symbols <>"
             cmd = get_docker_run_cmd(
                 config,
                 Path("/project/test"),
