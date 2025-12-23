@@ -192,7 +192,7 @@ class TestGenerator:
         assert "docker" in cmd
         assert "run" in cmd
         assert "--rm" in cmd
-        assert "-it" in cmd
+        assert "-i" in cmd  # TTY flag (-t) only added when terminal attached
         assert "ccbox:base" in cmd
         assert any("GIT_AUTHOR_NAME=Test" in arg for arg in cmd)
         # Verify mounts use directory name
