@@ -310,6 +310,10 @@ def get_docker_run_cmd(
     *,
     bare: bool = False,
     debug_logs: bool = False,
+    prompt: str | None = None,
+    yes: bool = False,
+    model: str | None = None,
+    quiet: bool = False,
 ) -> list[str]:
     """Generate docker run command with full cleanup on exit.
 
@@ -323,6 +327,10 @@ def get_docker_run_cmd(
             Creates ephemeral tmpfs for .claude directory (all changes lost on exit).
             Use this to test vanilla Claude Code without CCO rules/commands/settings.
         debug_logs: If True, persist debug logs; otherwise use tmpfs (ephemeral).
+        prompt: Initial prompt to send to Claude.
+        yes: Skip confirmation prompts (non-interactive mode).
+        model: Model to use (e.g., opus, sonnet, haiku).
+        quiet: Quiet mode (print only Claude's responses).
 
     Raises:
         ConfigPathError: If claude_config_dir path validation fails.
@@ -400,4 +408,15 @@ def get_docker_run_cmd(
         cmd.extend(["-e", f"GIT_COMMITTER_EMAIL={config.git_email}"])
 
     cmd.append(image_name)
+
+    # Claude CLI arguments (passed to entrypoint -> claude command)
+    if yes:
+        cmd.append("--yes")
+    if model:
+        cmd.extend(["--model", model])
+    if quiet:
+        cmd.append("--print")
+    if prompt:
+        cmd.extend(["--prompt", prompt])
+
     return cmd

@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.0] - 2025-12-13
+## [Unreleased]
 
 ### Added
 
@@ -20,7 +20,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Auto-detection**: Automatically detect project type and recommend appropriate stack
 - **Docker auto-start**: Attempt to start Docker Desktop if not running (Windows/macOS)
 - **Git config auto-detection**: Detect and prompt for git user.name/email configuration
-- **Update checking**: Check for updates to ccbox, Claude Code, and CCO with changelog display
 - **Smart layer caching**: WEB and FULL stacks layer on base image for efficient rebuilds
 - **Build-only mode**: `ccbox --build` to build images without starting container
 - **Doctor command**: `ccbox doctor` for system status and project detection
@@ -28,6 +27,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Stack listing**: `ccbox stacks` to show available language stacks
 - **Path traversal protection**: Validate config paths are within home directory
 - **Comprehensive CLI**: Rich console output with colors, tables, and panels
+- **Benchmark CLI options**: New CLI parameters for non-interactive/scripted usage:
+  - `--prompt/-p`: Pass initial prompt to Claude
+  - `--yes/-y`: Skip confirmation prompts (non-interactive mode)
+  - `--model/-m`: Specify model (opus, sonnet, haiku, etc.)
+  - `--quiet/-q`: Quiet mode (print only Claude's responses)
+- **Input validation**: Prompt length validation (max 5000 chars) and whitespace normalization
+
+### Changed
+
+- **BREAKING**: `-p` short option changed from `--path` to `--prompt`
+  - Migration: Use `--path` (long form) instead of `-p` for project path
+  - Reason: `-p` for prompt is more intuitive for benchmark/scripting use cases
 
 ### Security
 
@@ -42,5 +53,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Interactive stack selection with detection hints
 - Clear error messages with actionable suggestions
 - Version display: `ccbox --version`
-
-[1.0.0]: https://github.com/sungurerdim/ccbox/releases/tag/v1.0.0
