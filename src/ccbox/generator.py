@@ -251,29 +251,76 @@ def generate_dockerfile(stack: LanguageStack) -> str:
 
 
 def generate_entrypoint() -> str:
-    """Generate entrypoint script."""
+    """Generate entrypoint script with comprehensive debugging support.
+
+    Debug output is controlled by CCBOX_DEBUG environment variable:
+    - CCBOX_DEBUG=1: Basic progress messages
+    - CCBOX_DEBUG=2: Verbose with environment details
+    """
     return """#!/bin/bash
+
+# Debug logging function (outputs to stderr to not interfere with Claude output)
+_log() {
+    [[ -n "$CCBOX_DEBUG" ]] && echo "[ccbox] $*" >&2
+}
+
+_log_verbose() {
+    [[ "$CCBOX_DEBUG" == "2" ]] && echo "[ccbox:debug] $*" >&2
+}
+
+_die() {
+    echo "[ccbox:ERROR] $*" >&2
+    exit 1
+}
+
+# Error trap - show what failed
+trap 'echo "[ccbox:ERROR] Command failed at line $LINENO: $BASH_COMMAND" >&2' ERR
+
 set -e
 
+_log "Entrypoint started (PID: $$)"
+_log_verbose "Working directory: $PWD"
+_log_verbose "Arguments: $*"
+
+# Detect host UID/GID from mounted directory
 HOST_UID=$(stat -c '%u' "$PWD" 2>/dev/null || stat -f '%u' "$PWD" 2>/dev/null || echo "1000")
 HOST_GID=$(stat -c '%g' "$PWD" 2>/dev/null || stat -f '%g' "$PWD" 2>/dev/null || echo "1000")
+_log_verbose "Host UID/GID: $HOST_UID/$HOST_GID"
 
 # If root, switch to node user (with optional UID remapping)
 if [[ "$(id -u)" == "0" ]]; then
+    _log "Running as root, switching to node user..."
     if [[ "$HOST_UID" != "0" && "$HOST_UID" != "1000" ]]; then
+        _log "Remapping UID $HOST_UID -> node"
         usermod -u "$HOST_UID" node 2>/dev/null || true
         groupmod -g "$HOST_GID" node 2>/dev/null || true
         chown "$HOST_UID:$HOST_GID" /home/node 2>/dev/null || true
         chown -R "$HOST_UID:$HOST_GID" /home/node/.claude /home/node/.npm /home/node/.config 2>/dev/null || true
     fi
+    _log "Switching to node user via gosu..."
     exec gosu node "$0" "$@"
 fi
+
+_log "Running as node user (UID: $(id -u))"
 
 # Runtime config (as node user)
 export NODE_OPTIONS="--max-old-space-size=$(( $(free -m | awk '/^Mem:/{print $2}') * 3 / 4 ))"
 export UV_THREADPOOL_SIZE=$(nproc)
+_log_verbose "NODE_OPTIONS: $NODE_OPTIONS"
+_log_verbose "UV_THREADPOOL_SIZE: $UV_THREADPOOL_SIZE"
+
 git config --global --add safe.directory '*' 2>/dev/null || true
 
+# Verify claude command exists
+if ! command -v claude &>/dev/null; then
+    _die "claude command not found in PATH"
+fi
+
+_log_verbose "Claude location: $(which claude)"
+_log_verbose "Node version: $(node --version 2>/dev/null || echo 'N/A')"
+_log_verbose "npm version: $(npm --version 2>/dev/null || echo 'N/A')"
+
+_log "Starting Claude Code..."
 exec claude --dangerously-skip-permissions "$@"
 """
 
@@ -302,6 +349,7 @@ def get_docker_run_cmd(
     *,
     bare: bool = False,
     debug_logs: bool = False,
+    debug: int = 0,
     prompt: str | None = None,
     model: str | None = None,
     quiet: bool = False,
@@ -318,6 +366,7 @@ def get_docker_run_cmd(
             Creates ephemeral tmpfs for .claude directory (all changes lost on exit).
             Use this to test vanilla Claude Code without CCO rules/commands/settings.
         debug_logs: If True, persist debug logs; otherwise use tmpfs (ephemeral).
+        debug: Debug level for entrypoint (0=off, 1=basic, 2=verbose).
         prompt: Initial prompt to send to Claude (enables --print mode).
         model: Model to use (e.g., opus, sonnet, haiku).
         quiet: Quiet mode (enables --print, shows only Claude's responses).
@@ -405,6 +454,10 @@ def get_docker_run_cmd(
             "NODE_OPTIONS=--no-warnings",  # Suppress Node.js warnings
         ]
     )
+
+    # Debug mode for entrypoint logging (0=off, 1=basic, 2=verbose)
+    if debug > 0:
+        cmd.extend(["-e", f"CCBOX_DEBUG={debug}"])
 
     # Debug logs: tmpfs by default (ephemeral), persistent with --debug-logs
     if not debug_logs:
