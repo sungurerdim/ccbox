@@ -242,14 +242,15 @@ def get_git_config() -> tuple[str, str]:
 )
 @click.option("--bare", is_flag=True, help="Vanilla mode: auth only, no CCO/settings/rules")
 @click.option("--debug-logs", is_flag=True, help="Persist debug logs (default: ephemeral tmpfs)")
-@click.option("--prompt", "-p", help="Initial prompt to send to Claude")
-@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompts (non-interactive)")
+@click.option("--prompt", "-p", help="Initial prompt to send to Claude (enables --print mode)")
 @click.option(
     "--model",
     "-m",
     help="Model name (passed directly to Claude Code, e.g., opus, sonnet, haiku)",
 )
-@click.option("--quiet", "-q", is_flag=True, help="Quiet mode (print only Claude's responses)")
+@click.option(
+    "--quiet", "-q", is_flag=True, help="Quiet mode (enables --print, shows only responses)"
+)
 @click.pass_context
 @click.version_option(version=__version__, prog_name="ccbox")
 def cli(
@@ -261,7 +262,6 @@ def cli(
     bare: bool,
     debug_logs: bool,
     prompt: str | None,
-    yes: bool,
     model: str | None,
     quiet: bool,
 ) -> None:
@@ -290,7 +290,6 @@ def cli(
         bare=bare,
         debug_logs=debug_logs,
         prompt=prompt,
-        yes=yes,
         model=model,
         quiet=quiet,
     )
@@ -426,7 +425,6 @@ def _execute_container(
     bare: bool = False,
     debug_logs: bool = False,
     prompt: str | None = None,
-    yes: bool = False,
     model: str | None = None,
     quiet: bool = False,
 ) -> None:
@@ -439,10 +437,9 @@ def _execute_container(
         stack: Stack to run.
         bare: If True, only mount credentials (no CCO).
         debug_logs: If True, persist debug logs; otherwise use tmpfs.
-        prompt: Initial prompt to send to Claude.
-        yes: Skip confirmation prompts (non-interactive mode).
+        prompt: Initial prompt to send to Claude (enables --print mode).
         model: Model to use (e.g., opus, sonnet, haiku).
-        quiet: Quiet mode (print only Claude's responses).
+        quiet: Quiet mode (enables --print, shows only Claude's responses).
     """
     console.print("[dim]Starting Claude Code...[/dim]\n")
 
@@ -455,7 +452,6 @@ def _execute_container(
             bare=bare,
             debug_logs=debug_logs,
             prompt=prompt,
-            yes=yes,
             model=model,
             quiet=quiet,
         )
@@ -480,7 +476,6 @@ def _run(
     bare: bool = False,
     debug_logs: bool = False,
     prompt: str | None = None,
-    yes: bool = False,
     model: str | None = None,
     quiet: bool = False,
 ) -> None:
@@ -531,7 +526,6 @@ def _run(
         bare=bare,
         debug_logs=debug_logs,
         prompt=prompt,
-        yes=yes,
         model=model,
         quiet=quiet,
     )

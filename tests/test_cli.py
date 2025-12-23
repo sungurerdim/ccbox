@@ -1221,7 +1221,7 @@ class TestBenchmarkCLIOptions:
     """Tests for benchmark-related CLI options (prompt, yes, model, quiet)."""
 
     def test_get_docker_run_cmd_with_prompt(self) -> None:
-        """Test --prompt/-p passes prompt to claude command."""
+        """Test --prompt/-p passes prompt as positional arg to claude command."""
         claude_dir = Path.home() / ".claude-test-prompt"
         claude_dir.mkdir(exist_ok=True)
 
@@ -1234,35 +1234,15 @@ class TestBenchmarkCLIOptions:
                 LanguageStack.BASE,
                 prompt="Build a REST API",
             )
-            # Prompt should be after image name (passed to entrypoint -> claude)
-            assert "--prompt" in cmd
+            # Prompt enables --print mode and is passed as positional arg
+            assert "--print" in cmd
             assert "Build a REST API" in cmd
-            # --prompt should come after image name
+            # Prompt should be last (positional arg after all flags)
+            assert cmd[-1] == "Build a REST API"
+            # --print should come after image name
             image_idx = cmd.index("ccbox:base")
-            prompt_idx = cmd.index("--prompt")
-            assert prompt_idx > image_idx
-        finally:
-            claude_dir.rmdir()
-
-    def test_get_docker_run_cmd_with_yes_flag(self) -> None:
-        """Test --yes/-y passes --yes to claude command."""
-        claude_dir = Path.home() / ".claude-test-yes"
-        claude_dir.mkdir(exist_ok=True)
-
-        try:
-            config = Config(claude_config_dir=str(claude_dir))
-            cmd = get_docker_run_cmd(
-                config,
-                Path("/project/test"),
-                "test",
-                LanguageStack.BASE,
-                yes=True,
-            )
-            assert "--yes" in cmd
-            # --yes should come after image name
-            image_idx = cmd.index("ccbox:base")
-            yes_idx = cmd.index("--yes")
-            assert yes_idx > image_idx
+            print_idx = cmd.index("--print")
+            assert print_idx > image_idx
         finally:
             claude_dir.rmdir()
 
@@ -1325,19 +1305,16 @@ class TestBenchmarkCLIOptions:
                 "test",
                 LanguageStack.BASE,
                 prompt="Test prompt",
-                yes=True,
                 model="sonnet",
                 quiet=True,
             )
             # Verify exact argument positions in command list
-            assert "--yes" in cmd
             assert "--model" in cmd
             model_idx = cmd.index("--model")
             assert cmd[model_idx + 1] == "sonnet"
             assert "--print" in cmd
-            assert "--prompt" in cmd
-            prompt_idx = cmd.index("--prompt")
-            assert cmd[prompt_idx + 1] == "Test prompt"
+            # Prompt is positional arg (last)
+            assert cmd[-1] == "Test prompt"
         finally:
             claude_dir.rmdir()
 
@@ -1347,7 +1324,6 @@ class TestBenchmarkCLIOptions:
         result = runner.invoke(cli, ["--help"])
         assert result.exit_code == 0
         assert "--prompt" in result.output or "-p" in result.output
-        assert "--yes" in result.output or "-y" in result.output
         assert "--model" in result.output or "-m" in result.output
         assert "--quiet" in result.output or "-q" in result.output
 
@@ -1365,9 +1341,9 @@ class TestBenchmarkCLIOptions:
                 LanguageStack.BASE,
                 prompt=special_prompt,
             )
-            assert "--prompt" in cmd
-            prompt_idx = cmd.index("--prompt")
-            assert cmd[prompt_idx + 1] == special_prompt
+            # Prompt is positional arg (last element)
+            assert cmd[-1] == special_prompt
+            assert "--print" in cmd
         finally:
             claude_dir.rmdir()
 
@@ -1384,8 +1360,10 @@ class TestBenchmarkCLIOptions:
                 LanguageStack.BASE,
                 prompt="",  # Empty string
             )
-            # Empty prompt is falsy, so --prompt flag should NOT be added
-            assert "--prompt" not in cmd
+            # Empty prompt is falsy, so --print and prompt should NOT be added
+            assert "--print" not in cmd
+            # Last element should be image name, not empty prompt
+            assert cmd[-1] == "ccbox:base"
         finally:
             claude_dir.rmdir()
 
