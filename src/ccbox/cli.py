@@ -245,6 +245,12 @@ def get_git_config() -> tuple[str, str]:
 )
 @click.option("--bare", is_flag=True, help="Vanilla mode: auth only, no CCO/settings/rules")
 @click.option("--debug-logs", is_flag=True, help="Persist debug logs (default: ephemeral tmpfs)")
+@click.option(
+    "--debug",
+    "-d",
+    count=True,
+    help="Debug entrypoint (-d basic, -dd verbose)",
+)
 @click.option("--prompt", "-p", help="Initial prompt to send to Claude (enables --print mode)")
 @click.option(
     "--model",
@@ -264,6 +270,7 @@ def cli(
     chdir: str | None,
     bare: bool,
     debug_logs: bool,
+    debug: int,
     prompt: str | None,
     model: str | None,
     quiet: bool,
@@ -292,6 +299,7 @@ def cli(
         path,
         bare=bare,
         debug_logs=debug_logs,
+        debug=debug,
         prompt=prompt,
         model=model,
         quiet=quiet,
@@ -427,6 +435,7 @@ def _execute_container(
     *,
     bare: bool = False,
     debug_logs: bool = False,
+    debug: int = 0,
     prompt: str | None = None,
     model: str | None = None,
     quiet: bool = False,
@@ -454,6 +463,7 @@ def _execute_container(
             stack,
             bare=bare,
             debug_logs=debug_logs,
+            debug=debug,
             prompt=prompt,
             model=model,
             quiet=quiet,
@@ -478,6 +488,7 @@ def _run(
     *,
     bare: bool = False,
     debug_logs: bool = False,
+    debug: int = 0,
     prompt: str | None = None,
     model: str | None = None,
     quiet: bool = False,
@@ -528,6 +539,7 @@ def _run(
         selected_stack,
         bare=bare,
         debug_logs=debug_logs,
+        debug=debug,
         prompt=prompt,
         model=model,
         quiet=quiet,
