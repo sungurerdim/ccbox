@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Callable
 
@@ -340,13 +341,23 @@ def get_docker_run_cmd(
         "docker",
         "run",
         "--rm",  # Remove container on exit
-        "-it",  # Interactive TTY
-        "--name",
-        container_name,
-        # Mounts: project (rw)
-        "-v",
-        f"{docker_project_path}:/home/node/{dirname}:rw",
     ]
+
+    # TTY only when stdout is a terminal (not pipe/redirect)
+    if sys.stdout.isatty():
+        cmd.append("-it")  # Interactive TTY
+    else:
+        cmd.append("-i")  # Interactive only (no TTY for non-terminal)
+
+    cmd.extend(
+        [
+            "--name",
+            container_name,
+            # Mounts: project (rw)
+            "-v",
+            f"{docker_project_path}:/home/node/{dirname}:rw",
+        ]
+    )
 
     # Convert claude config path for Docker mount
     docker_claude_config = resolve_for_docker(claude_config)
@@ -388,6 +399,10 @@ def get_docker_run_cmd(
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",  # Disable telemetry, error reporting
             "-e",
             "DISABLE_AUTOUPDATER=1",  # Disable auto-updates (use image rebuild)
+            "-e",
+            "PYTHONUNBUFFERED=1",  # Force unbuffered output for streaming
+            "-e",
+            "NODE_OPTIONS=--no-warnings",  # Suppress Node.js warnings
         ]
     )
 
