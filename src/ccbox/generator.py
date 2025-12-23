@@ -13,6 +13,7 @@ from .config import (
     get_container_name,
     get_image_name,
 )
+from .paths import resolve_for_docker
 
 # Common system packages (minimal - matches original)
 COMMON_TOOLS = """
@@ -332,6 +333,9 @@ def get_docker_run_cmd(
     # Use directory name (not full path) for workdir
     dirname = project_path.name
 
+    # Convert path to Docker-compatible format (handles Windows/WSL paths)
+    docker_project_path = resolve_for_docker(project_path)
+
     cmd = [
         "docker",
         "run",
@@ -341,8 +345,11 @@ def get_docker_run_cmd(
         container_name,
         # Mounts: project (rw)
         "-v",
-        f"{project_path}:/home/node/{dirname}:rw",
+        f"{docker_project_path}:/home/node/{dirname}:rw",
     ]
+
+    # Convert claude config path for Docker mount
+    docker_claude_config = resolve_for_docker(claude_config)
 
     if bare:
         # Bare mode: mount only essential files (no CCO rules/commands/agents)
@@ -351,10 +358,11 @@ def get_docker_run_cmd(
         for filename in bare_files:
             filepath = claude_config / filename
             if filepath.exists():
-                cmd.extend(["-v", f"{filepath}:/home/node/.claude/{filename}:rw"])
+                docker_filepath = resolve_for_docker(filepath)
+                cmd.extend(["-v", f"{docker_filepath}:/home/node/.claude/{filename}:rw"])
     else:
         # Normal mode: full rw mount (host settings persist)
-        cmd.extend(["-v", f"{claude_config}:/home/node/.claude:rw"])
+        cmd.extend(["-v", f"{docker_claude_config}:/home/node/.claude:rw"])
 
     cmd.extend(
         [
