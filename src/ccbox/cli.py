@@ -233,7 +233,7 @@ def get_git_config() -> tuple[str, str]:
 @click.group(invoke_without_command=True)
 @click.option("--stack", "-s", type=click.Choice([s.value for s in LanguageStack]), help="Stack")
 @click.option("--build", "-b", is_flag=True, help="Build image only (no start)")
-@click.option("--path", "-p", default=".", type=click.Path(exists=True), help="Project path")
+@click.option("--path", default=".", type=click.Path(exists=True), help="Project path")
 @click.option(
     "--chdir",
     "-C",
@@ -242,6 +242,14 @@ def get_git_config() -> tuple[str, str]:
 )
 @click.option("--bare", is_flag=True, help="Vanilla mode: auth only, no CCO/settings/rules")
 @click.option("--debug-logs", is_flag=True, help="Persist debug logs (default: ephemeral tmpfs)")
+@click.option("--prompt", "-p", help="Initial prompt to send to Claude")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompts (non-interactive)")
+@click.option(
+    "--model",
+    "-m",
+    help="Model name (passed directly to Claude Code, e.g., opus, sonnet, haiku)",
+)
+@click.option("--quiet", "-q", is_flag=True, help="Quiet mode (print only Claude's responses)")
 @click.pass_context
 @click.version_option(version=__version__, prog_name="ccbox")
 def cli(
@@ -252,6 +260,10 @@ def cli(
     chdir: str | None,
     bare: bool,
     debug_logs: bool,
+    prompt: str | None,
+    yes: bool,
+    model: str | None,
+    quiet: bool,
 ) -> None:
     """ccbox - Run Claude Code in isolated Docker containers.
 
@@ -264,7 +276,24 @@ def cli(
     if chdir:
         os.chdir(chdir)
 
-    _run(stack, build, path, bare=bare, debug_logs=debug_logs)
+    # Validate prompt parameter
+    if prompt is not None:
+        prompt = prompt.strip()
+        if len(prompt) > 5000:
+            console.print("[red]Error: --prompt must be 5000 characters or less[/red]")
+            sys.exit(1)
+
+    _run(
+        stack,
+        build,
+        path,
+        bare=bare,
+        debug_logs=debug_logs,
+        prompt=prompt,
+        yes=yes,
+        model=model,
+        quiet=quiet,
+    )
 
 
 def _select_stack(
@@ -396,6 +425,10 @@ def _execute_container(
     *,
     bare: bool = False,
     debug_logs: bool = False,
+    prompt: str | None = None,
+    yes: bool = False,
+    model: str | None = None,
+    quiet: bool = False,
 ) -> None:
     """Execute the container with Claude Code.
 
@@ -406,12 +439,25 @@ def _execute_container(
         stack: Stack to run.
         bare: If True, only mount credentials (no CCO).
         debug_logs: If True, persist debug logs; otherwise use tmpfs.
+        prompt: Initial prompt to send to Claude.
+        yes: Skip confirmation prompts (non-interactive mode).
+        model: Model to use (e.g., opus, sonnet, haiku).
+        quiet: Quiet mode (print only Claude's responses).
     """
     console.print("[dim]Starting Claude Code...[/dim]\n")
 
     try:
         cmd = get_docker_run_cmd(
-            config, project_path, project_name, stack, bare=bare, debug_logs=debug_logs
+            config,
+            project_path,
+            project_name,
+            stack,
+            bare=bare,
+            debug_logs=debug_logs,
+            prompt=prompt,
+            yes=yes,
+            model=model,
+            quiet=quiet,
         )
     except ConfigPathError as e:
         console.print(f"[red]Error: {e}[/red]")
@@ -433,6 +479,10 @@ def _run(
     *,
     bare: bool = False,
     debug_logs: bool = False,
+    prompt: str | None = None,
+    yes: bool = False,
+    model: str | None = None,
+    quiet: bool = False,
 ) -> None:
     """Run Claude Code in Docker container."""
     if not check_docker():
@@ -474,7 +524,16 @@ def _run(
         return
 
     _execute_container(
-        config, project_path, project_name, selected_stack, bare=bare, debug_logs=debug_logs
+        config,
+        project_path,
+        project_name,
+        selected_stack,
+        bare=bare,
+        debug_logs=debug_logs,
+        prompt=prompt,
+        yes=yes,
+        model=model,
+        quiet=quiet,
     )
 
 

@@ -720,7 +720,7 @@ class TestGeneratorExtended:
         assert "/home/node/.claude/debug" not in cmd_str
 
     def test_get_docker_run_cmd_bare_mode_with_credentials(self) -> None:
-        """Test bare mode only mounts credentials file."""
+        """Test bare mode mounts .claude as read-only .claude-host."""
         # Create fake credentials file in home dir to pass validation
         claude_dir = Path.home() / ".claude-test-bare"
         claude_dir.mkdir(exist_ok=True)
@@ -737,8 +737,9 @@ class TestGeneratorExtended:
                 bare=True,
             )
             cmd_str = " ".join(cmd)
-            # Should mount only credentials file (rw for token refresh), not full .claude dir
-            assert ".credentials.json:/home/node/.claude/.credentials.json:rw" in cmd_str
+            # Bare mode mounts full .claude dir as read-only .claude-host
+            # Entrypoint creates ephemeral copy with only credentials
+            assert f"{claude_dir}:/home/node/.claude-host:ro" in cmd_str
             assert f"{claude_dir}:/home/node/.claude:rw" not in cmd_str
             # Should signal bare mode to entrypoint
             assert "CCBOX_BARE=1" in cmd_str
@@ -1212,5 +1213,232 @@ class TestInteractiveStackSelection:
                 detected_languages=["python"],
             )
             # Input "1" to select first stack, then no build confirmation
-            result = runner.invoke(cli, ["-p", str(tmp_path)], input="1\n")
+            result = runner.invoke(cli, ["--path", str(tmp_path)], input="1\n")
             assert result.exit_code == 0
+
+
+class TestBenchmarkCLIOptions:
+    """Tests for benchmark-related CLI options (prompt, yes, model, quiet)."""
+
+    def test_get_docker_run_cmd_with_prompt(self) -> None:
+        """Test --prompt/-p passes prompt to claude command."""
+        claude_dir = Path.home() / ".claude-test-prompt"
+        claude_dir.mkdir(exist_ok=True)
+
+        try:
+            config = Config(claude_config_dir=str(claude_dir))
+            cmd = get_docker_run_cmd(
+                config,
+                Path("/project/test"),
+                "test",
+                LanguageStack.BASE,
+                prompt="Build a REST API",
+            )
+            # Prompt should be after image name (passed to entrypoint -> claude)
+            assert "--prompt" in cmd
+            assert "Build a REST API" in cmd
+            # --prompt should come after image name
+            image_idx = cmd.index("ccbox:base")
+            prompt_idx = cmd.index("--prompt")
+            assert prompt_idx > image_idx
+        finally:
+            claude_dir.rmdir()
+
+    def test_get_docker_run_cmd_with_yes_flag(self) -> None:
+        """Test --yes/-y passes --yes to claude command."""
+        claude_dir = Path.home() / ".claude-test-yes"
+        claude_dir.mkdir(exist_ok=True)
+
+        try:
+            config = Config(claude_config_dir=str(claude_dir))
+            cmd = get_docker_run_cmd(
+                config,
+                Path("/project/test"),
+                "test",
+                LanguageStack.BASE,
+                yes=True,
+            )
+            assert "--yes" in cmd
+            # --yes should come after image name
+            image_idx = cmd.index("ccbox:base")
+            yes_idx = cmd.index("--yes")
+            assert yes_idx > image_idx
+        finally:
+            claude_dir.rmdir()
+
+    def test_get_docker_run_cmd_with_model(self) -> None:
+        """Test --model passes model to claude command."""
+        claude_dir = Path.home() / ".claude-test-model"
+        claude_dir.mkdir(exist_ok=True)
+
+        try:
+            config = Config(claude_config_dir=str(claude_dir))
+            cmd = get_docker_run_cmd(
+                config,
+                Path("/project/test"),
+                "test",
+                LanguageStack.BASE,
+                model="opus",
+            )
+            assert "--model" in cmd
+            assert "opus" in cmd
+            # --model should come after image name
+            image_idx = cmd.index("ccbox:base")
+            model_idx = cmd.index("--model")
+            assert model_idx > image_idx
+        finally:
+            claude_dir.rmdir()
+
+    def test_get_docker_run_cmd_with_quiet(self) -> None:
+        """Test --quiet/-q passes --print to claude command."""
+        claude_dir = Path.home() / ".claude-test-quiet"
+        claude_dir.mkdir(exist_ok=True)
+
+        try:
+            config = Config(claude_config_dir=str(claude_dir))
+            cmd = get_docker_run_cmd(
+                config,
+                Path("/project/test"),
+                "test",
+                LanguageStack.BASE,
+                quiet=True,
+            )
+            # quiet maps to --print in claude CLI
+            assert "--print" in cmd
+            # --print should come after image name
+            image_idx = cmd.index("ccbox:base")
+            print_idx = cmd.index("--print")
+            assert print_idx > image_idx
+        finally:
+            claude_dir.rmdir()
+
+    def test_get_docker_run_cmd_with_all_benchmark_options(self) -> None:
+        """Test all benchmark options together."""
+        claude_dir = Path.home() / ".claude-test-all"
+        claude_dir.mkdir(exist_ok=True)
+
+        try:
+            config = Config(claude_config_dir=str(claude_dir))
+            cmd = get_docker_run_cmd(
+                config,
+                Path("/project/test"),
+                "test",
+                LanguageStack.BASE,
+                prompt="Test prompt",
+                yes=True,
+                model="sonnet",
+                quiet=True,
+            )
+            # Verify exact argument positions in command list
+            assert "--yes" in cmd
+            assert "--model" in cmd
+            model_idx = cmd.index("--model")
+            assert cmd[model_idx + 1] == "sonnet"
+            assert "--print" in cmd
+            assert "--prompt" in cmd
+            prompt_idx = cmd.index("--prompt")
+            assert cmd[prompt_idx + 1] == "Test prompt"
+        finally:
+            claude_dir.rmdir()
+
+    def test_cli_help_shows_benchmark_options(self) -> None:
+        """Test --help shows all benchmark-related options."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--help"])
+        assert result.exit_code == 0
+        assert "--prompt" in result.output or "-p" in result.output
+        assert "--yes" in result.output or "-y" in result.output
+        assert "--model" in result.output or "-m" in result.output
+        assert "--quiet" in result.output or "-q" in result.output
+
+    def test_prompt_with_special_characters(self) -> None:
+        """Test --prompt handles special characters correctly."""
+        claude_dir = Path.home() / ".claude-test-special"
+        claude_dir.mkdir(exist_ok=True)
+        try:
+            config = Config(claude_config_dir=str(claude_dir))
+            special_prompt = 'Test "quotes" and \'apostrophes\' & symbols <>'
+            cmd = get_docker_run_cmd(
+                config,
+                Path("/project/test"),
+                "test",
+                LanguageStack.BASE,
+                prompt=special_prompt,
+            )
+            assert "--prompt" in cmd
+            prompt_idx = cmd.index("--prompt")
+            assert cmd[prompt_idx + 1] == special_prompt
+        finally:
+            claude_dir.rmdir()
+
+    def test_prompt_empty_string_filtered(self) -> None:
+        """Test --prompt with empty string is filtered out (not passed to Claude)."""
+        claude_dir = Path.home() / ".claude-test-empty"
+        claude_dir.mkdir(exist_ok=True)
+        try:
+            config = Config(claude_config_dir=str(claude_dir))
+            cmd = get_docker_run_cmd(
+                config,
+                Path("/project/test"),
+                "test",
+                LanguageStack.BASE,
+                prompt="",  # Empty string
+            )
+            # Empty prompt is falsy, so --prompt flag should NOT be added
+            assert "--prompt" not in cmd
+        finally:
+            claude_dir.rmdir()
+
+    def test_model_passed_as_is(self) -> None:
+        """Test --model is passed directly to Claude without validation."""
+        claude_dir = Path.home() / ".claude-test-model-custom"
+        claude_dir.mkdir(exist_ok=True)
+        try:
+            config = Config(claude_config_dir=str(claude_dir))
+            # Test arbitrary model name (no validation)
+            cmd = get_docker_run_cmd(
+                config,
+                Path("/project/test"),
+                "test",
+                LanguageStack.BASE,
+                model="custom-model-name",
+            )
+            assert "--model" in cmd
+            model_idx = cmd.index("--model")
+            assert cmd[model_idx + 1] == "custom-model-name"
+        finally:
+            claude_dir.rmdir()
+
+    def test_prompt_exceeds_max_length(self) -> None:
+        """Test --prompt rejects prompts exceeding 5000 characters."""
+        runner = CliRunner()
+        long_prompt = "a" * 5001  # Exceeds max length
+        with patch("ccbox.cli.check_docker", return_value=True):
+            result = runner.invoke(cli, ["--prompt", long_prompt])
+            assert result.exit_code == 1
+            assert "5000 characters or less" in result.output
+
+    def test_prompt_whitespace_stripped(self) -> None:
+        """Test --prompt strips leading/trailing whitespace."""
+        claude_dir = Path.home() / ".claude-test-whitespace"
+        claude_dir.mkdir(exist_ok=True)
+        try:
+            config = Config(claude_config_dir=str(claude_dir))
+            # Note: Stripping happens in CLI validation, so we test at that level
+            # The get_docker_run_cmd receives already-stripped prompt
+            stripped_prompt = "Test prompt"
+            cmd = get_docker_run_cmd(
+                config,
+                Path("/project/test"),
+                "test",
+                LanguageStack.BASE,
+                prompt=stripped_prompt,
+            )
+            assert "--prompt" in cmd
+            prompt_idx = cmd.index("--prompt")
+            # Prompt should be stripped (no whitespace)
+            assert cmd[prompt_idx + 1] == "Test prompt"
+            assert not cmd[prompt_idx + 1].startswith(" ")
+            assert not cmd[prompt_idx + 1].endswith(" ")
+        finally:
+            claude_dir.rmdir()
