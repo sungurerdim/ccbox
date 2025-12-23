@@ -258,16 +258,6 @@ set -e
 HOST_UID=$(stat -c '%u' "$PWD" 2>/dev/null || stat -f '%u' "$PWD" 2>/dev/null || echo "1000")
 HOST_GID=$(stat -c '%g' "$PWD" 2>/dev/null || stat -f '%g' "$PWD" 2>/dev/null || echo "1000")
 
-# Bare mode: create ephemeral .claude with only credentials from host
-if [[ -n "$CCBOX_BARE" && -d "/home/node/.claude-host" ]]; then
-    mkdir -p /home/node/.claude
-    # Copy only essential auth files (rest is ephemeral)
-    for f in .credentials.json .claude.json settings.json; do
-        [[ -f "/home/node/.claude-host/$f" ]] && cp "/home/node/.claude-host/$f" "/home/node/.claude/$f"
-    done
-    chown -R "$HOST_UID:$HOST_GID" /home/node/.claude 2>/dev/null || true
-fi
-
 # Switch to host user if running as root
 if [[ "$(id -u)" == "0" && "$HOST_UID" != "0" ]]; then
     usermod -u "$HOST_UID" node 2>/dev/null || true
@@ -355,16 +345,13 @@ def get_docker_run_cmd(
     ]
 
     if bare:
-        # Bare mode: mount host .claude read-only, entrypoint creates ephemeral copy
-        # Only credentials + settings preserved, all other state discarded on exit
-        cmd.extend(
-            [
-                "-v",
-                f"{claude_config}:/home/node/.claude-host:ro",
-                "-e",
-                "CCBOX_BARE=1",
-            ]
-        )
+        # Bare mode: mount only essential files (no CCO rules/commands/agents)
+        # This provides vanilla Claude Code experience with host auth/settings
+        bare_files = [".credentials.json", ".claude.json", "settings.json"]
+        for filename in bare_files:
+            filepath = claude_config / filename
+            if filepath.exists():
+                cmd.extend(["-v", f"{filepath}:/home/node/.claude/{filename}:rw"])
     else:
         # Normal mode: full rw mount (host settings persist)
         cmd.extend(["-v", f"{claude_config}:/home/node/.claude:rw"])
