@@ -30,6 +30,7 @@ from .config import (
 )
 from .detector import detect_project_type
 from .generator import get_docker_run_cmd, write_build_files
+from .paths import resolve_for_docker
 
 console = Console()
 
@@ -119,6 +120,8 @@ def _run_cco_install(stack: LanguageStack) -> bool:
         return True
 
     console.print("[dim]Running cco-install...[/dim]")
+    # Convert path to Docker-compatible format (handles Windows/WSL paths)
+    docker_claude_dir = resolve_for_docker(claude_dir)
     try:
         result = subprocess.run(
             [
@@ -132,7 +135,7 @@ def _run_cco_install(stack: LanguageStack) -> bool:
                 "-e",
                 "CLAUDE_CONFIG_DIR=/home/node/.claude",
                 "-v",
-                f"{claude_dir}:/home/node/.claude:rw",
+                f"{docker_claude_dir}:/home/node/.claude:rw",
                 image_name,
             ],
             capture_output=True,
