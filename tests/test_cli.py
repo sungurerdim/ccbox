@@ -719,11 +719,46 @@ class TestGeneratorExtended:
         cmd_str = " ".join(cmd)
         assert "/home/node/.claude/debug" not in cmd_str
 
-    def test_get_docker_run_cmd_bare_mode_with_credentials(self) -> None:
-        """Test bare mode mounts .claude as read-only .claude-host."""
-        # Create fake credentials file in home dir to pass validation
+    def test_get_docker_run_cmd_bare_mode_with_files(self) -> None:
+        """Test bare mode mounts only essential files (no full .claude dir)."""
+        # Create fake config files
         claude_dir = Path.home() / ".claude-test-bare"
         claude_dir.mkdir(exist_ok=True)
+        creds_file = claude_dir / ".credentials.json"
+        claude_json = claude_dir / ".claude.json"
+        settings_file = claude_dir / "settings.json"
+        creds_file.write_text('{"key": "test"}')
+        claude_json.write_text('{"hasCompletedOnboarding": true}')
+        settings_file.write_text('{"theme": "dark"}')
+
+        try:
+            config = Config(claude_config_dir=str(claude_dir))
+            cmd = get_docker_run_cmd(
+                config,
+                Path("/project/test"),
+                "test",
+                LanguageStack.BASE,
+                bare=True,
+            )
+            cmd_str = " ".join(cmd)
+            # Bare mode mounts only essential files
+            assert f"{creds_file}:/home/node/.claude/.credentials.json:rw" in cmd_str
+            assert f"{claude_json}:/home/node/.claude/.claude.json:rw" in cmd_str
+            assert f"{settings_file}:/home/node/.claude/settings.json:rw" in cmd_str
+            # Should NOT mount full .claude directory
+            assert f"{claude_dir}:/home/node/.claude:rw" not in cmd_str
+        finally:
+            # Cleanup
+            creds_file.unlink(missing_ok=True)
+            claude_json.unlink(missing_ok=True)
+            settings_file.unlink(missing_ok=True)
+            claude_dir.rmdir()
+
+    def test_get_docker_run_cmd_bare_mode_missing_files(self) -> None:
+        """Test bare mode only mounts files that exist."""
+        claude_dir = Path.home() / ".claude-test-bare-partial"
+        claude_dir.mkdir(exist_ok=True)
+        # Only create credentials, not settings or .claude.json
         creds_file = claude_dir / ".credentials.json"
         creds_file.write_text('{"key": "test"}')
 
@@ -737,39 +772,14 @@ class TestGeneratorExtended:
                 bare=True,
             )
             cmd_str = " ".join(cmd)
-            # Bare mode mounts full .claude dir as read-only .claude-host
-            # Entrypoint creates ephemeral copy with only credentials
-            assert f"{claude_dir}:/home/node/.claude-host:ro" in cmd_str
-            assert f"{claude_dir}:/home/node/.claude:rw" not in cmd_str
-            # Should signal bare mode to entrypoint
-            assert "CCBOX_BARE=1" in cmd_str
+            # Should mount credentials (exists)
+            assert f"{creds_file}:/home/node/.claude/.credentials.json:rw" in cmd_str
+            # Should NOT mount missing files
+            assert ".claude.json:/home/node/.claude" not in cmd_str
+            assert "settings.json:/home/node/.claude" not in cmd_str
         finally:
             # Cleanup
             creds_file.unlink(missing_ok=True)
-            claude_dir.rmdir()
-
-    def test_get_docker_run_cmd_bare_mode_no_credentials(self) -> None:
-        """Test bare mode without credentials file doesn't mount anything."""
-        claude_dir = Path.home() / ".claude-test-bare-nocreds"
-        claude_dir.mkdir(exist_ok=True)
-        # No credentials file created
-
-        try:
-            config = Config(claude_config_dir=str(claude_dir))
-            cmd = get_docker_run_cmd(
-                config,
-                Path("/project/test"),
-                "test",
-                LanguageStack.BASE,
-                bare=True,
-            )
-            cmd_str = " ".join(cmd)
-            # Should not mount .credentials.json (file doesn't exist)
-            assert ".credentials.json:/home/node" not in cmd_str
-            # Should still signal bare mode
-            assert "CCBOX_BARE=1" in cmd_str
-        finally:
-            # Cleanup
             claude_dir.rmdir()
 
     def test_get_docker_run_cmd_normal_mode(self) -> None:
@@ -1397,7 +1407,7 @@ class TestBenchmarkCLIOptions:
             assert "5000 characters or less" in result.output
 
     def test_prompt_whitespace_stripped(self) -> None:
-        """Test --prompt strips leading/trailing whitespace."""
+        """Test prompt as positional argument is stripped."""
         claude_dir = Path.home() / ".claude-test-whitespace"
         claude_dir.mkdir(exist_ok=True)
         try:
@@ -1412,11 +1422,10 @@ class TestBenchmarkCLIOptions:
                 LanguageStack.BASE,
                 prompt=stripped_prompt,
             )
-            assert "--prompt" in cmd
-            prompt_idx = cmd.index("--prompt")
-            # Prompt should be stripped (no whitespace)
-            assert cmd[prompt_idx + 1] == "Test prompt"
-            assert not cmd[prompt_idx + 1].startswith(" ")
-            assert not cmd[prompt_idx + 1].endswith(" ")
+            # Prompt is passed as positional argument (last element)
+            assert "Test prompt" in cmd
+            assert cmd[-1] == "Test prompt"
+            # Verify --print flag is present (required for prompt mode)
+            assert "--print" in cmd
         finally:
             claude_dir.rmdir()
