@@ -260,6 +260,14 @@ def generate_entrypoint() -> str:
     Debug output is controlled by CCBOX_DEBUG environment variable:
     - CCBOX_DEBUG=1: Basic progress messages
     - CCBOX_DEBUG=2: Verbose with environment details
+
+    Mount strategy:
+    - Host ~/.claude → /home/node/.claude (rw)
+    - tmpfs overlays for rules/commands/agents/skills/CLAUDE.md (CCO injected)
+    - Project .claude → /home/node/project/.claude (rw, persistent)
+
+    Claude Code reads project .claude first, then falls back to global ~/.claude.
+    This allows project-local rules/settings to override global CCO defaults.
     """
     return """#!/bin/bash
 
@@ -315,15 +323,27 @@ _log "Running as node user (UID: $(id -u))"
 # Host .claude is mounted rw, but rules/commands/agents/skills are tmpfs overlays
 if [[ -z "$CCBOX_BARE_MODE" && -d "/opt/cco" ]]; then
     _log "Injecting CCO from image..."
-    # Copy all CCO directories (rules, commands, agents, skills)
+    # Copy all CCO directories to global .claude (tmpfs overlays)
     for dir in rules commands agents skills; do
         if [[ -d "/opt/cco/$dir" ]]; then
-            cp -r "/opt/cco/$dir" "/home/node/.claude/" 2>/dev/null || true
-            _log_verbose "Copied $dir/"
+            cp -r "/opt/cco/$dir/." "/home/node/.claude/$dir/" 2>/dev/null || true
+            _log_verbose "Copied $dir/ to global .claude"
         fi
     done
+    # Copy CLAUDE.md template if exists
+    if [[ -f "/opt/cco/CLAUDE.md" ]]; then
+        cp "/opt/cco/CLAUDE.md" "/home/node/.claude/CLAUDE.md" 2>/dev/null || true
+        _log_verbose "Copied CLAUDE.md to global .claude"
+    fi
 else
     _log "Bare mode: vanilla Claude Code (no CCO)"
+fi
+
+# Project .claude is mounted directly from host (persistent)
+# Claude Code automatically reads project .claude first, then global
+if [[ -d "$PWD/.claude" ]]; then
+    _log "Project .claude detected (persistent, host-mounted)"
+    _log_verbose "Project .claude contents: $(ls -A "$PWD/.claude" 2>/dev/null | tr '\\n' ' ')"
 fi
 
 # Runtime config (as node user)
@@ -550,13 +570,15 @@ def get_docker_run_cmd(
     cmd.extend(["-v", f"{docker_claude_config}:/home/node/.claude:rw"])
 
     # Overlay tmpfs for user customization directories (isolate from host)
-    # These directories get CCO files injected at runtime
+    # These directories get CCO files injected at runtime from /opt/cco
+    # Host global .claude is mounted rw, but these dirs are tmpfs overlays
     user_dirs = ["rules", "commands", "agents", "skills"]
     for d in user_dirs:
         cmd.extend(["--tmpfs", f"/home/node/.claude/{d}:rw,size=16m,uid=1000,gid=1000,mode=0755"])
 
-    # Override CLAUDE.md with empty file (isolate user instructions)
-    cmd.extend(["-v", "/dev/null:/home/node/.claude/CLAUDE.md:ro"])
+    # CLAUDE.md: tmpfs file overlay (CCO template injected at runtime)
+    # This isolates host's CLAUDE.md while allowing CCO to provide its own
+    cmd.extend(["--tmpfs", "/home/node/.claude/CLAUDE.md:rw,size=1m,uid=1000,gid=1000,mode=0644"])
 
     if bare:
         # Bare mode: vanilla Claude Code (no CCO)

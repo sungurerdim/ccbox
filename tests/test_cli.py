@@ -203,8 +203,8 @@ class TestGenerator:
         # User customization dirs are tmpfs overlays
         assert any("/home/node/.claude/rules:rw,size=16m" in arg for arg in cmd)
         assert any("/home/node/.claude/commands:rw,size=16m" in arg for arg in cmd)
-        # CLAUDE.md overridden with /dev/null
-        assert any("/dev/null:/home/node/.claude/CLAUDE.md" in arg for arg in cmd)
+        # CLAUDE.md is tmpfs overlay (CCO template injected at runtime)
+        assert any("/home/node/.claude/CLAUDE.md:rw,size=1m" in arg for arg in cmd)
         # Verify workdir uses directory name
         assert any("/home/node/myproject" in arg for arg in cmd)
         # Verify CLAUDE_CONFIG_DIR env var
@@ -723,8 +723,8 @@ class TestGeneratorExtended:
             # User customization dirs are tmpfs overlays
             assert "--tmpfs /home/node/.claude/rules:rw,size=16m" in cmd_str
             assert "--tmpfs /home/node/.claude/commands:rw,size=16m" in cmd_str
-            # CLAUDE.md overridden
-            assert "/dev/null:/home/node/.claude/CLAUDE.md" in cmd_str
+            # CLAUDE.md is tmpfs overlay (CCO template injected at runtime)
+            assert "--tmpfs /home/node/.claude/CLAUDE.md:rw,size=1m" in cmd_str
             # Bare mode flag
             assert "CCBOX_BARE_MODE=1" in cmd_str
         finally:
