@@ -58,8 +58,7 @@ CCO_INSTALL = """
 USER root
 RUN pip install --break-system-packages --no-cache-dir \\
     git+https://github.com/sungurerdim/ClaudeCodeOptimizer.git \\
-    && mkdir -p /opt/cco \\
-    && CLAUDE_CONFIG_DIR=/opt/cco cco-install \\
+    && cco-install --dir /opt/cco \\
     && chown -R node:node /opt/cco
 USER node
 """
