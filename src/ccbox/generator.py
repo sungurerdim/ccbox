@@ -51,14 +51,16 @@ PYTHON_TOOLS_BASE = """
 RUN pip install --break-system-packages --no-cache-dir ruff mypy pytest
 """
 
-# CCO installation (pip only - cco-install runs at runtime via entrypoint)
+# CCO installation (pip + install to /opt/cco/)
 CCO_INSTALL = """
-# Claude Code Optimizer (CCO) - install package only
-# cco-install runs at container start because ~/.claude is mounted from host
-# Must run as root for system-wide installation (USER node set by minimal base)
+# Claude Code Optimizer (CCO) - install package and files to /opt/cco/
+# Files are copied to tmpfs at runtime (no host writes)
 USER root
 RUN pip install --break-system-packages --no-cache-dir \\
-    git+https://github.com/sungurerdim/ClaudeCodeOptimizer.git
+    git+https://github.com/sungurerdim/ClaudeCodeOptimizer.git \\
+    && mkdir -p /opt/cco \\
+    && CLAUDE_CONFIG_DIR=/opt/cco cco-install \\
+    && chown -R node:node /opt/cco
 USER node
 """
 
@@ -307,6 +309,21 @@ fi
 
 _log "Running as node user (UID: $(id -u))"
 
+# Inject CCO files from image (unless bare mode)
+# Host .claude is mounted rw, but rules/commands/agents/skills are tmpfs overlays
+if [[ -z "$CCBOX_BARE_MODE" && -d "/opt/cco" ]]; then
+    _log "Injecting CCO from image..."
+    # Copy all CCO directories (rules, commands, agents, skills)
+    for dir in rules commands agents skills; do
+        if [[ -d "/opt/cco/$dir" ]]; then
+            cp -r "/opt/cco/$dir" "/home/node/.claude/" 2>/dev/null || true
+            _log_verbose "Copied $dir/"
+        fi
+    done
+else
+    _log "Bare mode: vanilla Claude Code (no CCO)"
+fi
+
 # Runtime config (as node user)
 export NODE_OPTIONS="--max-old-space-size=$(( $(free -m | awk '/^Mem:/{print $2}') * 3 / 4 ))"
 export UV_THREADPOOL_SIZE=$(nproc)
@@ -357,6 +374,8 @@ def get_docker_run_cmd(
     prompt: str | None = None,
     model: str | None = None,
     quiet: bool = False,
+    verbose: bool = False,
+    append_system_prompt: str | None = None,
 ) -> list[str]:
     """Generate docker run command with full cleanup on exit.
 
@@ -374,6 +393,8 @@ def get_docker_run_cmd(
         prompt: Initial prompt to send to Claude (enables --print mode).
         model: Model to use (e.g., opus, sonnet, haiku).
         quiet: Quiet mode (enables --print, shows only Claude's responses).
+        verbose: Verbose output (Claude's --verbose flag).
+        append_system_prompt: Custom instructions to append to Claude's system prompt.
 
     Raises:
         ConfigPathError: If claude_config_dir path validation fails.
@@ -415,20 +436,21 @@ def get_docker_run_cmd(
     # Convert claude config path for Docker mount
     docker_claude_config = resolve_for_docker(claude_config)
 
+    # Mount host .claude directory (rw for full access)
+    cmd.extend(["-v", f"{docker_claude_config}:/home/node/.claude:rw"])
+
+    # Overlay tmpfs for user customization directories (isolate from host)
+    # These directories get CCO files injected at runtime
+    user_dirs = ["rules", "commands", "agents", "skills"]
+    for d in user_dirs:
+        cmd.extend(["--tmpfs", f"/home/node/.claude/{d}:rw,size=16m,uid=1000,gid=1000,mode=0755"])
+
+    # Override CLAUDE.md with empty file (isolate user instructions)
+    cmd.extend(["-v", "/dev/null:/home/node/.claude/CLAUDE.md:ro"])
+
     if bare:
-        # Bare mode: tmpfs base for .claude + mount only essential files
-        # This provides vanilla Claude Code experience with host auth/settings
-        # tmpfs first, then file mounts on top (order matters!)
-        cmd.extend(["--tmpfs", "/home/node/.claude:rw,size=256m,uid=1000,gid=1000,mode=0755"])
-        bare_files = [".credentials.json", ".claude.json", "settings.json"]
-        for filename in bare_files:
-            filepath = claude_config / filename
-            if filepath.exists():
-                docker_filepath = resolve_for_docker(filepath)
-                cmd.extend(["-v", f"{docker_filepath}:/home/node/.claude/{filename}:ro"])
-    else:
-        # Normal mode: full rw mount (host settings persist)
-        cmd.extend(["-v", f"{docker_claude_config}:/home/node/.claude:rw"])
+        # Bare mode: vanilla Claude Code (no CCO)
+        cmd.extend(["-e", "CCBOX_BARE_MODE=1"])
 
     cmd.extend(
         [
@@ -480,6 +502,12 @@ def get_docker_run_cmd(
     # Note: --dangerously-skip-permissions is already in entrypoint.sh
     if model:
         cmd.extend(["--model", model])
+
+    if verbose:
+        cmd.append("--verbose")
+
+    if append_system_prompt:
+        cmd.extend(["--append-system-prompt", append_system_prompt])
 
     # Print mode required for: quiet mode OR prompt (non-interactive usage)
     if quiet or prompt:
