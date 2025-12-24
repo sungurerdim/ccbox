@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from .config import (
     Config,
@@ -15,6 +15,9 @@ from .config import (
     get_image_name,
 )
 from .paths import resolve_for_docker
+
+if TYPE_CHECKING:
+    from .deps import DepsInfo, DepsMode
 
 # Common system packages (minimal - matches original)
 COMMON_TOOLS = """
@@ -341,7 +344,13 @@ _log_verbose "Node version: $(node --version 2>/dev/null || echo 'N/A')"
 _log_verbose "npm version: $(npm --version 2>/dev/null || echo 'N/A')"
 
 _log "Starting Claude Code..."
-exec claude --dangerously-skip-permissions "$@"
+
+# Use stdbuf for unbuffered output in non-TTY mode (--print with pipes)
+if [[ -t 1 ]]; then
+    exec claude --dangerously-skip-permissions "$@"
+else
+    exec stdbuf -oL -eL claude --dangerously-skip-permissions "$@"
+fi
 """
 
 
@@ -361,6 +370,90 @@ def write_build_files(stack: LanguageStack) -> Path:
     return build_dir
 
 
+def generate_project_dockerfile(
+    base_image: str,
+    deps_list: list[DepsInfo],
+    deps_mode: DepsMode,
+) -> str:
+    """Generate project-specific Dockerfile with dependencies.
+
+    Args:
+        base_image: Base ccbox image to build on (e.g., ccbox:base).
+        deps_list: List of detected dependencies.
+        deps_mode: Dependency installation mode (all or prod).
+
+    Returns:
+        Dockerfile content as string.
+    """
+    from .deps import get_install_commands
+
+    lines = [
+        "# syntax=docker/dockerfile:1",
+        "# Project-specific image with dependencies",
+        f"FROM {base_image}",
+        "",
+        "USER root",
+        "WORKDIR /tmp/deps",
+        "",
+    ]
+
+    # Copy dependency files for each detected package manager
+    copy_patterns: set[str] = set()
+    for deps in deps_list:
+        for f in deps.files:
+            # Handle glob patterns - just copy common files
+            if "*" not in f:
+                copy_patterns.add(f)
+
+    # Also copy common dependency files that may not be in deps_list.files
+    common_files = {
+        "pyproject.toml",
+        "setup.py",
+        "setup.cfg",
+        "package.json",
+        "package-lock.json",
+        "yarn.lock",
+        "pnpm-lock.yaml",
+        "go.mod",
+        "go.sum",
+        "Cargo.toml",
+        "Cargo.lock",
+        "Gemfile",
+        "Gemfile.lock",
+        "composer.json",
+        "composer.lock",
+    }
+    copy_patterns.update(common_files)
+
+    # Copy files that exist (use || true for optional files)
+    lines.append("# Copy dependency files (optional - ignore if not present)")
+    for pattern in sorted(copy_patterns):
+        lines.append(f"COPY {pattern} ./ 2>/dev/null || true")
+
+    lines.append("")
+
+    # Get install commands
+    install_cmds = get_install_commands(deps_list, deps_mode)
+
+    if install_cmds:
+        lines.append("# Install dependencies")
+        for cmd in install_cmds:
+            # Use BuildKit cache mounts for package caches
+            lines.append(f"RUN {cmd} || echo 'Warning: {cmd.split()[0]} install failed'")
+
+    lines.extend(
+        [
+            "",
+            "# Clean up and switch back to node user",
+            "WORKDIR /home/node/project",
+            "USER node",
+            "",
+        ]
+    )
+
+    return "\n".join(lines)
+
+
 def get_docker_run_cmd(
     config: Config,
     project_path: Path,
@@ -373,8 +466,9 @@ def get_docker_run_cmd(
     prompt: str | None = None,
     model: str | None = None,
     quiet: bool = False,
-    verbose: bool = False,
     append_system_prompt: str | None = None,
+    project_image: str | None = None,
+    deps_list: list[DepsInfo] | None = None,
 ) -> list[str]:
     """Generate docker run command with full cleanup on exit.
 
@@ -388,17 +482,23 @@ def get_docker_run_cmd(
             Creates ephemeral tmpfs for .claude directory (all changes lost on exit).
             Use this to test vanilla Claude Code without CCO rules/commands/settings.
         debug_logs: If True, persist debug logs; otherwise use tmpfs (ephemeral).
-        debug: Debug level for entrypoint (0=off, 1=basic, 2=verbose).
-        prompt: Initial prompt to send to Claude (enables --print mode).
+        debug: Debug level (0=off, 1=basic, 2=verbose+stream).
+        prompt: Initial prompt (enables --print, implies --verbose unless quiet).
         model: Model to use (e.g., opus, sonnet, haiku).
         quiet: Quiet mode (enables --print, shows only Claude's responses).
-        verbose: Verbose output (Claude's --verbose flag).
         append_system_prompt: Custom instructions to append to Claude's system prompt.
+        project_image: Project-specific image with deps (overrides stack image).
+        deps_list: List of detected dependencies (for cache mounts).
 
     Raises:
         ConfigPathError: If claude_config_dir path validation fails.
+
+    Derived flags:
+        - verbose: enabled when prompt is set (unless quiet) or debug >= 2
+        - stream: enabled when debug >= 2 (uses --output-format=stream-json)
     """
-    image_name = get_image_name(stack)
+    # Use project-specific image if available, otherwise stack image
+    image_name = project_image if project_image else get_image_name(stack)
     claude_config = get_claude_config_dir(config)
 
     # Use centralized container naming with unique suffix
@@ -416,11 +516,16 @@ def get_docker_run_cmd(
         "--rm",  # Remove container on exit
     ]
 
-    # TTY only when stdout is a terminal (not pipe/redirect)
-    if sys.stdout.isatty():
+    # TTY allocation logic:
+    # - Interactive mode (no prompt): need TTY for Claude's TUI
+    # - Print mode (prompt/quiet): no TTY needed, just pipe output
+    # Windows quirk: -t without proper TTY can open separate window
+    is_interactive = prompt is None and not quiet
+
+    if is_interactive and sys.stdin.isatty():
         cmd.append("-it")  # Interactive TTY
     else:
-        cmd.append("-i")  # Interactive only (no TTY for non-terminal)
+        cmd.append("-i")  # Interactive only (no TTY)
 
     cmd.extend(
         [
@@ -495,6 +600,20 @@ def get_docker_run_cmd(
         cmd.extend(["-e", f"GIT_AUTHOR_EMAIL={config.git_email}"])
         cmd.extend(["-e", f"GIT_COMMITTER_EMAIL={config.git_email}"])
 
+    # Add cache volume mounts for package managers
+    if deps_list:
+        from .deps import get_all_cache_paths
+
+        cache_paths = get_all_cache_paths(deps_list)
+        cache_dir = get_config_dir() / "cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        for cache_name, container_path in cache_paths.items():
+            host_cache = cache_dir / cache_name
+            host_cache.mkdir(parents=True, exist_ok=True)
+            docker_cache_path = resolve_for_docker(host_cache)
+            cmd.extend(["-v", f"{docker_cache_path}:{container_path}:rw"])
+
     cmd.append(image_name)
 
     # Claude CLI arguments (passed to entrypoint -> claude command)
@@ -502,15 +621,24 @@ def get_docker_run_cmd(
     if model:
         cmd.extend(["--model", model])
 
+    # Derive flags from parameters:
+    # - stream: -dd enables stream mode (real-time tool call output)
+    # - verbose: required by stream OR when prompt is set (unless quiet)
+    stream = debug >= 2
+    verbose = stream or (prompt is not None and not quiet)
+
     if verbose:
         cmd.append("--verbose")
 
     if append_system_prompt:
         cmd.extend(["--append-system-prompt", append_system_prompt])
 
-    # Print mode required for: quiet mode OR prompt (non-interactive usage)
+    # Print mode: required for non-interactive usage (prompt or quiet)
     if quiet or prompt:
         cmd.append("--print")
+        # Stream mode: use stream-json for real-time output
+        if stream:
+            cmd.extend(["--output-format", "stream-json"])
 
     # Prompt: passed as positional argument (Claude Code doesn't have --prompt flag)
     if prompt:
