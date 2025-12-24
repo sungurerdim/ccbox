@@ -2,12 +2,12 @@
 
 ## Strategic Context
 Purpose: Secure Docker sandbox for running Claude Code CLI in isolated containers
-Team: Solo | Scale: <100 | Data: Public | Compliance: None
+Team: Solo | Scale: Small | Data: Public | Compliance: None
 Stack: Python (Click, Rich) + Docker | Type: CLI | DB: None | Rollback: Git
-Maturity: Greenfield | Breaking: Allowed | Priority: Speed
+Maturity: Beta | Breaking: Allowed | Priority: Speed
 
 ## AI Performance
-Thinking: 5K | MCP: 25K | Caching: Enabled
+Thinking: 8K | MCP: 25K | Caching: Enabled
 
 ## Guidelines
 - Self-review sufficient (solo developer)
