@@ -197,8 +197,13 @@ class TestGenerator:
         assert any("GIT_AUTHOR_NAME=Test" in arg for arg in cmd)
         # Verify mounts use directory name
         assert any("/project/myproject:/home/node/myproject:rw" in arg for arg in cmd)
-        # .claude mounted from host (rw)
+        # Host .claude mounted rw (full access)
         assert any(".claude:/home/node/.claude:rw" in arg for arg in cmd)
+        # User customization dirs are tmpfs overlays
+        assert any("/home/node/.claude/rules:rw,size=16m" in arg for arg in cmd)
+        assert any("/home/node/.claude/commands:rw,size=16m" in arg for arg in cmd)
+        # CLAUDE.md overridden with /dev/null
+        assert any("/dev/null:/home/node/.claude/CLAUDE.md" in arg for arg in cmd)
         # Verify workdir uses directory name
         assert any("/home/node/myproject" in arg for arg in cmd)
         # Verify CLAUDE_CONFIG_DIR env var
@@ -373,32 +378,6 @@ class TestCLIFunctions:
             assert result is True
             # Only WEB should be built since BASE exists
             assert build_calls == [LanguageStack.WEB]
-
-    def test_build_image_skips_cco_install_for_minimal(self, tmp_path: Path) -> None:
-        """Test that cco-install is NOT called for MINIMAL stack."""
-        with (
-            patch("ccbox.cli.image_exists", return_value=True),
-            patch("ccbox.cli.write_build_files", return_value=tmp_path),
-            patch("ccbox.cli._run_cco_install") as mock_cco_install,
-            patch("subprocess.run") as mock_run,
-        ):
-            mock_run.return_value = MagicMock(returncode=0)
-            result = build_image(LanguageStack.MINIMAL)
-            assert result is True
-            mock_cco_install.assert_not_called()
-
-    def test_build_image_runs_cco_install_for_base(self, tmp_path: Path) -> None:
-        """Test that cco-install IS called for BASE stack."""
-        with (
-            patch("ccbox.cli.image_exists", return_value=True),
-            patch("ccbox.cli.write_build_files", return_value=tmp_path),
-            patch("ccbox.cli._run_cco_install") as mock_cco_install,
-            patch("subprocess.run") as mock_run,
-        ):
-            mock_run.return_value = MagicMock(returncode=0)
-            result = build_image(LanguageStack.BASE)
-            assert result is True
-            mock_cco_install.assert_called_once_with(LanguageStack.BASE)
 
 
 class TestDetector:
@@ -719,48 +698,11 @@ class TestGeneratorExtended:
         cmd_str = " ".join(cmd)
         assert "/home/node/.claude/debug" not in cmd_str
 
-    def test_get_docker_run_cmd_bare_mode_with_files(self) -> None:
-        """Test bare mode mounts only essential files (no full .claude dir)."""
-        # Create fake config files
+    def test_get_docker_run_cmd_bare_mode(self) -> None:
+        """Test bare mode sets CCBOX_BARE_MODE."""
         claude_dir = Path.home() / ".claude-test-bare"
         claude_dir.mkdir(exist_ok=True)
         creds_file = claude_dir / ".credentials.json"
-        claude_json = claude_dir / ".claude.json"
-        settings_file = claude_dir / "settings.json"
-        creds_file.write_text('{"key": "test"}')
-        claude_json.write_text('{"hasCompletedOnboarding": true}')
-        settings_file.write_text('{"theme": "dark"}')
-
-        try:
-            config = Config(claude_config_dir=str(claude_dir))
-            cmd = get_docker_run_cmd(
-                config,
-                Path("/project/test"),
-                "test",
-                LanguageStack.BASE,
-                bare=True,
-            )
-            cmd_str = " ".join(cmd)
-            # Bare mode uses tmpfs base + read-only file mounts
-            assert "--tmpfs /home/node/.claude:rw,size=256m,uid=1000,gid=1000,mode=0755" in cmd_str
-            assert f"{creds_file}:/home/node/.claude/.credentials.json:ro" in cmd_str
-            assert f"{claude_json}:/home/node/.claude/.claude.json:ro" in cmd_str
-            assert f"{settings_file}:/home/node/.claude/settings.json:ro" in cmd_str
-            # Should NOT mount full .claude directory
-            assert f"{claude_dir}:/home/node/.claude:rw" not in cmd_str
-        finally:
-            # Cleanup
-            creds_file.unlink(missing_ok=True)
-            claude_json.unlink(missing_ok=True)
-            settings_file.unlink(missing_ok=True)
-            claude_dir.rmdir()
-
-    def test_get_docker_run_cmd_bare_mode_missing_files(self) -> None:
-        """Test bare mode only mounts files that exist."""
-        claude_dir = Path.home() / ".claude-test-bare-partial"
-        claude_dir.mkdir(exist_ok=True)
-        # Only create credentials, not settings or .claude.json
-        creds_file = claude_dir / ".credentials.json"
         creds_file.write_text('{"key": "test"}')
 
         try:
@@ -773,22 +715,25 @@ class TestGeneratorExtended:
                 bare=True,
             )
             cmd_str = " ".join(cmd)
-            # Should have tmpfs base
-            assert "--tmpfs /home/node/.claude:rw,size=256m,uid=1000,gid=1000,mode=0755" in cmd_str
-            # Should mount credentials (exists) as read-only
-            assert f"{creds_file}:/home/node/.claude/.credentials.json:ro" in cmd_str
-            # Should NOT mount missing files
-            assert ".claude.json:/home/node/.claude" not in cmd_str
-            assert "settings.json:/home/node/.claude" not in cmd_str
+            # Host .claude mounted rw
+            assert f"{claude_dir}:/home/node/.claude:rw" in cmd_str
+            # User customization dirs are tmpfs overlays
+            assert "--tmpfs /home/node/.claude/rules:rw,size=16m" in cmd_str
+            assert "--tmpfs /home/node/.claude/commands:rw,size=16m" in cmd_str
+            # CLAUDE.md overridden
+            assert "/dev/null:/home/node/.claude/CLAUDE.md" in cmd_str
+            # Bare mode flag
+            assert "CCBOX_BARE_MODE=1" in cmd_str
         finally:
-            # Cleanup
             creds_file.unlink(missing_ok=True)
             claude_dir.rmdir()
 
-    def test_get_docker_run_cmd_normal_mode(self) -> None:
-        """Test normal mode mounts host .claude directory rw."""
+    def test_get_docker_run_cmd_normal_mode_no_bare_flag(self) -> None:
+        """Test normal mode does not set CCBOX_BARE_MODE."""
         claude_dir = Path.home() / ".claude-test-normal"
         claude_dir.mkdir(exist_ok=True)
+        creds_file = claude_dir / ".credentials.json"
+        creds_file.write_text('{"key": "test"}')
 
         try:
             config = Config(claude_config_dir=str(claude_dir))
@@ -800,12 +745,14 @@ class TestGeneratorExtended:
                 bare=False,
             )
             cmd_str = " ".join(cmd)
-            # Should mount host .claude directory rw
+            # Host .claude mounted rw
             assert f"{claude_dir}:/home/node/.claude:rw" in cmd_str
-            # Should NOT have CCBOX_BARE env var
-            assert "CCBOX_BARE=1" not in cmd_str
+            # User customization dirs are tmpfs overlays
+            assert "--tmpfs /home/node/.claude/rules:rw,size=16m" in cmd_str
+            # Normal mode: no CCBOX_BARE_MODE flag
+            assert "CCBOX_BARE_MODE" not in cmd_str
         finally:
-            # Cleanup
+            creds_file.unlink(missing_ok=True)
             claude_dir.rmdir()
 
 
