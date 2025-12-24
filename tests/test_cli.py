@@ -33,6 +33,7 @@ from ccbox.generator import (
     get_docker_run_cmd,
     write_build_files,
 )
+from ccbox.paths import resolve_for_docker
 
 
 class TestConfig:
@@ -715,8 +716,9 @@ class TestGeneratorExtended:
                 bare=True,
             )
             cmd_str = " ".join(cmd)
-            # Host .claude mounted rw
-            assert f"{claude_dir}:/home/node/.claude:rw" in cmd_str
+            # Host .claude mounted rw (use Docker-format path for assertion)
+            docker_claude_dir = resolve_for_docker(claude_dir)
+            assert f"{docker_claude_dir}:/home/node/.claude:rw" in cmd_str
             # User customization dirs are tmpfs overlays
             assert "--tmpfs /home/node/.claude/rules:rw,size=16m" in cmd_str
             assert "--tmpfs /home/node/.claude/commands:rw,size=16m" in cmd_str
@@ -745,8 +747,9 @@ class TestGeneratorExtended:
                 bare=False,
             )
             cmd_str = " ".join(cmd)
-            # Host .claude mounted rw
-            assert f"{claude_dir}:/home/node/.claude:rw" in cmd_str
+            # Host .claude mounted rw (use Docker-format path for assertion)
+            docker_claude_dir = resolve_for_docker(claude_dir)
+            assert f"{docker_claude_dir}:/home/node/.claude:rw" in cmd_str
             # User customization dirs are tmpfs overlays
             assert "--tmpfs /home/node/.claude/rules:rw,size=16m" in cmd_str
             # Normal mode: no CCBOX_BARE_MODE flag
