@@ -579,8 +579,6 @@ def get_docker_run_cmd(
             "-e",
             "TERM=xterm-256color",
             "-e",
-            "CLAUDE_CONFIG_DIR=/home/node/.claude",
-            "-e",
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",  # Disable telemetry, error reporting
             "-e",
             "DISABLE_AUTOUPDATER=1",  # Disable auto-updates (use image rebuild)
