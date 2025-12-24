@@ -303,7 +303,7 @@ if [[ "$(id -u)" == "0" ]]; then
         usermod -u "$HOST_UID" node 2>/dev/null || true
         groupmod -g "$HOST_GID" node 2>/dev/null || true
         chown "$HOST_UID:$HOST_GID" /home/node 2>/dev/null || true
-        chown -R "$HOST_UID:$HOST_GID" /home/node/.claude /home/node/.npm /home/node/.config 2>/dev/null || true
+        chown -R "$HOST_UID:$HOST_GID" /home/node/.config/claude /home/node/.npm /home/node/.config 2>/dev/null || true
     fi
     _log "Switching to node user via gosu..."
     exec gosu node "$0" "$@"
@@ -312,13 +312,13 @@ fi
 _log "Running as node user (UID: $(id -u))"
 
 # Inject CCO files from image (unless bare mode)
-# Host .claude is mounted rw, but rules/commands/agents/skills are tmpfs overlays
+# Host config is mounted at ~/.config/claude, with tmpfs overlays for rules/commands/agents/skills
 if [[ -z "$CCBOX_BARE_MODE" && -d "/opt/cco" ]]; then
     _log "Injecting CCO from image..."
     # Copy all CCO directories (rules, commands, agents, skills)
     for dir in rules commands agents skills; do
         if [[ -d "/opt/cco/$dir" ]]; then
-            cp -r "/opt/cco/$dir" "/home/node/.claude/" 2>/dev/null || true
+            cp -r "/opt/cco/$dir" "/home/node/.config/claude/" 2>/dev/null || true
             _log_verbose "Copied $dir/"
         fi
     done
@@ -546,17 +546,17 @@ def get_docker_run_cmd(
     # Convert claude config path for Docker mount
     docker_claude_config = resolve_for_docker(claude_config)
 
-    # Mount host .claude directory (rw for full access)
-    cmd.extend(["-v", f"{docker_claude_config}:/home/node/.claude:rw"])
+    # Mount host .claude directory to new default location ~/.config/claude
+    cmd.extend(["-v", f"{docker_claude_config}:/home/node/.config/claude:rw"])
 
     # Overlay tmpfs for user customization directories (isolate from host)
     # These directories get CCO files injected at runtime
     user_dirs = ["rules", "commands", "agents", "skills"]
     for d in user_dirs:
-        cmd.extend(["--tmpfs", f"/home/node/.claude/{d}:rw,size=16m,uid=1000,gid=1000,mode=0755"])
+        cmd.extend(["--tmpfs", f"/home/node/.config/claude/{d}:rw,size=16m,uid=1000,gid=1000,mode=0755"])
 
     # Override CLAUDE.md with empty file (isolate user instructions)
-    cmd.extend(["-v", "/dev/null:/home/node/.claude/CLAUDE.md:ro"])
+    cmd.extend(["-v", "/dev/null:/home/node/.config/claude/CLAUDE.md:ro"])
 
     if bare:
         # Bare mode: vanilla Claude Code (no CCO)
@@ -595,7 +595,7 @@ def get_docker_run_cmd(
 
     # Debug logs: tmpfs by default (ephemeral), persistent with --debug-logs
     if not debug_logs:
-        cmd.extend(["--tmpfs", "/home/node/.claude/debug:rw,size=512m,mode=0777"])
+        cmd.extend(["--tmpfs", "/home/node/.config/claude/debug:rw,size=512m,mode=0777"])
 
     if config.git_name:
         cmd.extend(["-e", f"GIT_AUTHOR_NAME={config.git_name}"])
