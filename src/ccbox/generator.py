@@ -374,6 +374,7 @@ def generate_project_dockerfile(
     base_image: str,
     deps_list: list[DepsInfo],
     deps_mode: DepsMode,
+    project_path: Path,
 ) -> str:
     """Generate project-specific Dockerfile with dependencies.
 
@@ -381,6 +382,7 @@ def generate_project_dockerfile(
         base_image: Base ccbox image to build on (e.g., ccbox:base).
         deps_list: List of detected dependencies.
         deps_mode: Dependency installation mode (all or prod).
+        project_path: Path to project directory (for checking file existence).
 
     Returns:
         Dockerfile content as string.
@@ -397,15 +399,15 @@ def generate_project_dockerfile(
         "",
     ]
 
-    # Copy dependency files for each detected package manager
-    copy_patterns: set[str] = set()
+    # Collect candidate dependency files from detected package managers
+    candidate_files: set[str] = set()
     for deps in deps_list:
         for f in deps.files:
-            # Handle glob patterns - just copy common files
+            # Skip glob patterns
             if "*" not in f:
-                copy_patterns.add(f)
+                candidate_files.add(f)
 
-    # Also copy common dependency files that may not be in deps_list.files
+    # Add common dependency files that may not be in deps_list.files
     common_files = {
         "pyproject.toml",
         "setup.py",
@@ -423,12 +425,16 @@ def generate_project_dockerfile(
         "composer.json",
         "composer.lock",
     }
-    copy_patterns.update(common_files)
+    candidate_files.update(common_files)
 
-    # Copy files that exist (use || true for optional files)
-    lines.append("# Copy dependency files (optional - ignore if not present)")
-    for pattern in sorted(copy_patterns):
-        lines.append(f"COPY {pattern} ./ 2>/dev/null || true")
+    # Filter to only files that actually exist in the project
+    existing_files = {f for f in candidate_files if (project_path / f).exists()}
+
+    # Copy only existing dependency files
+    if existing_files:
+        lines.append("# Copy dependency files")
+        for pattern in sorted(existing_files):
+            lines.append(f"COPY {pattern} ./")
 
     lines.append("")
 
@@ -625,7 +631,7 @@ def get_docker_run_cmd(
     # - stream: -dd enables stream mode (real-time tool call output)
     # - verbose: required by stream OR when prompt is set (unless quiet)
     stream = debug >= 2
-    verbose = stream or (prompt is not None and not quiet)
+    verbose = stream or (bool(prompt) and not quiet)
 
     if verbose:
         cmd.append("--verbose")

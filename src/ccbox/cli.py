@@ -528,6 +528,7 @@ def _build_project_image(
         base_image=base_image,
         deps_list=deps_list,
         deps_mode=deps_mode,
+        project_path=project_path,
     )
 
     # Write to temp build directory

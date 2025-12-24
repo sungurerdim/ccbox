@@ -624,6 +624,7 @@ class TestMainRunFlow:
             patch("ccbox.cli.load_config", return_value=Config()),
             patch("ccbox.cli.get_git_config", return_value=("", "")),
             patch("ccbox.cli.detect_project_type") as mock_detect,
+            patch("ccbox.cli.detect_dependencies", return_value=[]),
             patch("ccbox.cli.image_exists", return_value=True),
             patch("subprocess.run"),
         ):
@@ -886,6 +887,7 @@ class TestRunFlowExtended:
             patch("ccbox.cli.load_config", return_value=Config()),
             patch("ccbox.cli.get_git_config", return_value=("", "")),
             patch("ccbox.cli.detect_project_type") as mock_detect,
+            patch("ccbox.cli.detect_dependencies", return_value=[]),
             patch("ccbox.cli.image_exists", side_effect=image_exists_side_effect),
             patch("ccbox.cli.build_image", return_value=True),
             patch("subprocess.run"),
@@ -904,6 +906,7 @@ class TestRunFlowExtended:
             patch("ccbox.cli.load_config", return_value=Config()),
             patch("ccbox.cli.get_git_config", return_value=("", "")),
             patch("ccbox.cli.detect_project_type") as mock_detect,
+            patch("ccbox.cli.detect_dependencies", return_value=[]),
             patch("ccbox.cli.image_exists", return_value=False),
             patch("ccbox.cli.build_image", return_value=False),
         ):
@@ -923,6 +926,7 @@ class TestRunFlowExtended:
             patch("ccbox.cli.load_config", return_value=Config()),
             patch("ccbox.cli.get_git_config", return_value=("", "")),
             patch("ccbox.cli.detect_project_type") as mock_detect,
+            patch("ccbox.cli.detect_dependencies", return_value=[]),
             patch("ccbox.cli.image_exists", return_value=True),
             patch("subprocess.run", side_effect=CalledProcessError(1, "docker")),
         ):
@@ -940,6 +944,7 @@ class TestRunFlowExtended:
             patch("ccbox.cli.load_config", return_value=Config()),
             patch("ccbox.cli.get_git_config", return_value=("", "")),
             patch("ccbox.cli.detect_project_type") as mock_detect,
+            patch("ccbox.cli.detect_dependencies", return_value=[]),
             patch("ccbox.cli.image_exists", return_value=True),
             patch("subprocess.run", side_effect=KeyboardInterrupt),
         ):
