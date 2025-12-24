@@ -387,12 +387,15 @@ def _setup_git_config(config: Config) -> Config:
     return config
 
 
-def _resolve_stack(stack_name: str | None, project_path: Path) -> LanguageStack | None:
+def _resolve_stack(
+    stack_name: str | None, project_path: Path, *, skip_if_image_exists: bool = False
+) -> LanguageStack | None:
     """Resolve the stack to use based on user input or detection.
 
     Args:
         stack_name: Explicitly requested stack name, or None for auto-detection.
         project_path: Path to the project directory.
+        skip_if_image_exists: If True, skip selection when stack image exists.
 
     Returns:
         Selected stack, or None if user cancelled.
@@ -402,8 +405,8 @@ def _resolve_stack(stack_name: str | None, project_path: Path) -> LanguageStack 
     if stack_name:
         return LanguageStack(stack_name)
 
-    if image_exists(detection.recommended_stack):
-        console.print(f"[dim]Using existing image: ccbox:{detection.recommended_stack.value}[/dim]")
+    # Skip selection if stack image exists and caller requests it
+    if skip_if_image_exists and image_exists(detection.recommended_stack):
         return detection.recommended_stack
 
     return _select_stack(detection.recommended_stack, detection.detected_languages)
@@ -608,36 +611,72 @@ def _run(
     project_path = Path(path).resolve()
     project_name = project_path.name
 
-    # === Phase 1: Detection (before any builds) ===
+    # === Phase 1: Check for existing project image (before any prompts) ===
 
-    # Resolve stack first
-    selected_stack = _resolve_stack(stack_name, project_path)
+    # Detect recommended stack first (no prompt yet)
+    detection = detect_project_type(project_path)
+    initial_stack = LanguageStack(stack_name) if stack_name else detection.recommended_stack
+
+    # Check if project image exists - if so, skip all prompts
+    if _project_image_exists(project_name, initial_stack):
+        project_image = _get_project_image_name(project_name, initial_stack)
+        console.print(f"[dim]Using existing project image: {project_image}[/dim]")
+
+        console.print()
+        console.print(
+            Panel.fit(
+                f"[bold]{project_name}[/bold] → {project_image}",
+                border_style="blue",
+            )
+        )
+
+        if build_only:
+            console.print("[green]✓ Build complete (image exists)[/green]")
+            return
+
+        # Detect deps for cache mounts (no prompt)
+        deps_list = detect_dependencies(project_path) if not bare else []
+
+        _execute_container(
+            config,
+            project_path,
+            project_name,
+            initial_stack,
+            bare=bare,
+            debug_logs=debug_logs,
+            debug=debug,
+            prompt=prompt,
+            model=model,
+            quiet=quiet,
+            append_system_prompt=append_system_prompt,
+            project_image=project_image,
+            deps_list=deps_list,
+        )
+        return
+
+    # === Phase 2: No project image - prompt for deps, then stack ===
+
+    # Detect dependencies
+    deps_list = detect_dependencies(project_path) if not bare else []
+    resolved_deps_mode = DepsMode.SKIP
+
+    # Prompt for deps first (before stack selection)
+    if deps_list and deps_mode != "skip":
+        if deps_mode:
+            # User specified deps mode via flag
+            resolved_deps_mode = DepsMode(deps_mode)
+        else:
+            # Interactive prompt
+            resolved_deps_mode = _prompt_deps(deps_list)
+            console.print()
+
+    # Now resolve stack (with selection menu if needed)
+    selected_stack = _resolve_stack(stack_name, project_path, skip_if_image_exists=True)
     if selected_stack is None:
         console.print("[yellow]Cancelled.[/yellow]")
         sys.exit(0)
 
-    # Detect dependencies early
-    deps_list = detect_dependencies(project_path) if not bare else []
-    resolved_deps_mode = DepsMode.SKIP
-    project_image: str | None = None
-
-    # Check if project image already exists (skip deps prompt if so)
-    if deps_list and deps_mode != "skip":
-        existing_project_image = _get_project_image_name(project_name, selected_stack)
-        if _project_image_exists(project_name, selected_stack):
-            console.print(f"[dim]Using existing project image: {existing_project_image}[/dim]")
-            project_image = existing_project_image
-            # Mark as non-skip so cache mounts are passed to container
-            resolved_deps_mode = DepsMode.ALL
-        elif deps_mode:
-            # User specified deps mode via flag
-            resolved_deps_mode = DepsMode(deps_mode)
-        else:
-            # Interactive prompt (only if no existing project image)
-            console.print()
-            resolved_deps_mode = _prompt_deps(deps_list)
-
-    # === Phase 2: Build chain ===
+    # === Phase 3: Build chain ===
 
     console.print()
     console.print(
@@ -658,16 +697,17 @@ def _run(
     if not _ensure_image_ready(selected_stack, build_only=False):
         sys.exit(1)
 
-    # Build project-specific image if deps requested (and not already exists)
-    if resolved_deps_mode != DepsMode.SKIP and deps_list and not project_image:
-        project_image = _build_project_image(
+    # Build project-specific image if deps requested
+    built_project_image: str | None = None
+    if resolved_deps_mode != DepsMode.SKIP and deps_list:
+        built_project_image = _build_project_image(
             project_path,
             project_name,
             selected_stack,
             deps_list,
             resolved_deps_mode,
         )
-        if not project_image:
+        if not built_project_image:
             console.print(
                 "[yellow]Warning: Failed to build project image, continuing without deps[/yellow]"
             )
@@ -688,7 +728,7 @@ def _run(
         model=model,
         quiet=quiet,
         append_system_prompt=append_system_prompt,
-        project_image=project_image,
+        project_image=built_project_image,
         deps_list=deps_list if resolved_deps_mode != DepsMode.SKIP else None,
     )
 
