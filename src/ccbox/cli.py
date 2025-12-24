@@ -625,7 +625,10 @@ def _run(
 
     # Detect recommended stack first (no prompt yet)
     detection = detect_project_type(project_path)
-    initial_stack = LanguageStack(stack_name) if stack_name else detection.recommended_stack
+    if stack_name and stack_name != "auto":
+        initial_stack = LanguageStack(stack_name)
+    else:
+        initial_stack = detection.recommended_stack
 
     # Check if project image exists - if so, skip all prompts
     if _project_image_exists(project_name, initial_stack):
@@ -836,13 +839,25 @@ def clean(force: bool) -> None:
             subprocess.run(["docker", "rm", "-f", name], capture_output=True, check=False)
 
     console.print("[dim]Removing images...[/dim]")
-    # docker rmi -f handles non-existent images gracefully, no need to check
+    # Remove stack images (ccbox:base, ccbox:node, etc.)
     for stack in LanguageStack:
         subprocess.run(
             ["docker", "rmi", "-f", get_image_name(stack)],
             capture_output=True,
             check=False,
         )
+
+    # Remove project images (ccbox-projectname:stack)
+    result = subprocess.run(
+        ["docker", "images", "--format", "{{.Repository}}:{{.Tag}}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode == 0:
+        for image in result.stdout.strip().split("\n"):
+            if image.startswith("ccbox-"):
+                subprocess.run(["docker", "rmi", "-f", image], capture_output=True, check=False)
 
     console.print("[green]✓ Cleanup complete[/green]")
 
