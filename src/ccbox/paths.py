@@ -175,6 +175,10 @@ def resolve_for_docker(path: Path) -> str:
     """
     path_str = str(path)
 
+    # Normalize backslashes for consistent pattern matching
+    # (On Windows, Path("/mnt/c/...") becomes "\mnt\c\..." as string)
+    path_str = path_str.replace("\\", "/")
+
     # Case 1: Windows-style path (from click.Path with resolve_path=True on Windows)
     if is_windows_path(path_str):
         return windows_to_docker_path(path_str)
