@@ -262,12 +262,19 @@ def generate_entrypoint() -> str:
     - CCBOX_DEBUG=2: Verbose with environment details
 
     Mount strategy:
-    - Host ~/.claude → /home/node/.claude (rw)
-    - tmpfs overlays for rules/commands/agents/skills/CLAUDE.md (CCO injected)
-    - Project .claude → /home/node/project/.claude (rw, persistent)
+    NORMAL mode (default):
+    - Host ~/.claude → /home/node/.claude (rw, fully accessible)
+    - CCO files from /opt/cco copied to ~/.claude (merges with host's)
+    - CCO CLAUDE.md (if exists) copied to project .claude
+    - Project .claude → persistent (rw)
+
+    VANILLA mode (--bare):
+    - Host ~/.claude → /home/node/.claude (rw for credentials/settings)
+    - tmpfs overlays for rules/commands/agents/skills (host's hidden)
+    - CLAUDE.md hidden via /dev/null
+    - No CCO injection
 
     Claude Code reads project .claude first, then falls back to global ~/.claude.
-    This allows project-local rules/settings to override global CCO defaults.
     """
     return """#!/bin/bash
 
@@ -330,10 +337,12 @@ if [[ -z "$CCBOX_BARE_MODE" && -d "/opt/cco" ]]; then
             _log_verbose "Copied $dir/ to global .claude"
         fi
     done
-    # Copy CLAUDE.md template if exists
+    # Copy CLAUDE.md template to project .claude (takes precedence over global)
+    # Global CLAUDE.md is hidden via /dev/null mount
     if [[ -f "/opt/cco/CLAUDE.md" ]]; then
-        cp "/opt/cco/CLAUDE.md" "/home/node/.claude/CLAUDE.md" 2>/dev/null || true
-        _log_verbose "Copied CLAUDE.md to global .claude"
+        mkdir -p "$PWD/.claude" 2>/dev/null || true
+        cp "/opt/cco/CLAUDE.md" "$PWD/.claude/CLAUDE.md" 2>/dev/null || true
+        _log_verbose "Copied CLAUDE.md to project .claude"
     fi
 else
     _log "Bare mode: vanilla Claude Code (no CCO)"
@@ -569,20 +578,17 @@ def get_docker_run_cmd(
     # Mount host .claude directory (rw for full access)
     cmd.extend(["-v", f"{docker_claude_config}:/home/node/.claude:rw"])
 
-    # Overlay tmpfs for user customization directories (isolate from host)
-    # These directories get CCO files injected at runtime from /opt/cco
-    # Host global .claude is mounted rw, but these dirs are tmpfs overlays
-    user_dirs = ["rules", "commands", "agents", "skills"]
-    for d in user_dirs:
-        cmd.extend(["--tmpfs", f"/home/node/.claude/{d}:rw,size=16m,uid=1000,gid=1000,mode=0755"])
-
-    # CLAUDE.md: tmpfs file overlay (CCO template injected at runtime)
-    # This isolates host's CLAUDE.md while allowing CCO to provide its own
-    cmd.extend(["--tmpfs", "/home/node/.claude/CLAUDE.md:rw,size=1m,uid=1000,gid=1000,mode=0644"])
-
     if bare:
-        # Bare mode: vanilla Claude Code (no CCO)
+        # Bare/vanilla mode: isolate host customizations, use only credentials/settings
+        # tmpfs overlays hide host's rules/commands/agents/skills
+        user_dirs = ["rules", "commands", "agents", "skills"]
+        for d in user_dirs:
+            cmd.extend(["--tmpfs", f"/home/node/.claude/{d}:rw,size=16m,uid=1000,gid=1000,mode=0755"])
+        # Hide host's CLAUDE.md
+        cmd.extend(["-v", "/dev/null:/home/node/.claude/CLAUDE.md:ro"])
+        # Skip CCO injection in entrypoint
         cmd.extend(["-e", "CCBOX_BARE_MODE=1"])
+    # Normal mode: host's .claude fully accessible, CCO merges on top
 
     cmd.extend(
         [
