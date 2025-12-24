@@ -499,6 +499,20 @@ def _get_project_image_name(project_name: str, stack: LanguageStack) -> str:
     return f"ccbox-{safe_name}:{stack.value}"
 
 
+def _project_image_exists(project_name: str, stack: LanguageStack) -> bool:
+    """Check if project-specific image exists."""
+    image_name = _get_project_image_name(project_name, stack)
+    try:
+        result = subprocess.run(
+            ["docker", "image", "inspect", image_name],
+            capture_output=True,
+            check=False,
+        )
+        return result.returncode == 0
+    except FileNotFoundError:
+        return False
+
+
 def _build_project_image(
     project_path: Path,
     project_name: str,
@@ -594,18 +608,36 @@ def _run(
     project_path = Path(path).resolve()
     project_name = project_path.name
 
-    # Ensure base image exists (required for all stacks)
-    if not image_exists(LanguageStack.BASE):
-        console.print("[bold]First-time setup: building base image...[/bold]")
-        if not build_image(LanguageStack.BASE):
-            sys.exit(1)
-        console.print()
+    # === Phase 1: Detection (before any builds) ===
 
-    # Resolve stack
+    # Resolve stack first
     selected_stack = _resolve_stack(stack_name, project_path)
     if selected_stack is None:
         console.print("[yellow]Cancelled.[/yellow]")
         sys.exit(0)
+
+    # Detect dependencies early
+    deps_list = detect_dependencies(project_path) if not bare else []
+    resolved_deps_mode = DepsMode.SKIP
+    project_image: str | None = None
+
+    # Check if project image already exists (skip deps prompt if so)
+    if deps_list and deps_mode != "skip":
+        existing_project_image = _get_project_image_name(project_name, selected_stack)
+        if _project_image_exists(project_name, selected_stack):
+            console.print(f"[dim]Using existing project image: {existing_project_image}[/dim]")
+            project_image = existing_project_image
+            # Mark as non-skip so cache mounts are passed to container
+            resolved_deps_mode = DepsMode.ALL
+        elif deps_mode:
+            # User specified deps mode via flag
+            resolved_deps_mode = DepsMode(deps_mode)
+        else:
+            # Interactive prompt (only if no existing project image)
+            console.print()
+            resolved_deps_mode = _prompt_deps(deps_list)
+
+    # === Phase 2: Build chain ===
 
     console.print()
     console.print(
@@ -615,26 +647,19 @@ def _run(
         )
     )
 
-    # Ensure base stack image is ready
+    # Ensure base image exists (required for all stacks)
+    if not image_exists(LanguageStack.BASE):
+        console.print("[bold]First-time setup: building base image...[/bold]")
+        if not build_image(LanguageStack.BASE):
+            sys.exit(1)
+        console.print()
+
+    # Ensure stack image is ready
     if not _ensure_image_ready(selected_stack, build_only=False):
         sys.exit(1)
 
-    # Detect and handle dependencies
-    deps_list = detect_dependencies(project_path)
-    resolved_deps_mode = DepsMode.SKIP
-
-    if deps_list and not bare:
-        if deps_mode:
-            # User specified deps mode via flag
-            resolved_deps_mode = DepsMode(deps_mode)
-        else:
-            # Interactive prompt
-            console.print()
-            resolved_deps_mode = _prompt_deps(deps_list)
-
-    # Build project-specific image if deps requested
-    project_image = None
-    if resolved_deps_mode != DepsMode.SKIP and deps_list:
+    # Build project-specific image if deps requested (and not already exists)
+    if resolved_deps_mode != DepsMode.SKIP and deps_list and not project_image:
         project_image = _build_project_image(
             project_path,
             project_name,
