@@ -1,11 +1,13 @@
 {
   "env": {
-    "MAX_THINKING_TOKENS": "5000",
+    "MAX_THINKING_TOKENS": "8000",
     "MAX_MCP_OUTPUT_TOKENS": "25000",
     "DISABLE_PROMPT_CACHING": "0"
   },
   "statusLine": {
     "type": "command",
-    "command": "node .claude/statusline.js"
-  }
+    "command": "node -e \"require('child_process').spawnSync('node',[require('path').join(process.cwd(),'.claude','cco-full.js')],{stdio:'inherit'})\"",
+    "padding": 1
+  },
+  "alwaysThinkingEnabled": true
 }
