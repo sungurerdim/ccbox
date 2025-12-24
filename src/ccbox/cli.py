@@ -52,9 +52,10 @@ def _check_docker_status() -> bool:
             capture_output=True,
             text=True,
             check=False,
+            timeout=DOCKER_COMMAND_TIMEOUT,
         )
         return result.returncode == 0
-    except FileNotFoundError:
+    except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
 
 
@@ -67,6 +68,7 @@ def _start_docker_desktop() -> bool:
             ["docker", "desktop", "start"],
             capture_output=True,
             check=False,
+            timeout=DOCKER_COMMAND_TIMEOUT,
         )
         if result.returncode == 0:
             return True
@@ -76,7 +78,12 @@ def _start_docker_desktop() -> bool:
             subprocess.Popen([str(docker_exe)], start_new_session=True)
             return True
     elif system == "Darwin":
-        subprocess.run(["open", "-a", "Docker"], capture_output=True, check=False)
+        subprocess.run(
+            ["open", "-a", "Docker"],
+            capture_output=True,
+            check=False,
+            timeout=DOCKER_COMMAND_TIMEOUT,
+        )
         return True
     return False
 
@@ -158,10 +165,11 @@ def _get_git_config_value(key: str) -> str:
             capture_output=True,
             text=True,
             check=False,
+            timeout=DOCKER_COMMAND_TIMEOUT,
         )
         if result.returncode == 0:
             return result.stdout.strip()
-    except FileNotFoundError:
+    except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
     return ""
 
@@ -520,9 +528,10 @@ def _project_image_exists(project_name: str, stack: LanguageStack) -> bool:
             ["docker", "image", "inspect", image_name],
             capture_output=True,
             check=False,
+            timeout=DOCKER_COMMAND_TIMEOUT,
         )
         return result.returncode == 0
-    except FileNotFoundError:
+    except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
 
 
