@@ -940,6 +940,7 @@ class TestRunFlowExtended:
             patch("ccbox.cli.detect_dependencies", return_value=[]),
             patch("ccbox.cli.image_exists", return_value=False),
             patch("ccbox.cli.build_image", return_value=False),
+            patch("ccbox.cli._project_image_exists", return_value=False),
         ):
             from ccbox.detector import DetectionResult
 
