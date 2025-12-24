@@ -172,7 +172,12 @@ def get_git_config() -> tuple[str, str]:
 
 
 @click.group(invoke_without_command=True)
-@click.option("--stack", "-s", type=click.Choice([s.value for s in LanguageStack]), help="Stack")
+@click.option(
+    "--stack",
+    "-s",
+    type=click.Choice(["auto", *[s.value for s in LanguageStack]]),
+    help="Stack (auto=skip prompt, use detected)",
+)
 @click.option("--build", "-b", is_flag=True, help="Build image only (no start)")
 @click.option("--path", default=".", type=click.Path(exists=True), help="Project path")
 @click.option(
@@ -393,7 +398,7 @@ def _resolve_stack(
     """Resolve the stack to use based on user input or detection.
 
     Args:
-        stack_name: Explicitly requested stack name, or None for auto-detection.
+        stack_name: Explicitly requested stack name, "auto", or None for interactive.
         project_path: Path to the project directory.
         skip_if_image_exists: If True, skip selection when stack image exists.
 
@@ -402,10 +407,15 @@ def _resolve_stack(
     """
     detection = detect_project_type(project_path)
 
+    # --stack=auto: use detected stack directly, no prompt
+    if stack_name == "auto":
+        return detection.recommended_stack
+
+    # Explicit stack specified
     if stack_name:
         return LanguageStack(stack_name)
 
-    # Skip selection if stack image exists and caller requests it
+    # No --stack: interactive menu (or skip if image exists)
     if skip_if_image_exists and image_exists(detection.recommended_stack):
         return detection.recommended_stack
 
