@@ -28,8 +28,9 @@ from .config import (
     load_config,
     save_config,
 )
+from .deps import DepsInfo, DepsMode, detect_dependencies
 from .detector import detect_project_type
-from .generator import get_docker_run_cmd, write_build_files
+from .generator import generate_project_dockerfile, get_docker_run_cmd, write_build_files
 
 console = Console()
 
@@ -183,12 +184,19 @@ def get_git_config() -> tuple[str, str]:
 @click.option("--bare", is_flag=True, help="Vanilla mode: auth only, no CCO/settings/rules")
 @click.option("--debug-logs", is_flag=True, help="Persist debug logs (default: ephemeral tmpfs)")
 @click.option(
+    "--deps", "deps_mode", flag_value="all", help="Install all dependencies (including dev)"
+)
+@click.option(
+    "--deps-prod", "deps_mode", flag_value="prod", help="Install production dependencies only"
+)
+@click.option("--no-deps", "deps_mode", flag_value="skip", help="Skip dependency installation")
+@click.option(
     "--debug",
     "-d",
     count=True,
-    help="Debug entrypoint (-d basic, -dd verbose)",
+    help="Debug mode (-d entrypoint logs, -dd + stream output)",
 )
-@click.option("--prompt", "-p", help="Initial prompt to send to Claude (enables --print mode)")
+@click.option("--prompt", "-p", help="Initial prompt (enables --print + --verbose)")
 @click.option(
     "--model",
     "-m",
@@ -197,7 +205,6 @@ def get_git_config() -> tuple[str, str]:
 @click.option(
     "--quiet", "-q", is_flag=True, help="Quiet mode (enables --print, shows only responses)"
 )
-@click.option("--verbose", "-v", is_flag=True, help="Verbose output (Claude's --verbose flag)")
 @click.option(
     "--append-system-prompt",
     help="Append custom instructions to Claude's system prompt",
@@ -212,11 +219,11 @@ def cli(
     chdir: str | None,
     bare: bool,
     debug_logs: bool,
+    deps_mode: str | None,
     debug: int,
     prompt: str | None,
     model: str | None,
     quiet: bool,
-    verbose: bool,
     append_system_prompt: str | None,
 ) -> None:
     """ccbox - Run Claude Code in isolated Docker containers.
@@ -243,13 +250,59 @@ def cli(
         path,
         bare=bare,
         debug_logs=debug_logs,
+        deps_mode=deps_mode,
         debug=debug,
         prompt=prompt,
         model=model,
         quiet=quiet,
-        verbose=verbose,
         append_system_prompt=append_system_prompt,
     )
+
+
+def _prompt_deps(deps_list: list[DepsInfo]) -> DepsMode:
+    """Prompt user for dependency installation preference.
+
+    Args:
+        deps_list: List of detected dependencies.
+
+    Returns:
+        Selected DepsMode.
+    """
+    console.print(Panel.fit("[bold]Dependencies Detected[/bold]", border_style="cyan"))
+
+    # Show detected package managers
+    for deps in deps_list:
+        files_str = ", ".join(deps.files[:3])
+        if len(deps.files) > 3:
+            files_str += f" (+{len(deps.files) - 3} more)"
+        console.print(f"  [cyan]{deps.name}[/cyan]: {files_str}")
+
+    console.print()
+
+    # Check if any have dev dependencies
+    has_dev = any(d.has_dev for d in deps_list)
+
+    if has_dev:
+        console.print("[bold]Install dependencies?[/bold]")
+        console.print("  [cyan]1[/cyan]. All (including dev/test)")
+        console.print("  [cyan]2[/cyan]. Production only")
+        console.print("  [cyan]3[/cyan]. Skip")
+        console.print()
+
+        while True:
+            choice = click.prompt("Select [1-3]", default="1", show_default=False)
+            if choice == "1":
+                return DepsMode.ALL
+            if choice == "2":
+                return DepsMode.PROD
+            if choice == "3":
+                return DepsMode.SKIP
+            console.print("[red]Invalid choice. Try again.[/red]")
+    else:
+        # No dev distinction - just ask yes/no
+        if click.confirm("Install dependencies?", default=True):
+            return DepsMode.ALL
+        return DepsMode.SKIP
 
 
 def _select_stack(
@@ -385,8 +438,9 @@ def _execute_container(
     prompt: str | None = None,
     model: str | None = None,
     quiet: bool = False,
-    verbose: bool = False,
     append_system_prompt: str | None = None,
+    project_image: str | None = None,
+    deps_list: list[DepsInfo] | None = None,
 ) -> None:
     """Execute the container with Claude Code.
 
@@ -397,11 +451,13 @@ def _execute_container(
         stack: Stack to run.
         bare: If True, only mount credentials (no CCO).
         debug_logs: If True, persist debug logs; otherwise use tmpfs.
-        prompt: Initial prompt to send to Claude (enables --print mode).
+        debug: Debug level (0=off, 1=basic, 2=verbose+stream).
+        prompt: Initial prompt (enables --print, implies --verbose unless quiet).
         model: Model to use (e.g., opus, sonnet, haiku).
         quiet: Quiet mode (enables --print, shows only Claude's responses).
-        verbose: Verbose output (Claude's --verbose flag).
         append_system_prompt: Custom instructions to append to system prompt.
+        project_image: Project-specific image with deps (overrides stack image).
+        deps_list: List of detected dependencies (for cache mounts).
     """
     console.print("[dim]Starting Claude Code...[/dim]\n")
 
@@ -417,20 +473,100 @@ def _execute_container(
             prompt=prompt,
             model=model,
             quiet=quiet,
-            verbose=verbose,
             append_system_prompt=append_system_prompt,
+            project_image=project_image,
+            deps_list=deps_list,
         )
     except ConfigPathError as e:
         console.print(f"[red]Error: {e}[/red]")
         sys.exit(1)
 
     try:
-        subprocess.run(cmd, check=True)
+        # Stream mode (-dd): close stdin for watch-only (no user input)
+        stdin = subprocess.DEVNULL if debug >= 2 else None
+        subprocess.run(cmd, check=True, stdin=stdin)
     except subprocess.CalledProcessError as e:
         if e.returncode != 130:
             sys.exit(e.returncode)
     except KeyboardInterrupt:
         pass
+
+
+def _get_project_image_name(project_name: str, stack: LanguageStack) -> str:
+    """Get project-specific image name."""
+    # Sanitize project name for Docker tag
+    safe_name = "".join(c if c.isalnum() or c in "-_" else "-" for c in project_name.lower())
+    return f"ccbox-{safe_name}:{stack.value}"
+
+
+def _build_project_image(
+    project_path: Path,
+    project_name: str,
+    stack: LanguageStack,
+    deps_list: list[DepsInfo],
+    deps_mode: DepsMode,
+) -> str | None:
+    """Build project-specific image with dependencies.
+
+    Args:
+        project_path: Path to project directory.
+        project_name: Name of the project.
+        stack: Base stack to build on.
+        deps_list: List of detected dependencies.
+        deps_mode: Dependency installation mode.
+
+    Returns:
+        Image name if successful, None otherwise.
+    """
+    image_name = _get_project_image_name(project_name, stack)
+    base_image = get_image_name(stack)
+
+    console.print("\n[bold]Building project image with dependencies...[/bold]")
+
+    # Generate Dockerfile
+    dockerfile_content = generate_project_dockerfile(
+        base_image=base_image,
+        deps_list=deps_list,
+        deps_mode=deps_mode,
+    )
+
+    # Write to temp build directory
+    build_dir = get_config_dir() / "build" / "project" / project_name
+    build_dir.mkdir(parents=True, exist_ok=True)
+
+    dockerfile_path = build_dir / "Dockerfile"
+    with open(dockerfile_path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(dockerfile_content)
+
+    # Build with cache mounts
+    env = os.environ.copy()
+    env["DOCKER_BUILDKIT"] = "1"
+
+    # Ensure cache directory exists
+    cache_dir = get_config_dir() / "cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        # Build image with project context (for copying dependency files)
+        subprocess.run(
+            [
+                "docker",
+                "build",
+                "-t",
+                image_name,
+                "-f",
+                str(dockerfile_path),
+                "--progress=auto",
+                str(project_path),
+            ],
+            check=True,
+            env=env,
+        )
+        console.print(f"[green]✓ Built {image_name}[/green]")
+        return image_name
+    except subprocess.CalledProcessError:
+        console.print(f"[red]✗ Failed to build {image_name}[/red]")
+        return None
 
 
 def _run(
@@ -440,11 +576,11 @@ def _run(
     *,
     bare: bool = False,
     debug_logs: bool = False,
+    deps_mode: str | None = None,
     debug: int = 0,
     prompt: str | None = None,
     model: str | None = None,
     quiet: bool = False,
-    verbose: bool = False,
     append_system_prompt: str | None = None,
 ) -> None:
     """Run Claude Code in Docker container."""
@@ -478,9 +614,37 @@ def _run(
         )
     )
 
-    # Ensure image is ready
-    if not _ensure_image_ready(selected_stack, build_only):
+    # Ensure base stack image is ready
+    if not _ensure_image_ready(selected_stack, build_only=False):
         sys.exit(1)
+
+    # Detect and handle dependencies
+    deps_list = detect_dependencies(project_path)
+    resolved_deps_mode = DepsMode.SKIP
+
+    if deps_list and not bare:
+        if deps_mode:
+            # User specified deps mode via flag
+            resolved_deps_mode = DepsMode(deps_mode)
+        else:
+            # Interactive prompt
+            console.print()
+            resolved_deps_mode = _prompt_deps(deps_list)
+
+    # Build project-specific image if deps requested
+    project_image = None
+    if resolved_deps_mode != DepsMode.SKIP and deps_list:
+        project_image = _build_project_image(
+            project_path,
+            project_name,
+            selected_stack,
+            deps_list,
+            resolved_deps_mode,
+        )
+        if not project_image:
+            console.print(
+                "[yellow]Warning: Failed to build project image, continuing without deps[/yellow]"
+            )
 
     if build_only:
         console.print("[green]✓ Build complete[/green]")
@@ -497,8 +661,9 @@ def _run(
         prompt=prompt,
         model=model,
         quiet=quiet,
-        verbose=verbose,
         append_system_prompt=append_system_prompt,
+        project_image=project_image,
+        deps_list=deps_list if resolved_deps_mode != DepsMode.SKIP else None,
     )
 
 
