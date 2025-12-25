@@ -43,6 +43,9 @@ ERR_DOCKER_NOT_RUNNING = "[red]Error: Docker is not running.[/red]"
 DOCKER_BUILD_TIMEOUT = 600  # 10 min for image builds
 DOCKER_COMMAND_TIMEOUT = 30  # 30s for docker info/inspect/version
 
+# Validation constants
+MAX_PROMPT_LENGTH = 5000  # Maximum characters for --prompt parameter
+
 
 def _check_docker_status() -> bool:
     """Check if Docker daemon is responsive."""
@@ -253,8 +256,10 @@ def cli(
     # Validate prompt parameter
     if prompt is not None:
         prompt = prompt.strip()
-        if len(prompt) > 5000:
-            console.print("[red]Error: --prompt must be 5000 characters or less[/red]")
+        if len(prompt) > MAX_PROMPT_LENGTH:
+            console.print(
+                f"[red]Error: --prompt must be {MAX_PROMPT_LENGTH} characters or less[/red]"
+            )
             sys.exit(1)
 
     _run(
@@ -270,6 +275,25 @@ def cli(
         quiet=quiet,
         append_system_prompt=append_system_prompt,
     )
+
+
+def _validate_deps_choice(choice: str, max_option: int) -> int | None:
+    """Validate user's dependency installation choice.
+
+    Args:
+        choice: User input string.
+        max_option: Maximum valid option number.
+
+    Returns:
+        Validated choice as int, or None if invalid.
+    """
+    try:
+        choice_int = int(choice)
+        if 1 <= choice_int <= max_option:
+            return choice_int
+    except ValueError:
+        pass
+    return None
 
 
 def _prompt_deps(deps_list: list[DepsInfo]) -> DepsMode:
@@ -304,11 +328,12 @@ def _prompt_deps(deps_list: list[DepsInfo]) -> DepsMode:
 
         while True:
             choice = click.prompt("Select [1-3]", default="1", show_default=False)
-            if choice == "1":
+            validated = _validate_deps_choice(choice, 3)
+            if validated == 1:
                 return DepsMode.ALL
-            if choice == "2":
+            if validated == 2:
                 return DepsMode.PROD
-            if choice == "3":
+            if validated == 3:
                 return DepsMode.SKIP
             console.print("[red]Invalid choice. Try again.[/red]")
     else:
@@ -626,8 +651,16 @@ def _run(
         console.print("Start Docker and try again.")
         sys.exit(1)
 
-    config = _setup_git_config(load_config())
+    # Validate project path early
     project_path = Path(path).resolve()
+    if not project_path.exists():
+        console.print(f"[red]Error: Project path does not exist: {project_path}[/red]")
+        sys.exit(1)
+    if not project_path.is_dir():
+        console.print(f"[red]Error: Project path must be a directory: {project_path}[/red]")
+        sys.exit(1)
+
+    config = _setup_git_config(load_config())
     project_name = project_path.name
 
     # === Phase 1: Check for existing project image (before any prompts) ===

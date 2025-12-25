@@ -628,6 +628,18 @@ def _detect_make(path: Path, files: list[str]) -> DepsInfo | None:
 # Main detection logic
 # ══════════════════════════════════════════════════════════════════════════════
 
+# Explicit mapping of detection function names to functions
+DETECT_FUNCTIONS: dict[str, Any] = {
+    "_detect_pip_pyproject": _detect_pip_pyproject,
+    "_detect_pip_requirements": _detect_pip_requirements,
+    "_detect_dotnet": _detect_dotnet,
+    "_detect_cabal": _detect_cabal,
+    "_detect_luarocks": _detect_luarocks,
+    "_detect_nimble": _detect_nimble,
+    "_detect_opam": _detect_opam,
+    "_detect_make": _detect_make,
+}
+
 
 def _matches_pattern(path: Path, pattern: str) -> list[str]:
     """Check if pattern matches any files in path."""
@@ -666,7 +678,7 @@ def detect_dependencies(path: Path) -> list[DepsInfo]:
         # Use custom detection function if provided
         if "detect_fn" in pm:
             fn_name = pm["detect_fn"]
-            fn = globals().get(fn_name)
+            fn = DETECT_FUNCTIONS.get(fn_name)
             if fn:
                 result = fn(path, matched_files)
                 if result and result.name not in detected_managers:
