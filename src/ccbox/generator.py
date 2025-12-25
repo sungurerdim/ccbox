@@ -10,7 +10,6 @@ from .config import (
     Config,
     LanguageStack,
     get_claude_config_dir,
-    get_config_dir,
     get_container_name,
     get_image_name,
 )
@@ -385,7 +384,7 @@ fi
 
 def write_build_files(stack: LanguageStack) -> Path:
     """Write Dockerfile and entrypoint to build directory."""
-    build_dir = get_config_dir() / "build" / stack.value
+    build_dir = Path("/tmp/ccbox/build") / stack.value
     build_dir.mkdir(parents=True, exist_ok=True)
 
     # Write with Unix line endings (open with newline="" to prevent OS conversion)
@@ -489,6 +488,61 @@ def generate_project_dockerfile(
     return "\n".join(lines)
 
 
+def _transform_slash_command(prompt: str | None) -> str | None:
+    """Transform slash command to file reference for --print mode compatibility.
+
+    Claude Code's --print mode doesn't load custom slash commands from
+    ~/.claude/commands/. This workaround transforms slash commands into
+    explicit file read instructions.
+
+    Args:
+        prompt: Original prompt, may start with "/" for slash commands.
+
+    Returns:
+        Transformed prompt if slash command detected, otherwise original.
+
+    Example:
+        "/cco-config --auto" -> "Read /home/node/.claude/commands/cco-config.md
+                                 and execute. Args: --auto"
+    """
+    if not prompt or not prompt.startswith("/"):
+        return prompt
+
+    # Parse: "/cco-config --auto" -> cmd="cco-config", args="--auto"
+    parts = prompt.split(maxsplit=1)
+    cmd_name = parts[0][1:]  # Remove leading "/"
+    cmd_args = parts[1] if len(parts) > 1 else ""
+
+    # Skip built-in commands (they work in --print mode)
+    builtin_commands = {
+        "compact",
+        "context",
+        "cost",
+        "init",
+        "help",
+        "clear",
+        "pr-comments",
+        "release-notes",
+        "review",
+        "security-review",
+        "memory",
+        "mcp",
+        "permissions",
+        "config",
+        "vim",
+    }
+    if cmd_name in builtin_commands:
+        return prompt
+
+    # Transform custom command to file reference
+    cmd_path = f"/home/node/.claude/commands/{cmd_name}.md"
+    instruction = f"Read the custom command file at {cmd_path} and execute its instructions."
+    if cmd_args:
+        instruction += f" Arguments: {cmd_args}"
+
+    return instruction
+
+
 def get_docker_run_cmd(
     config: Config,
     project_path: Path,
@@ -535,6 +589,9 @@ def get_docker_run_cmd(
     # Use project-specific image if available, otherwise stack image
     image_name = project_image if project_image else get_image_name(stack)
     claude_config = get_claude_config_dir(config)
+
+    # Transform slash commands for --print mode compatibility
+    prompt = _transform_slash_command(prompt)
 
     # Use centralized container naming with unique suffix
     container_name = get_container_name(project_name)
@@ -583,7 +640,9 @@ def get_docker_run_cmd(
         # tmpfs overlays hide host's rules/commands/agents/skills
         user_dirs = ["rules", "commands", "agents", "skills"]
         for d in user_dirs:
-            cmd.extend(["--tmpfs", f"/home/node/.claude/{d}:rw,size=16m,uid=1000,gid=1000,mode=0755"])
+            cmd.extend(
+                ["--tmpfs", f"/home/node/.claude/{d}:rw,size=16m,uid=1000,gid=1000,mode=0755"]
+            )
         # Hide host's CLAUDE.md
         cmd.extend(["-v", "/dev/null:/home/node/.claude/CLAUDE.md:ro"])
         # Skip CCO injection in entrypoint
@@ -633,20 +692,6 @@ def get_docker_run_cmd(
     if config.git_email:
         cmd.extend(["-e", f"GIT_AUTHOR_EMAIL={config.git_email}"])
         cmd.extend(["-e", f"GIT_COMMITTER_EMAIL={config.git_email}"])
-
-    # Add cache volume mounts for package managers
-    if deps_list:
-        from .deps import get_all_cache_paths
-
-        cache_paths = get_all_cache_paths(deps_list)
-        cache_dir = get_config_dir() / "cache"
-        cache_dir.mkdir(parents=True, exist_ok=True)
-
-        for cache_name, container_path in cache_paths.items():
-            host_cache = cache_dir / cache_name
-            host_cache.mkdir(parents=True, exist_ok=True)
-            docker_cache_path = resolve_for_docker(host_cache)
-            cmd.extend(["-v", f"{docker_cache_path}:{container_path}:rw"])
 
     cmd.append(image_name)
 

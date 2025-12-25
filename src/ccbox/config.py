@@ -2,17 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-
-from rich.console import Console
-
-console = Console(stderr=True)
 
 
 class LanguageStack(str, Enum):
@@ -70,40 +65,9 @@ class Config:
     claude_config_dir: str = "~/.claude"
 
 
-def get_config_dir() -> Path:
-    """Get the ccbox configuration directory based on platform."""
-    return Path.home() / ".ccbox"
-
-
-def get_config_path() -> Path:
-    """Get the path to the config file."""
-    return get_config_dir() / "config.json"
-
-
-def load_config() -> Config:
-    """Load configuration from file, or return defaults."""
-    config_path = get_config_path()
-
-    if config_path.exists():
-        try:
-            data = json.loads(config_path.read_text(encoding="utf-8"))
-            return Config(**data)
-        except (json.JSONDecodeError, ValueError) as e:
-            console.print(f"[yellow]Warning: Failed to load config ({e}), using defaults[/yellow]")
-
+def create_config() -> Config:
+    """Create a new Config with defaults."""
     return Config()
-
-
-def save_config(config: Config) -> None:
-    """Save configuration to file."""
-    config_dir = get_config_dir()
-    config_dir.mkdir(parents=True, exist_ok=True)
-
-    config_path = get_config_path()
-    config_path.write_text(
-        json.dumps(asdict(config), indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
 
 
 class ConfigPathError(ValueError):

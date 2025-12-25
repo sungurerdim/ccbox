@@ -27,7 +27,6 @@ class DepsInfo:
     files: list[str]  # Files that triggered detection
     install_all: str  # Command to install all deps (including dev)
     install_prod: str  # Command to install prod-only deps
-    cache_paths: dict[str, str]  # host_path -> container_path for caching
     has_dev: bool = True  # Whether dev dependencies are distinguishable
     priority: int = 0  # Higher = run first
 
@@ -49,7 +48,6 @@ PACKAGE_MANAGERS: list[dict[str, Any]] = [
         "detect": ["uv.lock"],
         "install_all": "uv sync --all-extras",
         "install_prod": "uv sync --no-dev",
-        "cache": {"uv": "/root/.cache/uv"},
         "priority": PRIORITY_HIGHEST,
     },
     {
@@ -57,7 +55,6 @@ PACKAGE_MANAGERS: list[dict[str, Any]] = [
         "detect": ["poetry.lock"],
         "install_all": "poetry install",
         "install_prod": "poetry install --no-dev",
-        "cache": {"poetry": "/root/.cache/pypoetry"},
         "priority": PRIORITY_HIGHEST,
     },
     {
@@ -65,7 +62,6 @@ PACKAGE_MANAGERS: list[dict[str, Any]] = [
         "detect": ["Pipfile.lock", "Pipfile"],
         "install_all": "pipenv install --dev",
         "install_prod": "pipenv install",
-        "cache": {"pipenv": "/root/.cache/pipenv"},
         "priority": PRIORITY_HIGHEST,
     },
     {
@@ -85,7 +81,6 @@ PACKAGE_MANAGERS: list[dict[str, Any]] = [
         "detect": ["setup.py", "setup.cfg"],
         "install_all": "pip install -e .",
         "install_prod": "pip install -e .",
-        "cache": {"pip": "/root/.cache/pip"},
         "has_dev": False,
         "priority": PRIORITY_HIGH,
     },
@@ -94,7 +89,6 @@ PACKAGE_MANAGERS: list[dict[str, Any]] = [
         "detect": ["environment.yml", "environment.yaml"],
         "install_all": "conda env update -f environment.yml",
         "install_prod": "conda env update -f environment.yml",
-        "cache": {"conda": "/root/.conda/pkgs"},
         "has_dev": False,
         "priority": PRIORITY_HIGHEST,
     },
@@ -106,7 +100,6 @@ PACKAGE_MANAGERS: list[dict[str, Any]] = [
         "detect": ["bun.lockb"],
         "install_all": "bun install",
         "install_prod": "bun install --production",
-        "cache": {"bun": "/root/.bun/install/cache"},
         "priority": PRIORITY_HIGHEST,
     },
     {
@@ -114,7 +107,6 @@ PACKAGE_MANAGERS: list[dict[str, Any]] = [
         "detect": ["pnpm-lock.yaml"],
         "install_all": "pnpm install",
         "install_prod": "pnpm install --prod",
-        "cache": {"pnpm": "/root/.local/share/pnpm/store"},
         "priority": PRIORITY_HIGHEST,
     },
     {
@@ -122,7 +114,6 @@ PACKAGE_MANAGERS: list[dict[str, Any]] = [
         "detect": ["yarn.lock"],
         "install_all": "yarn install",
         "install_prod": "yarn install --production",
-        "cache": {"yarn": "/usr/local/share/.cache/yarn"},
         "priority": PRIORITY_HIGHEST,
     },
     {
@@ -130,7 +121,6 @@ PACKAGE_MANAGERS: list[dict[str, Any]] = [
         "detect": ["package-lock.json", "package.json"],
         "install_all": "npm install",
         "install_prod": "npm install --production",
-        "cache": {"npm": "/root/.npm"},
         "priority": PRIORITY_HIGH,
     },
     # ══════════════════════════════════════════════════════════════════════════
@@ -141,7 +131,6 @@ PACKAGE_MANAGERS: list[dict[str, Any]] = [
         "detect": ["go.mod"],
         "install_all": "go mod download",
         "install_prod": "go mod download",
-        "cache": {"go": "/go/pkg/mod"},
         "has_dev": False,
         "priority": PRIORITY_HIGH,
     },
@@ -153,7 +142,6 @@ PACKAGE_MANAGERS: list[dict[str, Any]] = [
         "detect": ["Cargo.toml"],
         "install_all": "cargo fetch",
         "install_prod": "cargo fetch",
-        "cache": {"cargo": "/usr/local/cargo/registry"},
         "has_dev": False,
         "priority": PRIORITY_HIGH,
     },
@@ -165,7 +153,6 @@ PACKAGE_MANAGERS: list[dict[str, Any]] = [
         "detect": ["pom.xml"],
         "install_all": "mvn dependency:resolve dependency:resolve-plugins -q",
         "install_prod": "mvn dependency:resolve -q",
-        "cache": {"maven": "/root/.m2/repository"},
         "has_dev": False,
         "priority": PRIORITY_HIGH,
     },
@@ -174,7 +161,6 @@ PACKAGE_MANAGERS: list[dict[str, Any]] = [
         "detect": ["build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"],
         "install_all": "gradle dependencies --quiet 2>/dev/null || ./gradlew dependencies --quiet",
         "install_prod": "gradle dependencies --quiet 2>/dev/null || ./gradlew dependencies --quiet",
-        "cache": {"gradle": "/root/.gradle/caches"},
         "has_dev": False,
         "priority": PRIORITY_HIGH,
     },
@@ -183,7 +169,6 @@ PACKAGE_MANAGERS: list[dict[str, Any]] = [
         "detect": ["build.sbt"],
         "install_all": "sbt update",
         "install_prod": "sbt update",
-        "cache": {"sbt": "/root/.sbt", "ivy": "/root/.ivy2/cache"},
         "has_dev": False,
         "priority": PRIORITY_HIGH,
     },
@@ -195,7 +180,6 @@ PACKAGE_MANAGERS: list[dict[str, Any]] = [
         "detect": ["Gemfile", "Gemfile.lock"],
         "install_all": "bundle install",
         "install_prod": "bundle install --without development test",
-        "cache": {"bundler": "/usr/local/bundle/cache"},
         "priority": PRIORITY_HIGH,
     },
     # ══════════════════════════════════════════════════════════════════════════
@@ -206,7 +190,6 @@ PACKAGE_MANAGERS: list[dict[str, Any]] = [
         "detect": ["composer.json", "composer.lock"],
         "install_all": "composer install",
         "install_prod": "composer install --no-dev",
-        "cache": {"composer": "/root/.composer/cache"},
         "priority": PRIORITY_HIGH,
     },
     # ══════════════════════════════════════════════════════════════════════════
@@ -223,7 +206,6 @@ PACKAGE_MANAGERS: list[dict[str, Any]] = [
         "detect": ["nuget.config", "packages.config"],
         "install_all": "nuget restore",
         "install_prod": "nuget restore",
-        "cache": {"nuget": "/root/.nuget/packages"},
         "has_dev": False,
         "priority": PRIORITY_LOW,
     },
@@ -235,7 +217,6 @@ PACKAGE_MANAGERS: list[dict[str, Any]] = [
         "detect": ["mix.exs"],
         "install_all": "mix deps.get",
         "install_prod": "MIX_ENV=prod mix deps.get",
-        "cache": {"hex": "/root/.hex", "mix": "/root/.mix"},
         "priority": PRIORITY_HIGH,
     },
     {
@@ -243,7 +224,6 @@ PACKAGE_MANAGERS: list[dict[str, Any]] = [
         "detect": ["rebar.config"],
         "install_all": "rebar3 get-deps",
         "install_prod": "rebar3 get-deps",
-        "cache": {"rebar3": "/root/.cache/rebar3"},
         "has_dev": False,
         "priority": PRIORITY_HIGH,
     },
@@ -255,7 +235,6 @@ PACKAGE_MANAGERS: list[dict[str, Any]] = [
         "detect": ["stack.yaml"],
         "install_all": "stack build --only-dependencies",
         "install_prod": "stack build --only-dependencies",
-        "cache": {"stack": "/root/.stack"},
         "has_dev": False,
         "priority": PRIORITY_HIGHEST,
     },
@@ -273,7 +252,6 @@ PACKAGE_MANAGERS: list[dict[str, Any]] = [
         "detect": ["Package.swift"],
         "install_all": "swift package resolve",
         "install_prod": "swift package resolve",
-        "cache": {"swift": "/root/.swiftpm"},
         "has_dev": False,
         "priority": PRIORITY_HIGH,
     },
@@ -285,7 +263,6 @@ PACKAGE_MANAGERS: list[dict[str, Any]] = [
         "detect": ["pubspec.yaml"],
         "install_all": "dart pub get 2>/dev/null || flutter pub get",
         "install_prod": "dart pub get 2>/dev/null || flutter pub get",
-        "cache": {"pub": "/root/.pub-cache"},
         "has_dev": False,
         "priority": PRIORITY_HIGH,
     },
@@ -306,7 +283,6 @@ PACKAGE_MANAGERS: list[dict[str, Any]] = [
         "detect": ["renv.lock"],
         "install_all": "Rscript -e 'renv::restore()'",
         "install_prod": "Rscript -e 'renv::restore()'",
-        "cache": {"renv": "/root/.local/share/renv"},
         "has_dev": False,
         "priority": PRIORITY_HIGH,
     },
@@ -318,7 +294,6 @@ PACKAGE_MANAGERS: list[dict[str, Any]] = [
         "detect": ["Project.toml", "Manifest.toml"],
         "install_all": "julia -e 'using Pkg; Pkg.instantiate()'",
         "install_prod": "julia -e 'using Pkg; Pkg.instantiate()'",
-        "cache": {"julia": "/root/.julia"},
         "has_dev": False,
         "priority": PRIORITY_HIGH,
     },
@@ -330,7 +305,6 @@ PACKAGE_MANAGERS: list[dict[str, Any]] = [
         "detect": ["project.clj"],
         "install_all": "lein deps",
         "install_prod": "lein deps",
-        "cache": {"lein": "/root/.lein", "m2": "/root/.m2/repository"},
         "has_dev": False,
         "priority": PRIORITY_HIGH,
     },
@@ -339,7 +313,6 @@ PACKAGE_MANAGERS: list[dict[str, Any]] = [
         "detect": ["deps.edn"],
         "install_all": "clojure -P",
         "install_prod": "clojure -P",
-        "cache": {"clojure": "/root/.clojure", "m2": "/root/.m2/repository"},
         "has_dev": False,
         "priority": PRIORITY_HIGH,
     },
@@ -351,7 +324,6 @@ PACKAGE_MANAGERS: list[dict[str, Any]] = [
         "detect": ["build.zig.zon"],
         "install_all": "zig fetch",
         "install_prod": "zig fetch",
-        "cache": {"zig": "/root/.cache/zig"},
         "has_dev": False,
         "priority": PRIORITY_HIGH,
     },
@@ -381,7 +353,6 @@ PACKAGE_MANAGERS: list[dict[str, Any]] = [
         "detect": ["cpanfile"],
         "install_all": "cpanm --installdeps .",
         "install_prod": "cpanm --installdeps . --without-develop",
-        "cache": {"cpan": "/root/.cpan"},
         "priority": PRIORITY_HIGH,
     },
     # ══════════════════════════════════════════════════════════════════════════
@@ -392,7 +363,6 @@ PACKAGE_MANAGERS: list[dict[str, Any]] = [
         "detect": ["conanfile.txt", "conanfile.py"],
         "install_all": "conan install . --build=missing",
         "install_prod": "conan install . --build=missing",
-        "cache": {"conan": "/root/.conan2"},
         "has_dev": False,
         "priority": PRIORITY_HIGH,
     },
@@ -401,7 +371,6 @@ PACKAGE_MANAGERS: list[dict[str, Any]] = [
         "detect": ["vcpkg.json"],
         "install_all": "vcpkg install",
         "install_prod": "vcpkg install",
-        "cache": {"vcpkg": "/root/.cache/vcpkg"},
         "has_dev": False,
         "priority": PRIORITY_HIGH,
     },
@@ -449,7 +418,6 @@ def _detect_pip_pyproject(path: Path, files: list[str]) -> DepsInfo | None:
                 'pip install -e ".[dev]" 2>/dev/null || pip install -e .'
             ),
             install_prod="pip install -e .",
-            cache_paths={"pip": "/root/.cache/pip"},
             has_dev=True,
             priority=5,
         )
@@ -459,7 +427,6 @@ def _detect_pip_pyproject(path: Path, files: list[str]) -> DepsInfo | None:
         files=files,
         install_all="pip install -e .",
         install_prod="pip install -e .",
-        cache_paths={"pip": "/root/.cache/pip"},
         has_dev=False,
         priority=5,
     )
@@ -489,7 +456,6 @@ def _detect_pip_requirements(path: Path, files: list[str]) -> DepsInfo | None:
             files=[*files, *found_dev],
             install_all=f"pip install {dev_install}",
             install_prod="pip install -r requirements.txt",
-            cache_paths={"pip": "/root/.cache/pip"},
             has_dev=True,
             priority=5,
         )
@@ -499,7 +465,6 @@ def _detect_pip_requirements(path: Path, files: list[str]) -> DepsInfo | None:
         files=files,
         install_all="pip install -r requirements.txt",
         install_prod="pip install -r requirements.txt",
-        cache_paths={"pip": "/root/.cache/pip"},
         has_dev=False,
         priority=5,
     )
@@ -518,7 +483,6 @@ def _detect_dotnet(path: Path, files: list[str]) -> DepsInfo | None:
             files=[str(f.name) for f in [*csproj, *fsproj, *sln]],
             install_all="dotnet restore",
             install_prod="dotnet restore",
-            cache_paths={"nuget": "/root/.nuget/packages"},
             has_dev=False,
             priority=5,
         )
@@ -537,7 +501,6 @@ def _detect_cabal(path: Path, files: list[str]) -> DepsInfo | None:
             + (["cabal.project"] if cabal_project.exists() else []),
             install_all="cabal update && cabal build --only-dependencies",
             install_prod="cabal update && cabal build --only-dependencies",
-            cache_paths={"cabal": "/root/.cabal"},
             has_dev=False,
             priority=5,
         )
@@ -553,7 +516,6 @@ def _detect_luarocks(path: Path, files: list[str]) -> DepsInfo | None:
             files=[str(f.name) for f in rockspecs],
             install_all="luarocks install --only-deps *.rockspec",
             install_prod="luarocks install --only-deps *.rockspec",
-            cache_paths={"luarocks": "/root/.luarocks"},
             has_dev=False,
             priority=5,
         )
@@ -569,7 +531,6 @@ def _detect_nimble(path: Path, files: list[str]) -> DepsInfo | None:
             files=[str(f.name) for f in nimble_files],
             install_all="nimble install -d",
             install_prod="nimble install -d",
-            cache_paths={"nimble": "/root/.nimble"},
             has_dev=False,
             priority=5,
         )
@@ -588,7 +549,6 @@ def _detect_opam(path: Path, files: list[str]) -> DepsInfo | None:
             + (["dune-project"] if dune_project.exists() else []),
             install_all="opam install . --deps-only -y",
             install_prod="opam install . --deps-only -y",
-            cache_paths={"opam": "/root/.opam"},
             has_dev=False,
             priority=5,
         )
@@ -617,7 +577,6 @@ def _detect_make(path: Path, files: list[str]) -> DepsInfo | None:
                     files=files,
                     install_all=f"make {target}",
                     install_prod=f"make {target}",
-                    cache_paths={},
                     has_dev=False,
                     priority=1,
                 )
@@ -697,7 +656,6 @@ def detect_dependencies(path: Path) -> list[DepsInfo]:
                 files=matched_files,
                 install_all=pm["install_all"],
                 install_prod=pm["install_prod"],
-                cache_paths=pm.get("cache", {}),
                 has_dev=pm.get("has_dev", True),
                 priority=pm.get("priority", 5),
             )
@@ -730,18 +688,3 @@ def get_install_commands(deps_list: list[DepsInfo], mode: DepsMode) -> list[str]
             commands.append(deps.install_prod)
 
     return commands
-
-
-def get_all_cache_paths(deps_list: list[DepsInfo]) -> dict[str, str]:
-    """Get all cache paths from detected dependencies.
-
-    Args:
-        deps_list: List of detected dependencies.
-
-    Returns:
-        Dict of cache_name -> container_path.
-    """
-    cache_paths: dict[str, str] = {}
-    for deps in deps_list:
-        cache_paths.update(deps.cache_paths)
-    return cache_paths

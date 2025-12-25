@@ -51,15 +51,13 @@ Full access to host settings with CCO enhancements:
 |------|-----------|----------------|--------|-------------|
 | **Project** | `./` (current dir) | `/home/node/{project}/` | Read/Write | Yes |
 | **Claude Settings** | `~/.claude/` | `/home/node/.claude/` | Read/Write | Yes |
-| **Package Cache** | `~/.ccbox/cache/` | Various paths | Read/Write | Yes |
 | **Temp Files** | (memory) | `/tmp`, `/var/tmp` | tmpfs | No |
 | **Debug Logs** | (memory) | `/home/node/.claude/debug/` | tmpfs | No (default) |
 
 **How it works:**
 1. Host `~/.claude/` mounted directly (read/write)
 2. CCO files from image (`/opt/cco/`) copied to `~/.claude/` (merges with your files)
-3. CCO's `CLAUDE.md` copied to project's `.claude/` directory
-4. All changes persist on host
+3. All changes persist on host
 
 ### Bare Mode (`--bare`)
 
@@ -92,11 +90,8 @@ Vanilla Claude Code without any customizations:
 | **Claude Credentials** | `~/.claude/.credentials.json` | Authentication tokens |
 | **Claude Settings** | `~/.claude/settings.json` | User preferences |
 | **Claude Memory** | `~/.claude/memory/` | Conversation context |
-| **CCO Files** | `~/.claude/rules/`, `commands/`, etc. | Copied from container on first run |
 | **Project Files** | Your project directory | All code changes |
 | **Project .claude** | `./project/.claude/` | Project-specific settings |
-| **ccbox Config** | `~/.ccbox/config.json` | Git name/email settings |
-| **Package Caches** | `~/.ccbox/cache/` | npm, pip, cargo, etc. caches |
 
 ### What's Ephemeral (Lost on Exit)
 
@@ -106,22 +101,7 @@ Vanilla Claude Code without any customizations:
 | **Debug Logs** | `/home/node/.claude/debug/` | tmpfs by default (use `--debug-logs` to persist) |
 | **Container State** | Container itself | `--rm` flag removes on exit |
 
-> **Note:** CCO files are copied to host's `~/.claude/` on container start and persist between runs. Use `ccbox update` to refresh CCO to latest version.
-
-### Package Manager Caches
-
-ccbox persists package manager caches to speed up dependency installation:
-
-```
-~/.ccbox/cache/
-├── npm/          # npm packages
-├── pip/          # Python packages
-├── cargo/        # Rust crates
-├── go/           # Go modules
-└── ...           # Other package managers
-```
-
-These caches are mounted into containers automatically when dependencies are detected.
+> **Note:** Use `ccbox update` to refresh ccbox to latest version.
 
 ## Commands
 
@@ -151,7 +131,6 @@ ccbox --no-deps          # Skip dependency installation
 ccbox --bare             # Vanilla Claude Code: no CCO, no host settings
 
 # Management
-ccbox setup              # Configure git name/email (one-time, optional)
 ccbox update             # Rebuild base image with latest Claude Code
 ccbox update -s go       # Rebuild specific stack
 ccbox update -a          # Rebuild all installed images
@@ -232,8 +211,7 @@ ccbox
 **How it works:**
 1. Dependencies detected from lockfiles/manifests
 2. Project-specific Docker image built with deps
-3. Package caches persisted in `~/.ccbox/cache/` for fast rebuilds
-4. Container starts with all deps pre-installed
+3. Container starts with all deps pre-installed
 
 ## Multiple Projects
 
@@ -251,17 +229,7 @@ cd ~/projects/backend && ccbox
 
 ## Configuration
 
-Minimal config stored in `~/.ccbox/config.json`:
-
-```json
-{
-  "git_name": "Your Name",
-  "git_email": "your@email.com",
-  "claude_config_dir": "~/.claude"
-}
-```
-
-Git credentials are auto-detected from your system (`git config --global user.name/email`). Run `ccbox setup` only if you need to override.
+Git credentials are auto-detected from your system (`git config --global user.name/email`).
 
 ## Image Naming
 
