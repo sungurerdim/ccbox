@@ -28,6 +28,7 @@ from ccbox.config import (
     save_config,
 )
 from ccbox.generator import (
+    _transform_slash_command,
     generate_dockerfile,
     generate_entrypoint,
     get_docker_run_cmd,
@@ -1434,5 +1435,89 @@ class TestBenchmarkCLIOptions:
             assert cmd[-1] == "Test prompt"
             # Verify --print flag is present (required for prompt mode)
             assert "--print" in cmd
+        finally:
+            claude_dir.rmdir()
+
+
+class TestTransformSlashCommand:
+    """Tests for slash command transformation in --print mode."""
+
+    def test_none_prompt_returns_none(self) -> None:
+        """Test None prompt returns None."""
+        assert _transform_slash_command(None) is None
+
+    def test_empty_prompt_returns_empty(self) -> None:
+        """Test empty prompt returns empty string."""
+        assert _transform_slash_command("") == ""
+
+    def test_non_slash_prompt_unchanged(self) -> None:
+        """Test regular prompt is returned unchanged."""
+        prompt = "fix all lint errors"
+        assert _transform_slash_command(prompt) == prompt
+
+    def test_custom_command_transformed(self) -> None:
+        """Test custom slash command is transformed to file reference."""
+        result = _transform_slash_command("/cco-config")
+        assert "Read the custom command file at" in result
+        assert "/home/node/.claude/commands/cco-config.md" in result
+        assert "execute its instructions" in result
+
+    def test_custom_command_with_args(self) -> None:
+        """Test custom slash command with arguments includes args."""
+        result = _transform_slash_command("/cco-config --auto")
+        assert "/home/node/.claude/commands/cco-config.md" in result
+        assert "Arguments: --auto" in result
+
+    def test_custom_command_with_multiple_args(self) -> None:
+        """Test custom slash command with multiple arguments."""
+        result = _transform_slash_command("/cco-commit -m 'fix bug' --no-verify")
+        assert "/home/node/.claude/commands/cco-commit.md" in result
+        assert "Arguments: -m 'fix bug' --no-verify" in result
+
+    def test_builtin_commands_unchanged(self) -> None:
+        """Test built-in commands are not transformed."""
+        builtin_commands = [
+            "/compact",
+            "/context",
+            "/cost",
+            "/init",
+            "/help",
+            "/clear",
+            "/pr-comments",
+            "/release-notes",
+            "/review",
+            "/security-review",
+            "/memory",
+            "/mcp",
+            "/permissions",
+            "/config",
+            "/vim",
+        ]
+        for cmd in builtin_commands:
+            assert _transform_slash_command(cmd) == cmd
+
+    def test_builtin_command_with_args_unchanged(self) -> None:
+        """Test built-in command with arguments is not transformed."""
+        assert _transform_slash_command("/compact --help") == "/compact --help"
+
+    def test_integration_with_docker_cmd(self) -> None:
+        """Test slash command transformation integrates with get_docker_run_cmd."""
+        claude_dir = Path.home() / ".claude-test-slash"
+        claude_dir.mkdir(exist_ok=True)
+        try:
+            config = Config(claude_config_dir=str(claude_dir))
+            cmd = get_docker_run_cmd(
+                config,
+                Path("/project/test"),
+                "test",
+                LanguageStack.BASE,
+                prompt="/cco-config --auto",
+            )
+            # Prompt should be transformed
+            cmd_str = " ".join(cmd)
+            assert not cmd[-1].startswith("/cco-config")  # Not the raw slash command
+            assert "cco-config.md" in cmd[-1]  # Transformed to file reference
+            assert "Read the custom command file" in cmd[-1]  # Instruction format
+            assert "--print" in cmd_str  # Print mode enabled
         finally:
             claude_dir.rmdir()
