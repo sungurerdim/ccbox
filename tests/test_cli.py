@@ -140,14 +140,14 @@ class TestGenerator:
         # cco-setup is now run separately after build, not in entrypoint
         assert "cco-setup" not in entrypoint
 
-    def test_write_build_files(self, tmp_path: Path) -> None:
+    def test_write_build_files(self) -> None:
         """Test writing build files to directory."""
-        with patch("ccbox.generator.get_config_dir", return_value=tmp_path):
-            build_dir = write_build_files(LanguageStack.BASE)
-            assert (build_dir / "Dockerfile").exists()
-            assert (build_dir / "entrypoint.sh").exists()
-            # Verify stack-specific directory
-            assert build_dir.name == "base"
+        # write_build_files uses /tmp/ccbox/build/{stack}
+        build_dir = write_build_files(LanguageStack.BASE)
+        assert (build_dir / "Dockerfile").exists()
+        assert (build_dir / "entrypoint.sh").exists()
+        # Verify stack-specific directory
+        assert build_dir.name == "base"
 
     def test_get_docker_run_cmd(self) -> None:
         """Test docker run command generation."""
