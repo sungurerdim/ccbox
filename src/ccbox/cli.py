@@ -22,11 +22,9 @@ from .config import (
     Config,
     ConfigPathError,
     LanguageStack,
-    get_config_dir,
+    create_config,
     get_image_name,
     image_exists,
-    load_config,
-    save_config,
 )
 from .deps import DepsInfo, DepsMode, detect_dependencies
 from .detector import detect_project_type
@@ -395,32 +393,22 @@ def _select_stack(
         console.print("[red]Invalid choice. Try again.[/red]")
 
 
-def _setup_git_config(config: Config) -> Config:
-    """Auto-detect git config and prompt user if needed.
-
-    Args:
-        config: Current configuration.
+def _setup_git_config() -> Config:
+    """Create config with git settings from host.
 
     Returns:
-        Updated configuration (may be modified and saved).
+        Config with git name/email from host's git config.
     """
-    if config.git_name and config.git_email:
-        return config
-
+    config = create_config()
     name, email = get_git_config()
-    if not (name or email):
-        return config
 
-    detected_name = name if name and not config.git_name else config.git_name
-    detected_email = email if email and not config.git_email else config.git_email
-    console.print(f"[dim]Detected git config: {detected_name} <{detected_email}>[/dim]")
+    if name:
+        config.git_name = name
+    if email:
+        config.git_email = email
 
-    if click.confirm("Use this git config?", default=True):
-        config.git_name = detected_name
-        config.git_email = detected_email
-        save_config(config)
-    else:
-        console.print("[dim]Run 'ccbox setup' to configure git credentials.[/dim]")
+    if name or email:
+        console.print(f"[dim]Git config: {name or '(none)'} <{email or '(none)'}>[/dim]")
 
     return config
 
@@ -593,20 +581,15 @@ def _build_project_image(
     )
 
     # Write to temp build directory
-    build_dir = get_config_dir() / "build" / "project" / project_name
+    build_dir = Path("/tmp/ccbox/build/project") / project_name
     build_dir.mkdir(parents=True, exist_ok=True)
 
     dockerfile_path = build_dir / "Dockerfile"
     with open(dockerfile_path, "w", encoding="utf-8", newline="\n") as f:
         f.write(dockerfile_content)
 
-    # Build with cache mounts
     env = os.environ.copy()
     env["DOCKER_BUILDKIT"] = "1"
-
-    # Ensure cache directory exists
-    cache_dir = get_config_dir() / "cache"
-    cache_dir.mkdir(parents=True, exist_ok=True)
 
     try:
         # Build image with project context (for copying dependency files)
@@ -660,7 +643,7 @@ def _run(
         console.print(f"[red]Error: Project path must be a directory: {project_path}[/red]")
         sys.exit(1)
 
-    config = _setup_git_config(load_config())
+    config = _setup_git_config()
     project_name = project_path.name
 
     # === Phase 1: Check for existing project image (before any prompts) ===
@@ -789,25 +772,6 @@ def _run(
 
 
 @cli.command()
-def setup() -> None:
-    """Configure git credentials (one-time setup)."""
-    config = load_config()
-    sys_name, sys_email = get_git_config()
-
-    console.print("[bold]ccbox Setup[/bold]\n")
-
-    name = click.prompt("Git name", default=config.git_name or sys_name or "")
-    email = click.prompt("Git email", default=config.git_email or sys_email or "")
-
-    config.git_name = name
-    config.git_email = email
-    save_config(config)
-
-    console.print("\n[green]✓ Configuration saved[/green]")
-    console.print(f"[dim]Config: {get_config_dir() / 'config.json'}[/dim]")
-
-
-@cli.command()
 @click.option("--stack", "-s", type=click.Choice([s.value for s in LanguageStack]), help="Stack")
 @click.option("--all", "-a", "build_all", is_flag=True, help="Rebuild all installed images")
 def update(stack: str | None, build_all: bool) -> None:
@@ -930,12 +894,12 @@ def doctor(path: str) -> None:
     py_ok = sys.version_info >= (3, 8)
     checks.append((f"Python {sys.version_info.major}.{sys.version_info.minor}", py_ok, "Need 3.8+"))
 
-    config = load_config()
-    claude_dir = Path(os.path.expanduser(config.claude_config_dir))
+    claude_dir = Path(os.path.expanduser("~/.claude"))
     checks.append(("Claude config", claude_dir.exists(), "Run 'claude' first"))
 
-    git_ok = bool(config.git_name and config.git_email)
-    checks.append(("Git configured", git_ok, "Run 'ccbox setup'"))
+    git_name, git_email = get_git_config()
+    git_ok = bool(git_name and git_email)
+    checks.append(("Git configured", git_ok, "Run 'git config --global user.name/email'"))
 
     table = Table(title="System Status")
     table.add_column("Check")

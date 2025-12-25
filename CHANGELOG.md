@@ -53,7 +53,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Interactive prompt: all deps (dev+prod) / prod only / skip
   - Flags: `--deps`, `--deps-prod`, `--no-deps`
   - Project-specific images with deps pre-installed
-  - Package cache persistence in `~/.ccbox/cache/` for fast rebuilds
 
 ### Changed
 

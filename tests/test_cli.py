@@ -20,12 +20,8 @@ from ccbox.config import (
     Config,
     LanguageStack,
     get_claude_config_dir,
-    get_config_dir,
-    get_config_path,
     get_container_name,
     get_image_name,
-    load_config,
-    save_config,
 )
 from ccbox.generator import (
     generate_dockerfile,
@@ -65,16 +61,6 @@ class TestConfig:
 class TestConfigFunctions:
     """Tests for config utility functions."""
 
-    def test_get_config_dir(self) -> None:
-        """Test config directory path."""
-        config_dir = get_config_dir()
-        assert config_dir.name == ".ccbox"
-
-    def test_get_config_path(self) -> None:
-        """Test config file path."""
-        config_path = get_config_path()
-        assert config_path.name == "config.json"
-
     def test_get_container_name(self) -> None:
         """Test container name generation."""
         # Test unique=False (deterministic names)
@@ -96,24 +82,6 @@ class TestConfigFunctions:
         assert get_image_name(LanguageStack.BASE) == "ccbox:base"
         assert get_image_name(LanguageStack.GO) == "ccbox:go"
         assert get_image_name(LanguageStack.RUST) == "ccbox:rust"
-
-    def test_save_and_load_config(self, tmp_path: Path) -> None:
-        """Test config persistence."""
-        with patch("ccbox.config.get_config_dir", return_value=tmp_path):
-            config = Config(git_name="Test User")
-            save_config(config)
-
-            loaded = load_config()
-            assert loaded.git_name == "Test User"
-
-    def test_load_config_invalid_json(self, tmp_path: Path) -> None:
-        """Test loading invalid config file."""
-        config_file = tmp_path / "config.json"
-        config_file.write_text("invalid json")
-
-        with patch("ccbox.config.get_config_path", return_value=config_file):
-            config = load_config()
-            assert config.git_name == ""  # Default value
 
 
 class TestGenerator:
@@ -239,13 +207,6 @@ class TestCLI:
         with patch("ccbox.cli.check_docker", return_value=False):
             result = runner.invoke(cli, ["doctor"])
             assert "Docker" in result.output
-
-    def test_setup_command(self) -> None:
-        """Test setup command with input."""
-        runner = CliRunner()
-        with patch("ccbox.cli.save_config"):
-            result = runner.invoke(cli, ["setup"], input="Test User\ntest@test.com\n")
-            assert result.exit_code == 0
 
     def test_clean_no_docker(self) -> None:
         """Test clean command when Docker is not available."""
@@ -571,13 +532,12 @@ class TestCLICommands:
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.load_config") as mock_config,
+            patch("ccbox.cli.get_git_config", return_value=("Test", "t@t.com")),
             patch("ccbox.cli.image_exists", return_value=False),
             patch("ccbox.cli.detect_project_type") as mock_detect,
         ):
             from ccbox.detector import DetectionResult
 
-            mock_config.return_value = Config(git_name="Test", git_email="t@t.com")
             mock_detect.return_value = DetectionResult(
                 detected_languages=["python"],
                 recommended_stack=LanguageStack.BASE,
@@ -591,13 +551,12 @@ class TestCLICommands:
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.load_config") as mock_config,
+            patch("ccbox.cli.get_git_config", return_value=("Test", "t@t.com")),
             patch("ccbox.cli.image_exists", return_value=True),
             patch("ccbox.cli.detect_project_type") as mock_detect,
         ):
             from ccbox.detector import DetectionResult
 
-            mock_config.return_value = Config(git_name="Test", git_email="t@t.com")
             mock_detect.return_value = DetectionResult(
                 detected_languages=[],
                 recommended_stack=LanguageStack.BASE,
@@ -622,7 +581,6 @@ class TestMainRunFlow:
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.load_config", return_value=Config()),
             patch("ccbox.cli.get_git_config", return_value=("", "")),
             patch("ccbox.cli.detect_project_type") as mock_detect,
             patch("ccbox.cli.detect_dependencies", return_value=[]),
@@ -888,10 +846,7 @@ class TestRunFlowExtended:
 
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.load_config", return_value=Config()),
             patch("ccbox.cli.get_git_config", return_value=("Test", "test@test.com")),
-            patch("ccbox.cli.save_config"),
-            patch("click.confirm", return_value=True),  # Confirm git config
             patch("ccbox.cli.detect_project_type") as mock_detect,
             patch("ccbox.cli.detect_dependencies", return_value=[]),
             patch("ccbox.cli.image_exists", side_effect=image_exists_side_effect),
@@ -917,7 +872,6 @@ class TestRunFlowExtended:
 
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.load_config", return_value=Config()),
             patch("ccbox.cli.get_git_config", return_value=("", "")),
             patch("ccbox.cli.detect_project_type") as mock_detect,
             patch("ccbox.cli.detect_dependencies", return_value=[]),
@@ -936,7 +890,6 @@ class TestRunFlowExtended:
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.load_config", return_value=Config()),
             patch("ccbox.cli.get_git_config", return_value=("", "")),
             patch("ccbox.cli.detect_project_type") as mock_detect,
             patch("ccbox.cli.detect_dependencies", return_value=[]),
@@ -957,7 +910,6 @@ class TestRunFlowExtended:
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.load_config", return_value=Config()),
             patch("ccbox.cli.get_git_config", return_value=("", "")),
             patch("ccbox.cli.detect_project_type") as mock_detect,
             patch("ccbox.cli.detect_dependencies", return_value=[]),
@@ -988,7 +940,6 @@ class TestRunFlowExtended:
 
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.load_config", return_value=Config()),
             patch("ccbox.cli.get_git_config", return_value=("", "")),
             patch("ccbox.cli.detect_project_type") as mock_detect,
             patch("ccbox.cli.detect_dependencies", return_value=[]),
@@ -1002,46 +953,6 @@ class TestRunFlowExtended:
             mock_detect.return_value = DetectionResult([], LanguageStack.BASE)
             result = runner.invoke(cli, ["-s", "base", "-p", str(tmp_path)])
             assert result.exit_code == 0
-
-
-class TestGitConfigSave:
-    """Tests for git config auto-detection and save."""
-
-    def test_run_prompts_and_saves_git_config(self, tmp_path: Path) -> None:
-        """Test that git config is prompted and saved when user confirms."""
-        runner = CliRunner()
-        with (
-            patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.load_config", return_value=Config()),
-            patch("ccbox.cli.get_git_config", return_value=("Auto Name", "auto@test.com")),
-            patch("ccbox.cli.save_config") as mock_save,
-            patch("click.confirm", return_value=True),  # User confirms git config
-            patch("ccbox.cli.detect_project_type") as mock_detect,
-            patch("ccbox.cli._select_stack", return_value=None),
-        ):
-            from ccbox.detector import DetectionResult
-
-            mock_detect.return_value = DetectionResult([], LanguageStack.BASE)
-            runner.invoke(cli, ["-p", str(tmp_path)])
-            mock_save.assert_called_once()
-
-    def test_run_skips_git_config_when_declined(self, tmp_path: Path) -> None:
-        """Test that git config is not saved when user declines."""
-        runner = CliRunner()
-        with (
-            patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.load_config", return_value=Config()),
-            patch("ccbox.cli.get_git_config", return_value=("Auto Name", "auto@test.com")),
-            patch("ccbox.cli.save_config") as mock_save,
-            patch("click.confirm", return_value=False),  # User declines git config
-            patch("ccbox.cli.detect_project_type") as mock_detect,
-            patch("ccbox.cli._select_stack", return_value=None),
-        ):
-            from ccbox.detector import DetectionResult
-
-            mock_detect.return_value = DetectionResult([], LanguageStack.BASE)
-            runner.invoke(cli, ["-p", str(tmp_path)])
-            mock_save.assert_not_called()
 
 
 class TestGeneratorFallback:
@@ -1089,7 +1000,7 @@ class TestDoctorDiskCheck:
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.load_config", return_value=Config(git_name="T", git_email="t@t")),
+            patch("ccbox.cli.get_git_config", return_value=("T", "t@t")),
             patch("ccbox.cli.image_exists", return_value=False),
             patch("ccbox.cli.detect_project_type") as mock_detect,
             patch("shutil.disk_usage", side_effect=OSError("Cannot check")),
@@ -1142,14 +1053,13 @@ class TestChdirOption:
 
         captured_cwd = []
 
-        def capture_cwd(*args: object, **kwargs: object) -> Config:
+        def capture_cwd(*args: object, **kwargs: object) -> tuple[str, str]:
             captured_cwd.append(Path.cwd())
-            return Config()
+            return ("", "")
 
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.load_config", side_effect=capture_cwd),
-            patch("ccbox.cli.get_git_config", return_value=("", "")),
+            patch("ccbox.cli.get_git_config", side_effect=capture_cwd),
             patch("ccbox.cli.detect_project_type") as mock_detect,
             patch("ccbox.cli._select_stack", return_value=None),  # User cancels
             runner.isolated_filesystem(),
@@ -1185,7 +1095,6 @@ class TestChdirOption:
 
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.load_config", return_value=Config()),
             patch("ccbox.cli.get_git_config", return_value=("", "")),
             patch("ccbox.cli.detect_project_type") as mock_detect,
             patch("ccbox.cli.image_exists", return_value=True),
@@ -1217,7 +1126,6 @@ class TestInteractiveStackSelection:
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.load_config", return_value=Config()),
             patch("ccbox.cli.get_git_config", return_value=("", "")),
             patch("ccbox.cli.detect_project_type") as mock_detect,
             patch("ccbox.cli.image_exists", return_value=True),
