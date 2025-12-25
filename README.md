@@ -39,6 +39,90 @@ Host                              Container
 
 ccbox mounts only your current directory. Claude Code can freely modify project files but cannot touch anything else on your system.
 
+## Mount Strategy
+
+ccbox has two modes with different behaviors:
+
+### Normal Mode (default)
+
+Full access to host settings with CCO enhancements:
+
+| What | Host Path | Container Path | Access | Persistent? |
+|------|-----------|----------------|--------|-------------|
+| **Project** | `./` (current dir) | `/home/node/{project}/` | Read/Write | Yes |
+| **Claude Settings** | `~/.claude/` | `/home/node/.claude/` | Read/Write | Yes |
+| **Package Cache** | `~/.ccbox/cache/` | Various paths | Read/Write | Yes |
+| **Temp Files** | (memory) | `/tmp`, `/var/tmp` | tmpfs | No |
+| **Debug Logs** | (memory) | `/home/node/.claude/debug/` | tmpfs | No (default) |
+
+**How it works:**
+1. Host `~/.claude/` mounted directly (read/write)
+2. CCO files from image (`/opt/cco/`) copied to `~/.claude/` (merges with your files)
+3. CCO's `CLAUDE.md` copied to project's `.claude/` directory
+4. All changes persist on host
+
+### Bare Mode (`--bare`)
+
+Vanilla Claude Code without any customizations:
+
+| What | Host Path | Container Path | Access | Persistent? |
+|------|-----------|----------------|--------|-------------|
+| **Project** | `./` (current dir) | `/home/node/{project}/` | Read/Write | Yes |
+| **Credentials** | `~/.claude/` | `/home/node/.claude/` | Read/Write | Yes |
+| **Rules/Commands** | (hidden) | tmpfs overlay | tmpfs | No |
+| **CLAUDE.md** | (hidden) | `/dev/null` | - | No |
+
+**How it works:**
+1. Host `~/.claude/` mounted (read/write for credentials)
+2. tmpfs overlays hide: `rules/`, `commands/`, `agents/`, `skills/`
+3. `/dev/null` mount hides `CLAUDE.md`
+4. No CCO injection - stock Claude Code behavior
+
+**Use bare mode when:**
+- Testing vanilla Claude Code behavior
+- Debugging issues caused by custom rules
+- Running without any customizations
+
+## Data Persistence
+
+### What's Saved (Persistent)
+
+| Data | Location | Description |
+|------|----------|-------------|
+| **Claude Credentials** | `~/.claude/.credentials.json` | Authentication tokens |
+| **Claude Settings** | `~/.claude/settings.json` | User preferences |
+| **Claude Memory** | `~/.claude/memory/` | Conversation context |
+| **CCO Files** | `~/.claude/rules/`, `commands/`, etc. | Copied from container on first run |
+| **Project Files** | Your project directory | All code changes |
+| **Project .claude** | `./project/.claude/` | Project-specific settings |
+| **ccbox Config** | `~/.ccbox/config.json` | Git name/email settings |
+| **Package Caches** | `~/.ccbox/cache/` | npm, pip, cargo, etc. caches |
+
+### What's Ephemeral (Lost on Exit)
+
+| Data | Location | Why |
+|------|----------|-----|
+| **Temp Files** | `/tmp`, `/var/tmp` | tmpfs - memory only |
+| **Debug Logs** | `/home/node/.claude/debug/` | tmpfs by default (use `--debug-logs` to persist) |
+| **Container State** | Container itself | `--rm` flag removes on exit |
+
+> **Note:** CCO files are copied to host's `~/.claude/` on container start and persist between runs. Use `ccbox update` to refresh CCO to latest version.
+
+### Package Manager Caches
+
+ccbox persists package manager caches to speed up dependency installation:
+
+```
+~/.ccbox/cache/
+├── npm/          # npm packages
+├── pip/          # Python packages
+├── cargo/        # Rust crates
+├── go/           # Go modules
+└── ...           # Other package managers
+```
+
+These caches are mounted into containers automatically when dependencies are detected.
+
 ## Commands
 
 ```bash
@@ -199,12 +283,62 @@ Running `ccbox` in the same project reuses the same image, no duplicates.
 
 ## Security
 
-- **Project isolation**: Only current directory mounted, nothing else accessible
-- **Tmpfs overlays**: CCO rules/commands injected at runtime, not persisted
-- **Ephemeral logs**: Debug logs use tmpfs by default (no disk residue)
-- **No privilege escalation**: `--security-opt=no-new-privileges`
-- **Fork bomb protection**: `--pids-limit=512`
-- **Path validation**: Config paths validated to prevent directory traversal
+### Container Isolation
+
+| Protection | How It Works |
+|------------|--------------|
+| **Project isolation** | Only current directory mounted, nothing else accessible |
+| **No privilege escalation** | `--security-opt=no-new-privileges` prevents gaining root |
+| **Fork bomb protection** | `--pids-limit=512` limits process count |
+| **Memory-only temp** | `/tmp` and `/var/tmp` use tmpfs (no disk writes) |
+| **Ephemeral logs** | Debug logs use tmpfs by default (no disk residue) |
+| **Path validation** | Config paths validated to prevent directory traversal |
+
+### Permission Model
+
+ccbox runs Claude Code with bypass mode (`--dangerously-skip-permissions`) because the container itself provides isolation:
+
+```
+What Claude CAN do inside container:
+✓ Read/write project files (your mounted directory)
+✓ Read/write Claude settings (~/.claude)
+✓ Run any command (npm, git, etc.)
+✓ Install packages (npm install, pip install)
+✓ Create/delete files in project
+
+What Claude CANNOT do:
+✗ Access files outside mounted directories
+✗ Access other projects on your machine
+✗ Access your home directory (except ~/.claude)
+✗ Persist changes outside mounts (lost on exit)
+✗ Escalate privileges (no-new-privileges)
+✗ Spawn unlimited processes (pids-limit)
+```
+
+### UID/GID Remapping
+
+ccbox automatically detects your host user's UID/GID and remaps the container user to match. This ensures:
+- Files created by Claude have correct ownership
+- No permission issues when editing files
+- Works seamlessly across Linux, macOS, and WSL
+
+### CCO Injection
+
+CCO (Claude Code Optimizer) is installed inside the container image, not on your host:
+
+**Normal mode:**
+1. Host `~/.claude/` mounted directly (read/write)
+2. CCO files from `/opt/cco/` copied to `~/.claude/` (merges with your files)
+3. CCO's `CLAUDE.md` copied to project's `.claude/`
+4. CCO files persist on host between runs
+
+**Bare mode:**
+1. Host `~/.claude/` mounted (read/write for credentials)
+2. tmpfs overlays hide customization dirs
+3. No CCO injection
+4. Result: Vanilla Claude Code
+
+**Updating CCO:** Run `ccbox update` to rebuild images with latest CCO version.
 
 ## Requirements
 
