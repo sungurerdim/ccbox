@@ -1,13 +1,13 @@
 ---
-paths: Dockerfile, docker-compose*
+paths: "**/Dockerfile*,**/docker-compose*.yml,**/*.dockerfile"
 ---
 # Container Rules
 
-| Standard | Rule |
-|----------|------|
-| * Multi-Stage | Separate build and runtime stages |
-| * Non-Root | Run as non-root user in production |
-| * Layer-Cache | Order COPY commands by change frequency |
-| * Health-Check | HEALTHCHECK instruction for orchestration |
-| * CVE-Scan | Scan images in CI pipeline |
-| * Minimal-Base | Use distroless or alpine when possible |
+- **Multi-Stage**: Multi-stage builds for smaller images
+- **Layer-Cache**: Order commands for optimal layer caching
+- **Non-Root**: Run as non-root user
+- **Health-Check**: HEALTHCHECK instruction for orchestrators
+- **Env-Inject**: Environment variables for configuration
+- **Buildkit-Secrets**: Use --mount=type=secret for sensitive build args
+- **Cache-Mounts**: Use --mount=type=cache for package managers
+- **Distroless**: Use distroless or alpine for production images
