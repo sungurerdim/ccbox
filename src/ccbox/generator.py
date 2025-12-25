@@ -489,174 +489,6 @@ def generate_project_dockerfile(
     return "\n".join(lines)
 
 
-def _transform_slash_command(prompt: str | None) -> str | None:
-    """Transform slash command to file reference for --print mode compatibility.
-
-    Claude Code's --print mode doesn't load custom slash commands from
-    ~/.claude/commands/. This workaround transforms slash commands into
-    explicit file read instructions.
-
-    Args:
-        prompt: Original prompt, may start with "/" for slash commands.
-
-    Returns:
-        Transformed prompt if slash command detected, otherwise original.
-
-    Example:
-        "/cco-config --auto" -> "Read /home/node/.claude/commands/cco-config.md
-                                 and execute. Args: --auto"
-    """
-    if not prompt or not prompt.startswith("/"):
-        return prompt
-
-    # Parse: "/cco-config --auto" -> cmd="cco-config", args="--auto"
-    parts = prompt.split(maxsplit=1)
-    cmd_name = parts[0][1:]  # Remove leading "/"
-    cmd_args = parts[1] if len(parts) > 1 else ""
-
-    # Skip built-in commands (they work in --print mode)
-    builtin_commands = {
-        "compact",
-        "context",
-        "cost",
-        "init",
-        "help",
-        "clear",
-        "pr-comments",
-        "release-notes",
-        "review",
-        "security-review",
-        "memory",
-        "mcp",
-        "permissions",
-        "config",
-        "vim",
-    }
-    if cmd_name in builtin_commands:
-        return prompt
-
-    # Transform custom command to file reference
-    cmd_path = f"/home/node/.claude/commands/{cmd_name}.md"
-    instruction = f"Read the custom command file at {cmd_path} and execute its instructions."
-    if cmd_args:
-        instruction += f" Arguments: {cmd_args}"
-
-    return instruction
-
-
-def _build_mount_args(
-    project_path: Path,
-    dirname: str,
-    docker_project_path: str,
-    docker_claude_config: str,
-    bare: bool,
-    deps_list: list[DepsInfo] | None,
-) -> list[str]:
-    """Build mount arguments for docker run command.
-
-    Args:
-        project_path: Path to the project directory.
-        dirname: Directory name for workdir.
-        docker_project_path: Docker-compatible project path.
-        docker_claude_config: Docker-compatible Claude config path.
-        bare: If True, use tmpfs overlays for isolation.
-        deps_list: List of detected dependencies (for cache mounts).
-
-    Returns:
-        List of mount arguments for docker run.
-    """
-    args = [
-        # Project mount (rw)
-        "-v",
-        f"{docker_project_path}:/home/node/{dirname}:rw",
-        # Host .claude directory (rw for full access)
-        "-v",
-        f"{docker_claude_config}:/home/node/.claude:rw",
-    ]
-
-    if bare:
-        # Bare/vanilla mode: isolate host customizations, use only credentials/settings
-        # tmpfs overlays hide host's rules/commands/agents/skills
-        user_dirs = ["rules", "commands", "agents", "skills"]
-        for d in user_dirs:
-            args.extend(
-                ["--tmpfs", f"/home/node/.claude/{d}:rw,size=16m,uid=1000,gid=1000,mode=0755"]
-            )
-        # Hide host's CLAUDE.md
-        args.extend(["-v", "/dev/null:/home/node/.claude/CLAUDE.md:ro"])
-
-    # Add cache volume mounts for package managers
-    if deps_list:
-        from .deps import get_all_cache_paths
-
-        cache_paths = get_all_cache_paths(deps_list)
-        cache_dir = get_config_dir() / "cache"
-        cache_dir.mkdir(parents=True, exist_ok=True)
-
-        for cache_name, container_path in cache_paths.items():
-            host_cache = cache_dir / cache_name
-            host_cache.mkdir(parents=True, exist_ok=True)
-            docker_cache_path = resolve_for_docker(host_cache)
-            args.extend(["-v", f"{docker_cache_path}:{container_path}:rw"])
-
-    return args
-
-
-def _build_env_args(
-    config: Config,
-    bare: bool,
-    debug: int,
-    debug_logs: bool,
-) -> list[str]:
-    """Build environment variable arguments for docker run command.
-
-    Args:
-        config: ccbox configuration.
-        bare: If True, enable bare mode.
-        debug: Debug level (0=off, 1=basic, 2=verbose).
-        debug_logs: If True, persist debug logs.
-
-    Returns:
-        List of environment arguments for docker run.
-    """
-    args = [
-        "-e",
-        "TERM=xterm-256color",
-        "-e",
-        "CLAUDE_CONFIG_DIR=/home/node/.claude",  # Override default ~/.config/claude
-        "-e",
-        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",  # Disable telemetry, error reporting
-        "-e",
-        "DISABLE_AUTOUPDATER=1",  # Disable auto-updates (use image rebuild)
-        "-e",
-        "PYTHONUNBUFFERED=1",  # Force unbuffered output for streaming
-        "-e",
-        "NODE_OPTIONS=--no-warnings",  # Suppress Node.js warnings
-    ]
-
-    # Bare mode flag
-    if bare:
-        args.extend(["-e", "CCBOX_BARE_MODE=1"])
-
-    # Debug mode for entrypoint logging (0=off, 1=basic, 2=verbose)
-    if debug > 0:
-        args.extend(["-e", f"CCBOX_DEBUG={debug}"])
-
-    # Debug logs: tmpfs by default (ephemeral), persistent with --debug-logs
-    if not debug_logs:
-        args.extend(["--tmpfs", "/home/node/.claude/debug:rw,size=512m,mode=0777"])
-
-    # Git configuration
-    if config.git_name:
-        args.extend(["-e", f"GIT_AUTHOR_NAME={config.git_name}"])
-        args.extend(["-e", f"GIT_COMMITTER_NAME={config.git_name}"])
-    if config.git_email:
-        args.extend(["-e", f"GIT_AUTHOR_EMAIL={config.git_email}"])
-        args.extend(["-e", f"GIT_COMMITTER_EMAIL={config.git_email}"])
-
-    return args
-
-
 def get_docker_run_cmd(
     config: Config,
     project_path: Path,
@@ -704,9 +536,6 @@ def get_docker_run_cmd(
     image_name = project_image if project_image else get_image_name(stack)
     claude_config = get_claude_config_dir(config)
 
-    # Transform slash commands for --print mode compatibility
-    prompt = _transform_slash_command(prompt)
-
     # Use centralized container naming with unique suffix
     container_name = get_container_name(project_name)
 
@@ -733,21 +562,33 @@ def get_docker_run_cmd(
     else:
         cmd.append("-i")  # Interactive only (no TTY)
 
-    cmd.extend(["--name", container_name])
+    cmd.extend(
+        [
+            "--name",
+            container_name,
+            # Mounts: project (rw)
+            "-v",
+            f"{docker_project_path}:/home/node/{dirname}:rw",
+        ]
+    )
 
     # Convert claude config path for Docker mount
     docker_claude_config = resolve_for_docker(claude_config)
 
-    # Build mount arguments
-    mount_args = _build_mount_args(
-        project_path,
-        dirname,
-        docker_project_path,
-        docker_claude_config,
-        bare,
-        deps_list,
-    )
-    cmd.extend(mount_args)
+    # Mount host .claude directory (rw for full access)
+    cmd.extend(["-v", f"{docker_claude_config}:/home/node/.claude:rw"])
+
+    if bare:
+        # Bare/vanilla mode: isolate host customizations, use only credentials/settings
+        # tmpfs overlays hide host's rules/commands/agents/skills
+        user_dirs = ["rules", "commands", "agents", "skills"]
+        for d in user_dirs:
+            cmd.extend(["--tmpfs", f"/home/node/.claude/{d}:rw,size=16m,uid=1000,gid=1000,mode=0755"])
+        # Hide host's CLAUDE.md
+        cmd.extend(["-v", "/dev/null:/home/node/.claude/CLAUDE.md:ro"])
+        # Skip CCO injection in entrypoint
+        cmd.extend(["-e", "CCBOX_BARE_MODE=1"])
+    # Normal mode: host's .claude fully accessible, CCO merges on top
 
     cmd.extend(
         [
@@ -762,12 +603,50 @@ def get_docker_run_cmd(
             # Security hardening
             "--security-opt=no-new-privileges",  # Prevent privilege escalation
             "--pids-limit=512",  # Fork bomb protection
+            # Environment
+            "-e",
+            "TERM=xterm-256color",
+            "-e",
+            "CLAUDE_CONFIG_DIR=/home/node/.claude",  # Override default ~/.config/claude
+            "-e",
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",  # Disable telemetry, error reporting
+            "-e",
+            "DISABLE_AUTOUPDATER=1",  # Disable auto-updates (use image rebuild)
+            "-e",
+            "PYTHONUNBUFFERED=1",  # Force unbuffered output for streaming
+            "-e",
+            "NODE_OPTIONS=--no-warnings",  # Suppress Node.js warnings
         ]
     )
 
-    # Build environment arguments
-    env_args = _build_env_args(config, bare, debug, debug_logs)
-    cmd.extend(env_args)
+    # Debug mode for entrypoint logging (0=off, 1=basic, 2=verbose)
+    if debug > 0:
+        cmd.extend(["-e", f"CCBOX_DEBUG={debug}"])
+
+    # Debug logs: tmpfs by default (ephemeral), persistent with --debug-logs
+    if not debug_logs:
+        cmd.extend(["--tmpfs", "/home/node/.claude/debug:rw,size=512m,mode=0777"])
+
+    if config.git_name:
+        cmd.extend(["-e", f"GIT_AUTHOR_NAME={config.git_name}"])
+        cmd.extend(["-e", f"GIT_COMMITTER_NAME={config.git_name}"])
+    if config.git_email:
+        cmd.extend(["-e", f"GIT_AUTHOR_EMAIL={config.git_email}"])
+        cmd.extend(["-e", f"GIT_COMMITTER_EMAIL={config.git_email}"])
+
+    # Add cache volume mounts for package managers
+    if deps_list:
+        from .deps import get_all_cache_paths
+
+        cache_paths = get_all_cache_paths(deps_list)
+        cache_dir = get_config_dir() / "cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        for cache_name, container_path in cache_paths.items():
+            host_cache = cache_dir / cache_name
+            host_cache.mkdir(parents=True, exist_ok=True)
+            docker_cache_path = resolve_for_docker(host_cache)
+            cmd.extend(["-v", f"{docker_cache_path}:{container_path}:rw"])
 
     cmd.append(image_name)
 
