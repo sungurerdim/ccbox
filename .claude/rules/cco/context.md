@@ -7,7 +7,7 @@ Stack: Python (Click, Rich) + Docker | Type: CLI | DB: None | Rollback: Git
 Maturity: Beta | Breaking: Allowed | Priority: Speed
 
 ## AI Performance
-Thinking: 8K | MCP: 25K | Caching: Enabled
+Thinking: 16K | MCP: 35K | Caching: Enabled
 
 ## Guidelines
 - Self-review sufficient (solo developer)

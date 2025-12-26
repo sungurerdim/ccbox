@@ -1,5 +1,5 @@
 ---
-paths: "**/Dockerfile*,**/docker-compose*.yml,**/*.dockerfile"
+paths: "**/Dockerfile*, **/docker-compose*.yml, **/*.dockerfile"
 ---
 # Container Rules
 
