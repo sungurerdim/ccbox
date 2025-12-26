@@ -277,16 +277,16 @@ def generate_entrypoint() -> str:
     """
     return """#!/bin/bash
 
-# Debug logging function (outputs to stderr to not interfere with Claude output)
+# Debug logging function (stdout for diagnostic, stderr for errors only)
 _log() {
     if [[ -n "$CCBOX_DEBUG" ]]; then
-        echo "[ccbox] $*" >&2
+        echo "[ccbox] $*"
     fi
 }
 
 _log_verbose() {
     if [[ "$CCBOX_DEBUG" == "2" ]]; then
-        echo "[ccbox:debug] $*" >&2
+        echo "[ccbox:debug] $*"
     fi
 }
 
