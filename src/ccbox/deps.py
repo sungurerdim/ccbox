@@ -79,9 +79,7 @@ PACKAGE_MANAGERS: list[dict[str, Any]] = [
     {
         "name": "pip",
         "detect": ["setup.py", "setup.cfg"],
-        "install_all": "pip install -e .",
-        "install_prod": "pip install -e .",
-        "has_dev": False,
+        "detect_fn": "_detect_pip_setup",
         "priority": PRIORITY_HIGH,
     },
     {
@@ -392,7 +390,11 @@ PACKAGE_MANAGERS: list[dict[str, Any]] = [
 
 
 def _detect_pip_pyproject(path: Path, files: list[str]) -> DepsInfo | None:
-    """Detect pip with pyproject.toml, checking for dev extras."""
+    """Detect pip with pyproject.toml, checking for dev extras.
+
+    Uses a Python script to parse pyproject.toml and install dependencies directly,
+    avoiding editable install which requires source code to be present.
+    """
     pyproject = path / "pyproject.toml"
     if not pyproject.exists():
         return None
@@ -409,26 +411,42 @@ def _detect_pip_pyproject(path: Path, files: list[str]) -> DepsInfo | None:
         for x in ["optional-dependencies", "[project.optional-dependencies]", "dev =", "test ="]
     )
 
-    if has_dev:
-        return DepsInfo(
-            name="pip",
-            files=files,
-            install_all=(
-                'pip install -e ".[dev,test]" 2>/dev/null || '
-                'pip install -e ".[dev]" 2>/dev/null || pip install -e .'
-            ),
-            install_prod="pip install -e .",
-            has_dev=True,
-            priority=5,
-        )
+    # Python script to parse pyproject.toml and install dependencies
+    # This avoids editable install which requires source code
+    install_script_all = """python3 -c "
+import tomllib, subprocess, sys
+with open('pyproject.toml', 'rb') as f:
+    t = tomllib.load(f)
+deps = t.get('project', {}).get('dependencies', [])
+opt = t.get('project', {}).get('optional-dependencies', {})
+dev = opt.get('dev', []) + opt.get('test', [])
+all_deps = deps + dev
+if all_deps:
+    cmd = [sys.executable, '-m', 'pip', 'install', '--break-system-packages'] + all_deps
+    subprocess.run(cmd, check=True)
+else:
+    print('No dependencies found in pyproject.toml')
+" """
+
+    install_script_prod = """python3 -c "
+import tomllib, subprocess, sys
+with open('pyproject.toml', 'rb') as f:
+    t = tomllib.load(f)
+deps = t.get('project', {}).get('dependencies', [])
+if deps:
+    cmd = [sys.executable, '-m', 'pip', 'install', '--break-system-packages'] + deps
+    subprocess.run(cmd, check=True)
+else:
+    print('No dependencies found in pyproject.toml')
+" """
 
     return DepsInfo(
         name="pip",
         files=files,
-        install_all="pip install -e .",
-        install_prod="pip install -e .",
-        has_dev=False,
-        priority=5,
+        install_all=install_script_all.strip(),
+        install_prod=install_script_prod.strip(),
+        has_dev=has_dev,
+        priority=PRIORITY_HIGH,
     )
 
 
@@ -449,24 +467,75 @@ def _detect_pip_requirements(path: Path, files: list[str]) -> DepsInfo | None:
     ]
     found_dev = [f for f in dev_files if (path / f).exists()]
 
+    pip_base = "pip install --break-system-packages"
+
     if found_dev:
         dev_install = " ".join(f"-r {f}" for f in ["requirements.txt", *found_dev])
         return DepsInfo(
             name="pip",
             files=[*files, *found_dev],
-            install_all=f"pip install {dev_install}",
-            install_prod="pip install -r requirements.txt",
+            install_all=f"{pip_base} {dev_install}",
+            install_prod=f"{pip_base} -r requirements.txt",
             has_dev=True,
-            priority=5,
+            priority=PRIORITY_HIGH,
         )
 
     return DepsInfo(
         name="pip",
         files=files,
-        install_all="pip install -r requirements.txt",
-        install_prod="pip install -r requirements.txt",
+        install_all=f"{pip_base} -r requirements.txt",
+        install_prod=f"{pip_base} -r requirements.txt",
         has_dev=False,
-        priority=5,
+        priority=PRIORITY_HIGH,
+    )
+
+
+def _detect_pip_setup(path: Path, files: list[str]) -> DepsInfo | None:
+    """Detect pip with setup.py/setup.cfg.
+
+    Uses egg_info to extract dependencies without requiring source code.
+    """
+    setup_py = path / "setup.py"
+    setup_cfg = path / "setup.cfg"
+
+    if not (setup_py.exists() or setup_cfg.exists()):
+        return None
+
+    # Skip if pyproject.toml exists (handled separately)
+    if (path / "pyproject.toml").exists():
+        return None
+
+    # Use egg_info to extract dependencies, then install from requires.txt
+    # This extracts dependencies without requiring source code
+    install_script = """python3 -c "
+import subprocess, sys, glob
+
+# Try to generate egg-info to extract dependencies
+subprocess.run([sys.executable, 'setup.py', 'egg_info'], capture_output=True)
+
+# Find requires.txt in any .egg-info directory
+requires_files = glob.glob('*.egg-info/requires.txt')
+if requires_files:
+    with open(requires_files[0]) as f:
+        # Read dependencies, skip extras sections (lines starting with [)
+        deps = [l.strip() for l in f if l.strip() and not l.startswith('[')]
+    if deps:
+        cmd = [sys.executable, '-m', 'pip', 'install', '--break-system-packages'] + deps
+        subprocess.run(cmd, check=True)
+        print(f'Installed {len(deps)} dependencies from setup.py')
+    else:
+        print('No dependencies found in setup.py')
+else:
+    print('Warning: Could not extract dependencies from setup.py (egg_info failed)')
+" """
+
+    return DepsInfo(
+        name="pip",
+        files=files,
+        install_all=install_script.strip(),
+        install_prod=install_script.strip(),
+        has_dev=False,
+        priority=PRIORITY_HIGH,
     )
 
 
@@ -591,6 +660,7 @@ def _detect_make(path: Path, files: list[str]) -> DepsInfo | None:
 DETECT_FUNCTIONS: dict[str, Any] = {
     "_detect_pip_pyproject": _detect_pip_pyproject,
     "_detect_pip_requirements": _detect_pip_requirements,
+    "_detect_pip_setup": _detect_pip_setup,
     "_detect_dotnet": _detect_dotnet,
     "_detect_cabal": _detect_cabal,
     "_detect_luarocks": _detect_luarocks,

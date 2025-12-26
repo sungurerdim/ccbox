@@ -90,7 +90,7 @@ class TestGenerator:
     def test_generate_dockerfile_minimal(self) -> None:
         """Test MINIMAL Dockerfile generation (no CCO)."""
         dockerfile = generate_dockerfile(LanguageStack.MINIMAL)
-        assert "FROM node:slim" in dockerfile
+        assert "FROM node:lts-slim" in dockerfile
         assert "@anthropic-ai/claude-code" in dockerfile
         assert "python3" in dockerfile
         assert "ClaudeCodeOptimizer" not in dockerfile  # No CCO in minimal

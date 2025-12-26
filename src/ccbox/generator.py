@@ -88,10 +88,10 @@ ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 
 
 def _minimal_dockerfile() -> str:
-    """MINIMAL stack: node:slim + Python (no CCO)."""
+    """MINIMAL stack: node:lts-slim + Python (no CCO)."""
     return f"""# syntax=docker/dockerfile:1
 # ccbox:minimal - Node.js + Python (no CCO)
-FROM node:slim
+FROM node:lts-slim
 
 LABEL org.opencontainers.image.title="ccbox:minimal"
 
