@@ -1,15 +1,11 @@
 ---
-paths: ".github/workflows/*.yml,.gitlab-ci.yml,Jenkinsfile"
+paths: ".github/workflows/*.yml, .github/workflows/*.yaml"
 ---
-# CI/CD Rules
+# CI/CD Rules (GitHub Actions)
 
-## GitHub Actions
-- **Matrix-Test**: Matrix for multiple versions
-- **Cache-Deps**: Cache dependencies
-- **Secrets-Safe**: Use GitHub Secrets
+- **Matrix-Test**: Matrix for multiple Python versions (3.9, 3.10, 3.11, 3.12)
+- **Cache-Deps**: Cache pip dependencies
+- **Secrets-Safe**: Use GitHub Secrets for sensitive data
 - **Concurrency-Limit**: Cancel redundant runs
-
-## General CI
-- **CI-Gates**: lint + test + coverage gates
-- **Fast-Fail**: Fail fast on first error
-- **Parallel-Jobs**: Parallelize independent jobs
+- **CI-Gates**: lint + test + coverage gates on every PR
+- **Config-as-Code**: Versioned configuration

@@ -1,7 +1,7 @@
 {
   "env": {
-    "MAX_THINKING_TOKENS": "8000",
-    "MAX_MCP_OUTPUT_TOKENS": "25000",
+    "MAX_THINKING_TOKENS": "16000",
+    "MAX_MCP_OUTPUT_TOKENS": "35000",
     "DISABLE_PROMPT_CACHING": "0"
   },
   "statusLine": {

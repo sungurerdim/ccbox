@@ -255,9 +255,12 @@ function formatStatusline(input, git) {
   const totalRen = git ? git.ren + git.sRen : 0;
 
   // Define rows as arrays of parts
-  const row1Parts = contextStr ? [usernameStr, versionStr, modelStr, contextStr] : [usernameStr, versionStr, modelStr];
-  const row2Parts = tagStr ? [repoStr, tagStr] : [repoStr];
-  const row3Parts = git ? [alertStr, ...buildChangesParts(totalMod, totalAdd, totalDel, totalRen)] : [alertStr];
+  // Row 1: Git info (repo:branch, tag) - Location (stable)
+  // Row 2: Alerts and file changes - Status (dynamic, easy to scan)
+  // Row 3: User info (username, version, model, context) - Session (reference)
+  const row1Parts = tagStr ? [repoStr, tagStr] : [repoStr];
+  const row2Parts = git ? [alertStr, ...buildChangesParts(totalMod, totalAdd, totalDel, totalRen)] : [alertStr];
+  const row3Parts = contextStr ? [usernameStr, versionStr, modelStr, contextStr] : [usernameStr, versionStr, modelStr];
 
   // Calculate max width from minimum representation (parts joined with single space + separator)
   function minRowWidth(parts) {
