@@ -49,8 +49,8 @@ RUN curl -fsSL https://deb.nodesource.com/setup_current.x | bash - \\
 
 # Python dev tools (without CCO)
 PYTHON_TOOLS_BASE = """
-# Python dev tools (ruff, mypy, pytest)
-RUN pip install --break-system-packages --no-cache-dir ruff mypy pytest
+# Python dev tools (ruff, mypy, pytest) - pinned versions
+RUN pip install --break-system-packages --no-cache-dir ruff==0.14.10 mypy==1.19.1 pytest==9.0.2
 """
 
 # CCO installation (pip + install to /opt/cco/)
@@ -65,11 +65,11 @@ RUN pip install --break-system-packages --no-cache-dir \\
 USER node
 """
 
-# Claude Code only (no CCO setup)
+# Claude Code + Node.js dev tools
 NODE_TOOLS_BASE = """
-# Claude Code
+# Node.js dev tools (typescript, eslint, vitest) + Claude Code - pinned versions
 RUN npm config set fund false && npm config set update-notifier false \\
-    && npm install -g @anthropic-ai/claude-code --force \\
+    && npm install -g typescript@5.9.3 eslint@9.39.2 vitest@4.0.16 @anthropic-ai/claude-code@2.0.76 --force \\
     && npm cache clean --force
 """
 

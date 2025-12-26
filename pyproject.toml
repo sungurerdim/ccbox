@@ -28,17 +28,15 @@ classifiers = [
     "Topic :: System :: Systems Administration",
 ]
 dependencies = [
-    "click>=8.0",
-    "rich>=13.0",
-    "requests>=2.28",
+    "click>=8.3.1",
+    "rich>=14.2.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=7.0",
-    "ruff>=0.1.0",
-    "mypy>=1.0",
-    "types-requests>=2.28",
+    "pytest>=9.0.2",
+    "ruff>=0.14.10",
+    "mypy>=1.19.1",
 ]
 
 [project.urls]
