@@ -413,32 +413,26 @@ def _detect_pip_pyproject(path: Path, files: list[str]) -> DepsInfo | None:
 
     # Python script to parse pyproject.toml and install dependencies
     # This avoids editable install which requires source code
-    install_script_all = """python3 -c "
-import tomllib, subprocess, sys
-with open('pyproject.toml', 'rb') as f:
-    t = tomllib.load(f)
-deps = t.get('project', {}).get('dependencies', [])
-opt = t.get('project', {}).get('optional-dependencies', {})
-dev = opt.get('dev', []) + opt.get('test', [])
-all_deps = deps + dev
-if all_deps:
-    cmd = [sys.executable, '-m', 'pip', 'install', '--break-system-packages'] + all_deps
-    subprocess.run(cmd, check=True)
-else:
-    print('No dependencies found in pyproject.toml')
-" """
+    # Single-line format required for Dockerfile RUN commands
+    # fmt: off
+    install_script_all = (
+        'python3 -c "'
+        "import tomllib as T,subprocess as S,sys;"
+        "d=T.load(open('pyproject.toml','rb')).get('project',{});"
+        "o=d.get('optional-dependencies',{});"
+        "a=d.get('dependencies',[])+o.get('dev',[])+o.get('test',[]);"
+        "S.run([sys.executable,'-m','pip','install','--break-system-packages']+a,check=1)if a else 0"  # noqa: E501
+        '"'
+    )
 
-    install_script_prod = """python3 -c "
-import tomllib, subprocess, sys
-with open('pyproject.toml', 'rb') as f:
-    t = tomllib.load(f)
-deps = t.get('project', {}).get('dependencies', [])
-if deps:
-    cmd = [sys.executable, '-m', 'pip', 'install', '--break-system-packages'] + deps
-    subprocess.run(cmd, check=True)
-else:
-    print('No dependencies found in pyproject.toml')
-" """
+    install_script_prod = (
+        'python3 -c "'
+        "import tomllib as T,subprocess as S,sys;"
+        "d=T.load(open('pyproject.toml','rb')).get('project',{}).get('dependencies',[]);"
+        "S.run([sys.executable,'-m','pip','install','--break-system-packages']+d,check=1)if d else 0"  # noqa: E501
+        '"'
+    )
+    # fmt: on
 
     return DepsInfo(
         name="pip",
@@ -507,27 +501,18 @@ def _detect_pip_setup(path: Path, files: list[str]) -> DepsInfo | None:
 
     # Use egg_info to extract dependencies, then install from requires.txt
     # This extracts dependencies without requiring source code
-    install_script = """python3 -c "
-import subprocess, sys, glob
-
-# Try to generate egg-info to extract dependencies
-subprocess.run([sys.executable, 'setup.py', 'egg_info'], capture_output=True)
-
-# Find requires.txt in any .egg-info directory
-requires_files = glob.glob('*.egg-info/requires.txt')
-if requires_files:
-    with open(requires_files[0]) as f:
-        # Read dependencies, skip extras sections (lines starting with [)
-        deps = [l.strip() for l in f if l.strip() and not l.startswith('[')]
-    if deps:
-        cmd = [sys.executable, '-m', 'pip', 'install', '--break-system-packages'] + deps
-        subprocess.run(cmd, check=True)
-        print(f'Installed {len(deps)} dependencies from setup.py')
-    else:
-        print('No dependencies found in setup.py')
-else:
-    print('Warning: Could not extract dependencies from setup.py (egg_info failed)')
-" """
+    # Single-line format required for Dockerfile RUN commands
+    # fmt: off
+    install_script = (
+        'python3 -c "'
+        "import subprocess as S,sys,glob as G;"
+        "S.run([sys.executable,'setup.py','egg_info'],capture_output=1);"
+        "r=G.glob('*.egg-info/requires.txt');"
+        "d=[l.strip()for l in open(r[0])if l.strip()and not l.startswith('[')]if r else[];"
+        "S.run([sys.executable,'-m','pip','install','--break-system-packages']+d,check=1)if d else 0"  # noqa: E501
+        '"'
+    )
+    # fmt: on
 
     return DepsInfo(
         name="pip",
