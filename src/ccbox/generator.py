@@ -354,8 +354,8 @@ if [[ -d "$PWD/.claude" ]]; then
     _log_verbose "Project .claude contents: $(ls -A "$PWD/.claude" 2>/dev/null | tr '\\n' ' ')"
 fi
 
-# Runtime config (as node user)
-export NODE_OPTIONS="--max-old-space-size=$(( $(free -m | awk '/^Mem:/{print $2}') * 3 / 4 ))"
+# Runtime config (as node user) - append to existing NODE_OPTIONS (preserves --no-warnings from docker run)
+export NODE_OPTIONS="${NODE_OPTIONS:-} --max-old-space-size=$(( $(free -m | awk '/^Mem:/{print $2}') * 3 / 4 ))"
 export UV_THREADPOOL_SIZE=$(nproc)
 _log_verbose "NODE_OPTIONS: $NODE_OPTIONS"
 _log_verbose "UV_THREADPOOL_SIZE: $UV_THREADPOOL_SIZE"
@@ -573,7 +573,9 @@ def _build_claude_args(
     append_system_prompt: str | None,
 ) -> list[str]:
     """Build Claude CLI arguments list."""
-    args: list[str] = []
+    # CRITICAL: Always pass --dangerously-skip-permissions here (not just in entrypoint)
+    # This ensures bypass works even with old/cached images that may have different entrypoints
+    args: list[str] = ["--dangerously-skip-permissions"]
 
     if model:
         args.extend(["--model", model])
