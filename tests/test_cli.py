@@ -1287,8 +1287,10 @@ class TestBenchmarkCLIOptions:
             )
             # Empty prompt is falsy, so --print and prompt should NOT be added
             assert "--print" not in cmd
-            # Last element should be image name, not empty prompt
-            assert cmd[-1] == "ccbox:base"
+            # Image name should be in command
+            assert "ccbox:base" in cmd
+            # Empty string should not be added as argument
+            assert "" not in cmd
         finally:
             claude_dir.rmdir()
 
@@ -1342,5 +1344,46 @@ class TestBenchmarkCLIOptions:
             assert cmd[-1] == "Test prompt"
             # Verify --print flag is present (required for prompt mode)
             assert "--print" in cmd
+        finally:
+            claude_dir.rmdir()
+
+    def test_bypass_permissions_always_added(self) -> None:
+        """Test --dangerously-skip-permissions is always added to Claude args.
+
+        This flag MUST be in the docker run command (not just entrypoint) to ensure
+        bypass works even with old/cached images that may have different entrypoints.
+        """
+        claude_dir = Path.home() / ".claude-test-bypass"
+        claude_dir.mkdir(exist_ok=True)
+        try:
+            config = Config(claude_config_dir=str(claude_dir))
+            # Test without any special options
+            cmd = get_docker_run_cmd(
+                config,
+                Path("/project/test"),
+                "test",
+                LanguageStack.BASE,
+            )
+            assert "--dangerously-skip-permissions" in cmd
+
+            # Test with prompt
+            cmd_with_prompt = get_docker_run_cmd(
+                config,
+                Path("/project/test"),
+                "test",
+                LanguageStack.BASE,
+                prompt="test",
+            )
+            assert "--dangerously-skip-permissions" in cmd_with_prompt
+
+            # Test with bare mode
+            cmd_bare = get_docker_run_cmd(
+                config,
+                Path("/project/test"),
+                "test",
+                LanguageStack.BASE,
+                bare=True,
+            )
+            assert "--dangerously-skip-permissions" in cmd_bare
         finally:
             claude_dir.rmdir()
