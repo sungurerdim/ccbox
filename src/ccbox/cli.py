@@ -56,7 +56,11 @@ def _check_docker_status() -> bool:
             timeout=DOCKER_COMMAND_TIMEOUT,
         )
         return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except FileNotFoundError:
+        console.print("[dim]Docker not found in PATH[/dim]", highlight=False)
+        return False
+    except subprocess.TimeoutExpired:
+        console.print("[dim]Docker check timed out[/dim]", highlight=False)
         return False
 
 
@@ -76,8 +80,11 @@ def _start_docker_desktop() -> bool:
         docker_path = Path(os.environ.get("PROGRAMFILES", "C:\\Program Files"))
         docker_exe = docker_path / "Docker" / "Docker" / "Docker Desktop.exe"
         if docker_exe.exists():
-            subprocess.Popen([str(docker_exe)], start_new_session=True)
-            return True
+            try:
+                subprocess.Popen([str(docker_exe)], start_new_session=True)
+                return True
+            except (OSError, PermissionError):
+                return False
     elif system == "Darwin":
         subprocess.run(
             ["open", "-a", "Docker"],
@@ -170,8 +177,10 @@ def _get_git_config_value(key: str) -> str:
         )
         if result.returncode == 0:
             return result.stdout.strip()
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
+    except FileNotFoundError:
+        console.print("[dim]Git not found in PATH[/dim]", highlight=False)
+    except subprocess.TimeoutExpired:
+        console.print(f"[dim]Git config {key} timed out[/dim]", highlight=False)
     return ""
 
 
@@ -544,7 +553,11 @@ def _project_image_exists(project_name: str, stack: LanguageStack) -> bool:
             timeout=DOCKER_COMMAND_TIMEOUT,
         )
         return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except FileNotFoundError:
+        console.print("[dim]Docker not found in PATH[/dim]", highlight=False)
+        return False
+    except subprocess.TimeoutExpired:
+        console.print(f"[dim]Docker image check timed out: {image_name}[/dim]", highlight=False)
         return False
 
 
@@ -606,6 +619,7 @@ def _build_project_image(
             ],
             check=True,
             env=env,
+            timeout=DOCKER_BUILD_TIMEOUT,
         )
         console.print(f"[green]✓ Built {image_name}[/green]")
         return image_name
@@ -614,108 +628,79 @@ def _build_project_image(
         return None
 
 
-def _run(
-    stack_name: str | None,
+def _try_run_existing_image(
+    config: Config,
+    project_path: Path,
+    project_name: str,
+    stack: LanguageStack,
     build_only: bool,
-    path: str,
     *,
     bare: bool = False,
     debug_logs: bool = False,
-    deps_mode: str | None = None,
+    debug: int = 0,
+    prompt: str | None = None,
+    model: str | None = None,
+    quiet: bool = False,
+    append_system_prompt: str | None = None,
+) -> bool:
+    """Try to run using existing project image. Returns True if handled."""
+    if not _project_image_exists(project_name, stack):
+        return False
+
+    project_image = _get_project_image_name(project_name, stack)
+    console.print(f"[dim]Using existing project image: {project_image}[/dim]")
+
+    console.print()
+    console.print(
+        Panel.fit(
+            f"[bold]{project_name}[/bold] → {project_image}",
+            border_style="blue",
+        )
+    )
+
+    if build_only:
+        console.print("[green]✓ Build complete (image exists)[/green]")
+        return True
+
+    # Detect deps for cache mounts (no prompt)
+    deps_list = detect_dependencies(project_path) if not bare else []
+
+    _execute_container(
+        config,
+        project_path,
+        project_name,
+        stack,
+        bare=bare,
+        debug_logs=debug_logs,
+        debug=debug,
+        prompt=prompt,
+        model=model,
+        quiet=quiet,
+        append_system_prompt=append_system_prompt,
+        project_image=project_image,
+        deps_list=deps_list,
+    )
+    return True
+
+
+def _build_and_run(
+    config: Config,
+    project_path: Path,
+    project_name: str,
+    selected_stack: LanguageStack,
+    deps_list: list[DepsInfo],
+    resolved_deps_mode: DepsMode,
+    build_only: bool,
+    *,
+    bare: bool = False,
+    debug_logs: bool = False,
     debug: int = 0,
     prompt: str | None = None,
     model: str | None = None,
     quiet: bool = False,
     append_system_prompt: str | None = None,
 ) -> None:
-    """Run Claude Code in Docker container."""
-    if not check_docker():
-        console.print(ERR_DOCKER_NOT_RUNNING)
-        console.print("Start Docker and try again.")
-        sys.exit(1)
-
-    # Validate project path early
-    project_path = Path(path).resolve()
-    if not project_path.exists():
-        console.print(f"[red]Error: Project path does not exist: {project_path}[/red]")
-        sys.exit(1)
-    if not project_path.is_dir():
-        console.print(f"[red]Error: Project path must be a directory: {project_path}[/red]")
-        sys.exit(1)
-
-    config = _setup_git_config()
-    project_name = project_path.name
-
-    # === Phase 1: Check for existing project image (before any prompts) ===
-
-    # Detect recommended stack first (no prompt yet)
-    detection = detect_project_type(project_path)
-    if stack_name and stack_name != "auto":
-        initial_stack = LanguageStack(stack_name)
-    else:
-        initial_stack = detection.recommended_stack
-
-    # Check if project image exists - if so, skip all prompts
-    if _project_image_exists(project_name, initial_stack):
-        project_image = _get_project_image_name(project_name, initial_stack)
-        console.print(f"[dim]Using existing project image: {project_image}[/dim]")
-
-        console.print()
-        console.print(
-            Panel.fit(
-                f"[bold]{project_name}[/bold] → {project_image}",
-                border_style="blue",
-            )
-        )
-
-        if build_only:
-            console.print("[green]✓ Build complete (image exists)[/green]")
-            return
-
-        # Detect deps for cache mounts (no prompt)
-        deps_list = detect_dependencies(project_path) if not bare else []
-
-        _execute_container(
-            config,
-            project_path,
-            project_name,
-            initial_stack,
-            bare=bare,
-            debug_logs=debug_logs,
-            debug=debug,
-            prompt=prompt,
-            model=model,
-            quiet=quiet,
-            append_system_prompt=append_system_prompt,
-            project_image=project_image,
-            deps_list=deps_list,
-        )
-        return
-
-    # === Phase 2: No project image - prompt for deps, then stack ===
-
-    # Detect dependencies
-    deps_list = detect_dependencies(project_path) if not bare else []
-    resolved_deps_mode = DepsMode.SKIP
-
-    # Prompt for deps first (before stack selection)
-    if deps_list and deps_mode != "skip":
-        if deps_mode:
-            # User specified deps mode via flag
-            resolved_deps_mode = DepsMode(deps_mode)
-        else:
-            # Interactive prompt
-            resolved_deps_mode = _prompt_deps(deps_list)
-            console.print()
-
-    # Now resolve stack (with selection menu if needed)
-    selected_stack = _resolve_stack(stack_name, project_path, skip_if_image_exists=True)
-    if selected_stack is None:
-        console.print("[yellow]Cancelled.[/yellow]")
-        sys.exit(0)
-
-    # === Phase 3: Build chain ===
-
+    """Build images and run container (Phase 3)."""
     console.print()
     console.print(
         Panel.fit(
@@ -771,6 +756,103 @@ def _run(
     )
 
 
+def _run(
+    stack_name: str | None,
+    build_only: bool,
+    path: str,
+    *,
+    bare: bool = False,
+    debug_logs: bool = False,
+    deps_mode: str | None = None,
+    debug: int = 0,
+    prompt: str | None = None,
+    model: str | None = None,
+    quiet: bool = False,
+    append_system_prompt: str | None = None,
+) -> None:
+    """Run Claude Code in Docker container."""
+    if not check_docker():
+        console.print(ERR_DOCKER_NOT_RUNNING)
+        console.print("Start Docker and try again.")
+        sys.exit(1)
+
+    # Validate project path early
+    project_path = Path(path).resolve()
+    if not project_path.exists():
+        console.print(f"[red]Error: Project path does not exist: {project_path}[/red]")
+        sys.exit(1)
+    if not project_path.is_dir():
+        console.print(f"[red]Error: Project path must be a directory: {project_path}[/red]")
+        sys.exit(1)
+
+    config = _setup_git_config()
+    project_name = project_path.name
+
+    # Detect recommended stack first (no prompt yet)
+    detection = detect_project_type(project_path)
+    if stack_name and stack_name != "auto":
+        initial_stack = LanguageStack(stack_name)
+    else:
+        initial_stack = detection.recommended_stack
+
+    # Phase 1: Try existing project image (skip prompts if found)
+    if _try_run_existing_image(
+        config,
+        project_path,
+        project_name,
+        initial_stack,
+        build_only,
+        bare=bare,
+        debug_logs=debug_logs,
+        debug=debug,
+        prompt=prompt,
+        model=model,
+        quiet=quiet,
+        append_system_prompt=append_system_prompt,
+    ):
+        return
+
+    # Phase 2: No project image - prompt for deps, then stack
+
+    # Detect dependencies
+    deps_list = detect_dependencies(project_path) if not bare else []
+    resolved_deps_mode = DepsMode.SKIP
+
+    # Prompt for deps first (before stack selection)
+    if deps_list and deps_mode != "skip":
+        if deps_mode:
+            # User specified deps mode via flag
+            resolved_deps_mode = DepsMode(deps_mode)
+        else:
+            # Interactive prompt
+            resolved_deps_mode = _prompt_deps(deps_list)
+            console.print()
+
+    # Now resolve stack (with selection menu if needed)
+    selected_stack = _resolve_stack(stack_name, project_path, skip_if_image_exists=True)
+    if selected_stack is None:
+        console.print("[yellow]Cancelled.[/yellow]")
+        sys.exit(0)
+
+    # Phase 3: Build and run
+    _build_and_run(
+        config,
+        project_path,
+        project_name,
+        selected_stack,
+        deps_list,
+        resolved_deps_mode,
+        build_only,
+        bare=bare,
+        debug_logs=debug_logs,
+        debug=debug,
+        prompt=prompt,
+        model=model,
+        quiet=quiet,
+        append_system_prompt=append_system_prompt,
+    )
+
+
 @cli.command()
 @click.option("--stack", "-s", type=click.Choice([s.value for s in LanguageStack]), help="Stack")
 @click.option("--all", "-a", "build_all", is_flag=True, help="Rebuild all installed images")
@@ -811,6 +893,7 @@ def _get_installed_ccbox_images() -> set[str]:
             capture_output=True,
             text=True,
             check=False,
+            timeout=DOCKER_COMMAND_TIMEOUT,
         )
         if result.returncode != 0:
             return set()
@@ -819,6 +902,10 @@ def _get_installed_ccbox_images() -> set[str]:
         all_images = result.stdout.strip().split("\n")
         return {img for img in all_images if img.startswith("ccbox:")}
     except FileNotFoundError:
+        console.print("[dim]Docker not found in PATH[/dim]", highlight=False)
+        return set()
+    except subprocess.TimeoutExpired:
+        console.print("[dim]Docker images list timed out[/dim]", highlight=False)
         return set()
 
 
@@ -839,10 +926,16 @@ def clean(force: bool) -> None:
         capture_output=True,
         text=True,
         check=False,
+        timeout=DOCKER_COMMAND_TIMEOUT,
     )
     for name in result.stdout.strip().split("\n"):
         if name:
-            subprocess.run(["docker", "rm", "-f", name], capture_output=True, check=False)
+            subprocess.run(
+                ["docker", "rm", "-f", name],
+                capture_output=True,
+                check=False,
+                timeout=DOCKER_COMMAND_TIMEOUT,
+            )
 
     console.print("[dim]Removing images...[/dim]")
     # Remove stack images (ccbox:base, ccbox:node, etc.)
@@ -851,6 +944,7 @@ def clean(force: bool) -> None:
             ["docker", "rmi", "-f", get_image_name(stack)],
             capture_output=True,
             check=False,
+            timeout=DOCKER_COMMAND_TIMEOUT,
         )
 
     # Remove project images (ccbox-projectname:stack)
@@ -859,11 +953,17 @@ def clean(force: bool) -> None:
         capture_output=True,
         text=True,
         check=False,
+        timeout=DOCKER_COMMAND_TIMEOUT,
     )
     if result.returncode == 0:
         for image in result.stdout.strip().split("\n"):
             if image.startswith("ccbox-"):
-                subprocess.run(["docker", "rmi", "-f", image], capture_output=True, check=False)
+                subprocess.run(
+                    ["docker", "rmi", "-f", image],
+                    capture_output=True,
+                    check=False,
+                    timeout=DOCKER_COMMAND_TIMEOUT,
+                )
 
     console.print("[green]✓ Cleanup complete[/green]")
 

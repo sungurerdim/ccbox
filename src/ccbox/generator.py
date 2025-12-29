@@ -543,6 +543,67 @@ def _transform_slash_command(prompt: str | None) -> str | None:
     return instruction
 
 
+def _add_bare_mode_mounts(cmd: list[str]) -> None:
+    """Add bare/vanilla mode mounts to isolate host customizations."""
+    user_dirs = ["rules", "commands", "agents", "skills"]
+    for d in user_dirs:
+        cmd.extend(["--tmpfs", f"/home/node/.claude/{d}:rw,size=16m,uid=1000,gid=1000,mode=0755"])
+    # Hide host's CLAUDE.md
+    cmd.extend(["-v", "/dev/null:/home/node/.claude/CLAUDE.md:ro"])
+    # Skip CCO injection in entrypoint
+    cmd.extend(["-e", "CCBOX_BARE_MODE=1"])
+
+
+def _add_git_env(cmd: list[str], config: Config) -> None:
+    """Add git author/committer environment variables."""
+    if config.git_name:
+        cmd.extend(["-e", f"GIT_AUTHOR_NAME={config.git_name}"])
+        cmd.extend(["-e", f"GIT_COMMITTER_NAME={config.git_name}"])
+    if config.git_email:
+        cmd.extend(["-e", f"GIT_AUTHOR_EMAIL={config.git_email}"])
+        cmd.extend(["-e", f"GIT_COMMITTER_EMAIL={config.git_email}"])
+
+
+def _build_claude_args(
+    *,
+    model: str | None,
+    debug: int,
+    prompt: str | None,
+    quiet: bool,
+    append_system_prompt: str | None,
+) -> list[str]:
+    """Build Claude CLI arguments list."""
+    args: list[str] = []
+
+    if model:
+        args.extend(["--model", model])
+
+    # Derive flags from parameters:
+    # - stream: -dd enables stream mode (real-time tool call output)
+    # - verbose: required by stream OR when prompt is set (unless quiet)
+    stream = debug >= 2
+    verbose = stream or (bool(prompt) and not quiet)
+
+    if verbose:
+        args.append("--verbose")
+
+    if append_system_prompt:
+        args.extend(["--append-system-prompt", append_system_prompt])
+
+    # Print mode: required for non-interactive usage (prompt or quiet)
+    if quiet or prompt:
+        args.append("--print")
+        # Stream mode: use stream-json for real-time output
+        if stream:
+            args.extend(["--output-format", "stream-json"])
+
+    # Prompt: passed as positional argument (Claude Code doesn't have --prompt flag)
+    if prompt:
+        args.append(prompt)
+
+    return args
+
+
 def get_docker_run_cmd(
     config: Config,
     project_path: Path,
@@ -636,18 +697,7 @@ def get_docker_run_cmd(
     cmd.extend(["-v", f"{docker_claude_config}:/home/node/.claude:rw"])
 
     if bare:
-        # Bare/vanilla mode: isolate host customizations, use only credentials/settings
-        # tmpfs overlays hide host's rules/commands/agents/skills
-        user_dirs = ["rules", "commands", "agents", "skills"]
-        for d in user_dirs:
-            cmd.extend(
-                ["--tmpfs", f"/home/node/.claude/{d}:rw,size=16m,uid=1000,gid=1000,mode=0755"]
-            )
-        # Hide host's CLAUDE.md
-        cmd.extend(["-v", "/dev/null:/home/node/.claude/CLAUDE.md:ro"])
-        # Skip CCO injection in entrypoint
-        cmd.extend(["-e", "CCBOX_BARE_MODE=1"])
-    # Normal mode: host's .claude fully accessible, CCO merges on top
+        _add_bare_mode_mounts(cmd)
 
     cmd.extend(
         [
@@ -686,41 +736,18 @@ def get_docker_run_cmd(
     if not debug_logs:
         cmd.extend(["--tmpfs", "/home/node/.claude/debug:rw,size=512m,mode=0777"])
 
-    if config.git_name:
-        cmd.extend(["-e", f"GIT_AUTHOR_NAME={config.git_name}"])
-        cmd.extend(["-e", f"GIT_COMMITTER_NAME={config.git_name}"])
-    if config.git_email:
-        cmd.extend(["-e", f"GIT_AUTHOR_EMAIL={config.git_email}"])
-        cmd.extend(["-e", f"GIT_COMMITTER_EMAIL={config.git_email}"])
+    _add_git_env(cmd, config)
 
     cmd.append(image_name)
 
     # Claude CLI arguments (passed to entrypoint -> claude command)
-    # Note: --dangerously-skip-permissions is already in entrypoint.sh
-    if model:
-        cmd.extend(["--model", model])
-
-    # Derive flags from parameters:
-    # - stream: -dd enables stream mode (real-time tool call output)
-    # - verbose: required by stream OR when prompt is set (unless quiet)
-    stream = debug >= 2
-    verbose = stream or (bool(prompt) and not quiet)
-
-    if verbose:
-        cmd.append("--verbose")
-
-    if append_system_prompt:
-        cmd.extend(["--append-system-prompt", append_system_prompt])
-
-    # Print mode: required for non-interactive usage (prompt or quiet)
-    if quiet or prompt:
-        cmd.append("--print")
-        # Stream mode: use stream-json for real-time output
-        if stream:
-            cmd.extend(["--output-format", "stream-json"])
-
-    # Prompt: passed as positional argument (Claude Code doesn't have --prompt flag)
-    if prompt:
-        cmd.append(prompt)
+    claude_args = _build_claude_args(
+        model=model,
+        debug=debug,
+        prompt=prompt,
+        quiet=quiet,
+        append_system_prompt=append_system_prompt,
+    )
+    cmd.extend(claude_args)
 
     return cmd
