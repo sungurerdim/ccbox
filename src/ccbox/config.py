@@ -121,6 +121,9 @@ def get_image_name(stack: LanguageStack) -> str:
     return f"ccbox:{stack.value}"
 
 
+DOCKER_COMMAND_TIMEOUT = 30  # seconds for quick docker commands
+
+
 def image_exists(stack: LanguageStack) -> bool:
     """Check if Docker image exists for stack."""
     try:
@@ -128,9 +131,10 @@ def image_exists(stack: LanguageStack) -> bool:
             ["docker", "image", "inspect", get_image_name(stack)],
             capture_output=True,
             check=False,
+            timeout=DOCKER_COMMAND_TIMEOUT,
         )
         return result.returncode == 0
-    except FileNotFoundError:
+    except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
 
 
