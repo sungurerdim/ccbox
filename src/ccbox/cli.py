@@ -423,7 +423,11 @@ def _setup_git_config() -> Config:
 
 
 def _resolve_stack(
-    stack_name: str | None, project_path: Path, *, skip_if_image_exists: bool = False
+    stack_name: str | None,
+    project_path: Path,
+    *,
+    skip_if_image_exists: bool = False,
+    unattended: bool = False,
 ) -> LanguageStack | None:
     """Resolve the stack to use based on user input or detection.
 
@@ -431,14 +435,15 @@ def _resolve_stack(
         stack_name: Explicitly requested stack name, "auto", or None for interactive.
         project_path: Path to the project directory.
         skip_if_image_exists: If True, skip selection when stack image exists.
+        unattended: If True, skip interactive prompts and use detected stack.
 
     Returns:
         Selected stack, or None if user cancelled.
     """
     detection = detect_project_type(project_path)
 
-    # --stack=auto: use detected stack directly, no prompt
-    if stack_name == "auto":
+    # --stack=auto or unattended mode: use detected stack directly, no prompt
+    if stack_name == "auto" or unattended:
         return detection.recommended_stack
 
     # Explicit stack specified
@@ -818,18 +823,27 @@ def _run(
     deps_list = detect_dependencies(project_path) if not bare else []
     resolved_deps_mode = DepsMode.SKIP
 
+    # Unattended mode: -s auto or -dd (debug >= 2)
+    is_unattended = stack_name == "auto" or debug >= 2
+
     # Prompt for deps first (before stack selection)
     if deps_list and deps_mode != "skip":
         if deps_mode:
             # User specified deps mode via flag
             resolved_deps_mode = DepsMode(deps_mode)
+        elif is_unattended:
+            # Auto mode: install all deps without prompting
+            resolved_deps_mode = DepsMode.ALL
+            console.print("[dim]Auto mode: installing all dependencies[/dim]")
         else:
             # Interactive prompt
             resolved_deps_mode = _prompt_deps(deps_list)
             console.print()
 
     # Now resolve stack (with selection menu if needed)
-    selected_stack = _resolve_stack(stack_name, project_path, skip_if_image_exists=True)
+    selected_stack = _resolve_stack(
+        stack_name, project_path, skip_if_image_exists=True, unattended=is_unattended
+    )
     if selected_stack is None:
         console.print("[yellow]Cancelled.[/yellow]")
         sys.exit(0)
