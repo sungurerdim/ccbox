@@ -191,10 +191,16 @@ def get_git_config() -> tuple[str, str]:
 
 @click.group(invoke_without_command=True)
 @click.option(
+    "--yes",
+    "-y",
+    is_flag=True,
+    help="Unattended mode: auto-confirm all prompts",
+)
+@click.option(
     "--stack",
     "-s",
     type=click.Choice(["auto", *[s.value for s in LanguageStack]]),
-    help="Stack (auto=skip prompt, use detected)",
+    help="Language stack (auto=detect from project)",
 )
 @click.option("--build", "-b", is_flag=True, help="Build image only (no start)")
 @click.option("--path", default=".", type=click.Path(exists=True), help="Project path")
@@ -236,6 +242,7 @@ def get_git_config() -> tuple[str, str]:
 @click.version_option(version=__version__, prog_name="ccbox")
 def cli(
     ctx: click.Context,
+    yes: bool,
     stack: str | None,
     build: bool,
     path: str,
@@ -281,6 +288,7 @@ def cli(
         model=model,
         quiet=quiet,
         append_system_prompt=append_system_prompt,
+        unattended=yes,
     )
 
 
@@ -774,6 +782,7 @@ def _run(
     model: str | None = None,
     quiet: bool = False,
     append_system_prompt: str | None = None,
+    unattended: bool = False,
 ) -> None:
     """Run Claude Code in Docker container."""
     if not check_docker():
@@ -823,18 +832,15 @@ def _run(
     deps_list = detect_dependencies(project_path) if not bare else []
     resolved_deps_mode = DepsMode.SKIP
 
-    # Unattended mode: -s auto or -dd (debug >= 2)
-    is_unattended = stack_name == "auto" or debug >= 2
-
     # Prompt for deps first (before stack selection)
     if deps_list and deps_mode != "skip":
         if deps_mode:
             # User specified deps mode via flag
             resolved_deps_mode = DepsMode(deps_mode)
-        elif is_unattended:
-            # Auto mode: install all deps without prompting
+        elif unattended:
+            # Unattended mode (-y): install all deps without prompting
             resolved_deps_mode = DepsMode.ALL
-            console.print("[dim]Auto mode: installing all dependencies[/dim]")
+            console.print("[dim]Unattended mode: installing all dependencies[/dim]")
         else:
             # Interactive prompt
             resolved_deps_mode = _prompt_deps(deps_list)
@@ -842,7 +848,7 @@ def _run(
 
     # Now resolve stack (with selection menu if needed)
     selected_stack = _resolve_stack(
-        stack_name, project_path, skip_if_image_exists=True, unattended=is_unattended
+        stack_name, project_path, skip_if_image_exists=True, unattended=unattended
     )
     if selected_stack is None:
         console.print("[yellow]Cancelled.[/yellow]")

@@ -712,6 +712,7 @@ def get_docker_run_cmd(
             "--tmpfs",
             "/var/tmp:rw,noexec,nosuid,size=256m",
             # Security hardening
+            "--cap-drop=ALL",  # Drop all Linux capabilities
             "--security-opt=no-new-privileges",  # Prevent privilege escalation
             "--pids-limit=512",  # Fork bomb protection
             # Environment

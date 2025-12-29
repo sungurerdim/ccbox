@@ -2,6 +2,16 @@
 
 Run Claude Code in isolated Docker containers. One command, zero configuration.
 
+## TL;DR
+
+```bash
+pip install ccbox                # Install
+cd your-project && ccbox         # Run (interactive)
+ccbox -y                         # Run (unattended, auto-confirm all)
+ccbox --bare                     # Run vanilla Claude Code (no CCO)
+ccbox -p "fix the tests"         # Run with prompt (non-interactive)
+```
+
 ## Why ccbox?
 
 - **Isolated**: Container only accesses current project directory - nothing else
@@ -16,7 +26,7 @@ Run Claude Code in isolated Docker containers. One command, zero configuration.
 ## Quick Start
 
 ```bash
-pip install git+https://github.com/sungurerdim/ccbox.git
+pip install ccbox
 ```
 
 ```bash
@@ -38,6 +48,131 @@ Host                              Container
 ```
 
 ccbox mounts only your current directory. Claude Code can freely modify project files but cannot touch anything else on your system.
+
+## Commands
+
+```bash
+# Basic usage
+ccbox                    # Run Claude Code (interactive prompts)
+ccbox -y                 # Unattended mode: auto-confirm all prompts
+ccbox -s base            # Use specific stack
+ccbox -b                 # Build image only (no start)
+ccbox -C /path/to/dir    # Run in different directory (like git -C)
+
+# Prompt mode (non-interactive)
+ccbox -p "fix the bug"   # Send prompt, show verbose output, exit
+ccbox -p "explain" -q    # Quiet mode: show only Claude's response
+ccbox -p "test" -m haiku # Use specific model
+
+# Debug mode
+ccbox -d                 # Show entrypoint debug logs
+ccbox -dd                # + Stream all Claude output (tool calls, progress)
+ccbox --debug-logs       # Persist debug logs (default: ephemeral tmpfs)
+
+# Dependencies (auto-detected, prompts if found)
+ccbox --deps             # Install all dependencies (including dev)
+ccbox --deps-prod        # Install production dependencies only
+ccbox --no-deps          # Skip dependency installation
+
+# Isolation modes
+ccbox --bare             # Vanilla Claude Code: no CCO, no host settings
+
+# Management
+ccbox update             # Rebuild base image with latest Claude Code
+ccbox update -s go       # Rebuild specific stack
+ccbox update -a          # Rebuild all installed images
+ccbox clean              # Remove all ccbox containers and images
+ccbox doctor             # Check system status and project detection
+ccbox stacks             # List available stacks
+```
+
+## CLI Options
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--yes` | `-y` | Unattended mode: auto-confirm all prompts |
+| `--stack` | `-s` | Select language stack (auto=detect from project) |
+| `--build` | `-b` | Build image only (no start) |
+| `--path` | | Project path (default: current dir) |
+| `--chdir` | `-C` | Change to directory before running |
+| `--bare` | | Vanilla mode: auth only, no CCO/settings |
+| `--deps` | | Install all dependencies (including dev) |
+| `--deps-prod` | | Install production dependencies only |
+| `--no-deps` | | Skip dependency installation |
+| `--debug` | `-d` | Debug mode (`-d` logs, `-dd` + stream) |
+| `--debug-logs` | | Persist debug logs (default: ephemeral) |
+| `--prompt` | `-p` | Initial prompt (enables `--print` + `--verbose`) |
+| `--model` | `-m` | Model name (opus, sonnet, haiku, etc.) |
+| `--quiet` | `-q` | Quiet mode (only Claude's response) |
+| `--append-system-prompt` | | Custom instructions for Claude |
+
+## Dependencies
+
+ccbox auto-detects project dependencies and can install them in the container:
+
+### Default Behavior
+
+| Mode | Deps Prompt | Stack Prompt |
+|------|-------------|--------------|
+| Interactive (`ccbox`) | Yes, asks | Yes, shows menu |
+| Unattended (`ccbox -y`) | Auto: install all | Auto: detected stack |
+| Explicit flag (`--deps`) | Uses specified | Still prompts |
+
+### Flags
+
+```bash
+ccbox                    # Prompts: "Install dependencies? [1-All, 2-Prod, 3-Skip]"
+ccbox -y                 # Auto: installs all deps (including dev)
+ccbox -y --no-deps       # Auto: skips deps
+ccbox -y --deps-prod     # Auto: installs production only
+ccbox --deps             # Installs all, still prompts for stack
+```
+
+### Supported Package Managers
+
+| Language | Package Managers |
+|----------|-----------------|
+| Python | pip, poetry, pipenv, uv, conda |
+| Node.js | npm, pnpm, yarn, bun |
+| Go | go mod |
+| Rust | cargo |
+| Java/Kotlin/Scala | maven, gradle, sbt |
+| Ruby | bundler |
+| PHP | composer |
+| .NET | dotnet, nuget |
+| Elixir | mix |
+| Haskell | stack, cabal |
+| Swift | swift pm |
+| Dart/Flutter | pub |
+| And more... | R, Julia, Clojure, Zig, Nim, OCaml, Perl, C/C++ |
+
+### How It Works
+
+1. Dependencies detected from lockfiles/manifests
+2. Project-specific Docker image built with deps
+3. Container starts with all deps pre-installed
+
+## Stacks
+
+ccbox auto-detects your project type and shows an interactive menu:
+
+| Stack | Contents | Size |
+|-------|----------|------|
+| `minimal` | Node.js + Python + tools (no CCO) | ~400MB |
+| `base` | minimal + CCO (default) | ~450MB |
+| `go` | Go + Node.js + Python + CCO | ~750MB |
+| `rust` | Rust + Node.js + Python + CCO | ~900MB |
+| `java` | JDK (Temurin LTS) + Maven + CCO | ~1000MB |
+| `web` | base + pnpm (fullstack) | ~500MB |
+| `full` | base + Go + Rust + Java | ~1350MB |
+
+Detection rules:
+- `pyproject.toml` or `requirements.txt` → `base` (includes Python)
+- `go.mod` → `go`
+- `Cargo.toml` → `rust`
+- `pom.xml` or `build.gradle` → `java`
+- `package.json` + `pyproject.toml` → `web`
+- Only `package.json` or nothing → `base`
 
 ## Mount Strategy
 
@@ -103,115 +238,95 @@ Vanilla Claude Code without any customizations:
 
 > **Note:** Use `ccbox update` to refresh ccbox to latest version.
 
-## Commands
+## Security
 
-```bash
-# Basic usage
-ccbox                    # Run Claude Code (auto-detect stack, auto-build)
-ccbox -s base            # Use specific stack
-ccbox -b                 # Build image only (no start)
-ccbox -C /path/to/dir    # Run in different directory (like git -C)
+### Threat Model
 
-# Prompt mode (non-interactive)
-ccbox -p "fix the bug"   # Send prompt, show verbose output, exit
-ccbox -p "explain" -q    # Quiet mode: show only Claude's response
-ccbox -p "test" -m haiku # Use specific model
+**What ccbox protects:**
+- Host filesystem outside project directory
+- Other projects on your machine
+- System files and configurations
 
-# Debug mode
-ccbox -d                 # Show entrypoint debug logs
-ccbox -dd                # + Stream all Claude output (tool calls, progress)
-ccbox --debug-logs       # Persist debug logs (default: ephemeral tmpfs)
+**What ccbox does NOT protect:**
+- Secrets inside your project directory (e.g., `.env` files)
+- Content of prompts sent to Claude API (goes to Anthropic)
+- `~/.claude` contents (credentials, settings, memory)
 
-# Dependencies (auto-detected, prompts if found)
-ccbox --deps             # Install all dependencies (including dev)
-ccbox --deps-prod        # Install production dependencies only
-ccbox --no-deps          # Skip dependency installation
+**Design assumption:** The project directory you mount is trusted. Claude can read/write anything in it.
 
-# Isolation modes
-ccbox --bare             # Vanilla Claude Code: no CCO, no host settings
+### Container Isolation
 
-# Management
-ccbox update             # Rebuild base image with latest Claude Code
-ccbox update -s go       # Rebuild specific stack
-ccbox update -a          # Rebuild all installed images
-ccbox clean              # Remove all ccbox containers and images
-ccbox doctor             # Check system status and project detection
-ccbox stacks             # List available stacks
+| Protection | How It Works |
+|------------|--------------|
+| **Project isolation** | Only current directory mounted, nothing else accessible |
+| **Capability drop** | `--cap-drop=ALL` removes all Linux capabilities |
+| **No privilege escalation** | `--security-opt=no-new-privileges` prevents gaining root |
+| **Fork bomb protection** | `--pids-limit=512` limits process count |
+| **Memory-only temp** | `/tmp` and `/var/tmp` use tmpfs (no disk writes) |
+| **Ephemeral logs** | Debug logs use tmpfs by default (no disk residue) |
+| **Path validation** | Config paths validated to prevent directory traversal |
+
+### Network Access
+
+Claude Code requires internet access to communicate with the Anthropic API. ccbox does **not** restrict network access (`--network=none` would break Claude).
+
+**What this means:**
+- Claude can make API calls to Anthropic
+- Claude can fetch from URLs if instructed
+- Network isolation is NOT a security boundary in ccbox
+
+**The security model relies on:**
+- Filesystem isolation (only project dir accessible)
+- Capability restrictions (no system-level access)
+- Process limits (no resource exhaustion)
+
+### Permission Model
+
+ccbox runs Claude Code with `--dangerously-skip-permissions` because the container itself provides isolation:
+
+```
+What Claude CAN do inside container:
+✓ Read/write project files (your mounted directory)
+✓ Read/write Claude settings (~/.claude)
+✓ Run any command (npm, git, etc.)
+✓ Install packages (npm install, pip install)
+✓ Create/delete files in project
+✓ Make network requests (API calls, fetches)
+
+What Claude CANNOT do:
+✗ Access files outside mounted directories
+✗ Access other projects on your machine
+✗ Access your home directory (except ~/.claude)
+✗ Persist changes outside mounts (lost on exit)
+✗ Escalate privileges (no-new-privileges)
+✗ Spawn unlimited processes (pids-limit)
+✗ Use Linux capabilities (cap-drop=ALL)
 ```
 
-## CLI Options
+### UID/GID Remapping
 
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--stack` | `-s` | Select language stack |
-| `--build` | `-b` | Build image only (no start) |
-| `--path` | | Project path (default: current dir) |
-| `--chdir` | `-C` | Change to directory before running |
-| `--bare` | | Vanilla mode: auth only, no CCO/settings |
-| `--deps` | | Install all dependencies (including dev) |
-| `--deps-prod` | | Install production dependencies only |
-| `--no-deps` | | Skip dependency installation |
-| `--debug` | `-d` | Debug mode (`-d` logs, `-dd` + stream) |
-| `--debug-logs` | | Persist debug logs (default: ephemeral) |
-| `--prompt` | `-p` | Initial prompt (enables `--print` + `--verbose`) |
-| `--model` | `-m` | Model name (opus, sonnet, haiku, etc.) |
-| `--quiet` | `-q` | Quiet mode (only Claude's response) |
-| `--append-system-prompt` | | Custom instructions for Claude |
+ccbox automatically detects your host user's UID/GID and remaps the container user to match. This ensures:
+- Files created by Claude have correct ownership
+- No permission issues when editing files
+- Works seamlessly across Linux, macOS, and WSL
 
-## Stacks
+### CCO Injection
 
-ccbox auto-detects your project type and shows an interactive menu:
+CCO (Claude Code Optimizer) is installed inside the container image, not on your host:
 
-| Stack | Contents | Size |
-|-------|----------|------|
-| `minimal` | Node.js + Python + tools (no CCO) | ~400MB |
-| `base` | minimal + CCO (default) | ~450MB |
-| `go` | Go + Node.js + Python + CCO | ~750MB |
-| `rust` | Rust + Node.js + Python + CCO | ~900MB |
-| `java` | JDK (Temurin LTS) + Maven + CCO | ~1000MB |
-| `web` | base + pnpm (fullstack) | ~500MB |
-| `full` | base + Go + Rust + Java | ~1350MB |
+**Normal mode:**
+1. Host `~/.claude/` mounted directly (read/write)
+2. CCO files from `/opt/cco/` copied to `~/.claude/` (merges with your files)
+3. CCO's `CLAUDE.md` copied to project's `.claude/`
+4. CCO files persist on host between runs
 
-Detection rules:
-- `pyproject.toml` or `requirements.txt` → `base` (includes Python)
-- `go.mod` → `go`
-- `Cargo.toml` → `rust`
-- `pom.xml` or `build.gradle` → `java`
-- `package.json` + `pyproject.toml` → `web`
-- Only `package.json` or nothing → `base`
+**Bare mode:**
+1. Host `~/.claude/` mounted (read/write for credentials)
+2. tmpfs overlays hide customization dirs
+3. No CCO injection
+4. Result: Vanilla Claude Code
 
-## Dependencies
-
-ccbox auto-detects project dependencies and prompts to install them:
-
-```bash
-ccbox
-# Detected: pip (pyproject.toml), npm (package.json)
-# Install dependencies? [1-All, 2-Prod, 3-Skip]
-```
-
-**Supported package managers:**
-
-| Language | Package Managers |
-|----------|-----------------|
-| Python | pip, poetry, pipenv, uv, conda |
-| Node.js | npm, pnpm, yarn, bun |
-| Go | go mod |
-| Rust | cargo |
-| Java/Kotlin/Scala | maven, gradle, sbt |
-| Ruby | bundler |
-| PHP | composer |
-| .NET | dotnet, nuget |
-| Elixir | mix |
-| Haskell | stack, cabal |
-| Swift | swift pm |
-| Dart/Flutter | pub |
-| And more... | R, Julia, Clojure, Zig, Nim, OCaml, Perl, C/C++ |
-
-**How it works:**
-1. Dependencies detected from lockfiles/manifests
-2. Project-specific Docker image built with deps
-3. Container starts with all deps pre-installed
+**Updating CCO:** Run `ccbox update` to rebuild images with latest CCO version.
 
 ## Multiple Projects
 
@@ -248,65 +363,6 @@ ccbox:full
 Containers: `ccbox-{project-name}-{uuid}`
 
 Running `ccbox` in the same project reuses the same image, no duplicates.
-
-## Security
-
-### Container Isolation
-
-| Protection | How It Works |
-|------------|--------------|
-| **Project isolation** | Only current directory mounted, nothing else accessible |
-| **No privilege escalation** | `--security-opt=no-new-privileges` prevents gaining root |
-| **Fork bomb protection** | `--pids-limit=512` limits process count |
-| **Memory-only temp** | `/tmp` and `/var/tmp` use tmpfs (no disk writes) |
-| **Ephemeral logs** | Debug logs use tmpfs by default (no disk residue) |
-| **Path validation** | Config paths validated to prevent directory traversal |
-
-### Permission Model
-
-ccbox runs Claude Code with bypass mode (`--dangerously-skip-permissions`) because the container itself provides isolation:
-
-```
-What Claude CAN do inside container:
-✓ Read/write project files (your mounted directory)
-✓ Read/write Claude settings (~/.claude)
-✓ Run any command (npm, git, etc.)
-✓ Install packages (npm install, pip install)
-✓ Create/delete files in project
-
-What Claude CANNOT do:
-✗ Access files outside mounted directories
-✗ Access other projects on your machine
-✗ Access your home directory (except ~/.claude)
-✗ Persist changes outside mounts (lost on exit)
-✗ Escalate privileges (no-new-privileges)
-✗ Spawn unlimited processes (pids-limit)
-```
-
-### UID/GID Remapping
-
-ccbox automatically detects your host user's UID/GID and remaps the container user to match. This ensures:
-- Files created by Claude have correct ownership
-- No permission issues when editing files
-- Works seamlessly across Linux, macOS, and WSL
-
-### CCO Injection
-
-CCO (Claude Code Optimizer) is installed inside the container image, not on your host:
-
-**Normal mode:**
-1. Host `~/.claude/` mounted directly (read/write)
-2. CCO files from `/opt/cco/` copied to `~/.claude/` (merges with your files)
-3. CCO's `CLAUDE.md` copied to project's `.claude/`
-4. CCO files persist on host between runs
-
-**Bare mode:**
-1. Host `~/.claude/` mounted (read/write for credentials)
-2. tmpfs overlays hide customization dirs
-3. No CCO injection
-4. Result: Vanilla Claude Code
-
-**Updating CCO:** Run `ccbox update` to rebuild images with latest CCO version.
 
 ## Requirements
 

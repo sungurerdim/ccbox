@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2025-12-29
+
 ### Added
 
 - **Docker-based isolation**: Run Claude Code in secure Docker containers with project directory mounting
@@ -30,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Comprehensive CLI**: Rich console output with colors, tables, and panels
 - **Cross-platform support**: Windows, macOS, Linux, and ARM64 architectures
 - **Dynamic UID/GID mapping**: Automatic user ID remapping for cross-platform file permissions
+- **Unattended mode**: `-y/--yes` flag for fully automated operation without prompts
 - **Prompt mode**: Non-interactive usage with `--prompt/-p` flag
   - Enables `--print` mode automatically
   - Enables `--verbose` automatically (unless `--quiet`)
@@ -74,12 +77,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - Container isolation with project-only mounting (no full host access)
+- `--cap-drop=ALL` drops all Linux capabilities (minimal attack surface)
+- `--security-opt=no-new-privileges` prevents privilege escalation
+- `--pids-limit=512` protects against fork bombs
 - Tmpfs for temp directories (`/tmp`, `/var/tmp`) - no disk residue
 - Tmpfs overlays for CCO directories (rules, commands, agents, skills)
 - Path validation to prevent directory traversal attacks
 - Git credentials passed via environment variables (not mounted files)
-- `--security-opt=no-new-privileges` prevents privilege escalation
-- `--pids-limit=512` protects against fork bombs
 - Debug logs ephemeral by default (tmpfs)
 - Host CLAUDE.md overridden with empty file for isolation
 
