@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import os
 import re
-import subprocess
 from pathlib import Path
 
 # Cached WSL detection result
@@ -199,50 +198,3 @@ def resolve_for_docker(path: Path) -> str:
     return path_str
 
 
-def resolve_project_path(path: str | Path) -> tuple[Path, str]:
-    """Resolve project path for both local operations and Docker mounts.
-
-    This provides a single function that returns both the local path
-    (for file operations) and the Docker-compatible path (for mounts).
-
-    Args:
-        path: Path string or Path object to resolve.
-
-    Returns:
-        Tuple of (local_path, docker_path) where:
-        - local_path: Resolved Path object for local filesystem operations
-        - docker_path: String path suitable for Docker volume mounts
-    """
-    local_path = Path(path).resolve()
-    docker_path = resolve_for_docker(local_path)
-    return local_path, docker_path
-
-
-def get_wsl_windows_path(path: Path) -> str | None:
-    """Get Windows path for a WSL path using wslpath.
-
-    Only works when running inside WSL.
-
-    Args:
-        path: WSL path to convert.
-
-    Returns:
-        Windows path string, or None if conversion failed.
-    """
-    if not is_wsl():
-        return None
-
-    try:
-        result = subprocess.run(
-            ["wslpath", "-w", str(path)],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=5,
-        )
-        if result.returncode == 0:
-            return result.stdout.strip()
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-
-    return None
