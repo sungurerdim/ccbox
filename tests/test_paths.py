@@ -10,7 +10,6 @@ from ccbox.paths import (
     is_windows_path,
     is_wsl,
     resolve_for_docker,
-    resolve_project_path,
     windows_to_docker_path,
     wsl_to_docker_path,
 )
@@ -172,27 +171,6 @@ class TestResolveForDocker:
         mock_path = MockPath()
         result = resolve_for_docker(mock_path)  # type: ignore[arg-type]
         assert result == "/d/GitHub/Project"
-
-
-class TestResolveProjectPath:
-    """Tests for resolve_project_path function."""
-
-    def test_returns_tuple(self) -> None:
-        local_path, docker_path = resolve_project_path(".")
-        assert isinstance(local_path, Path)
-        assert isinstance(docker_path, str)
-
-    def test_local_path_is_resolved(self) -> None:
-        local_path, _ = resolve_project_path(".")
-        assert local_path.is_absolute()
-
-    def test_docker_path_for_wsl(self) -> None:
-        # Create a mock that simulates WSL path
-        with patch("ccbox.paths.Path") as mock_path_class:
-            mock_resolved = mock_path_class.return_value.resolve.return_value
-            mock_resolved.__str__ = lambda self: "/mnt/c/Users/test/project"
-            local_path, docker_path = resolve_project_path("/mnt/c/Users/test/project")
-            assert docker_path == "/c/Users/test/project"
 
 
 class TestIsWsl:

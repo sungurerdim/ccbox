@@ -17,6 +17,7 @@ from rich.table import Table
 
 from . import __version__
 from .config import (
+    DOCKER_COMMAND_TIMEOUT,
     STACK_DEPENDENCIES,
     STACK_INFO,
     Config,
@@ -39,11 +40,13 @@ ERR_DOCKER_NOT_RUNNING = "[red]Error: Docker is not running.[/red]"
 
 # Timeout constants (seconds)
 DOCKER_BUILD_TIMEOUT = 600  # 10 min for image builds
-DOCKER_COMMAND_TIMEOUT = 30  # 30s for docker info/inspect/version
+# DOCKER_COMMAND_TIMEOUT imported from config
 PRUNE_TIMEOUT = 60  # 60s for prune operations
 
 # Validation constants
 MAX_PROMPT_LENGTH = 5000  # Maximum characters for --prompt parameter
+MAX_SYSTEM_PROMPT_LENGTH = 10000  # Maximum characters for --append-system-prompt
+VALID_MODELS = {"opus", "sonnet", "haiku"}  # Known Claude models
 
 # Prune settings
 PRUNE_CACHE_AGE = "168h"  # 7 days - keep recent build cache
@@ -483,6 +486,11 @@ def get_git_config() -> tuple[str, str]:
     is_flag=True,
     help="Skip automatic cleanup of stale Docker resources",
 )
+@click.option(
+    "--no-inhibit-sleep",
+    is_flag=True,
+    help="Allow system sleep during execution",
+)
 @click.pass_context
 @click.version_option(version=__version__, prog_name="ccbox")
 def cli(
@@ -501,6 +509,7 @@ def cli(
     quiet: bool,
     append_system_prompt: str | None,
     no_prune: bool,
+    no_inhibit_sleep: bool,
 ) -> None:
     """ccbox - Run Claude Code in isolated Docker containers.
 
@@ -525,6 +534,23 @@ def cli(
             )
             sys.exit(1)
 
+    # Validate append-system-prompt parameter
+    if append_system_prompt is not None and len(append_system_prompt) > MAX_SYSTEM_PROMPT_LENGTH:
+        console.print(
+            f"[red]Error: --append-system-prompt must be "
+            f"{MAX_SYSTEM_PROMPT_LENGTH} characters or less[/red]"
+        )
+        sys.exit(1)
+
+    # Validate model parameter (warn if unknown, don't block)
+    if model is not None:
+        model_lower = model.lower()
+        if model_lower not in VALID_MODELS:
+            console.print(
+                f"[yellow]Warning: Unknown model '{model}'. "
+                f"Known models: {', '.join(sorted(VALID_MODELS))}[/yellow]"
+            )
+
     _run(
         stack,
         build,
@@ -539,6 +565,7 @@ def cli(
         append_system_prompt=append_system_prompt,
         unattended=yes,
         prune=not no_prune,
+        inhibit_sleep=not no_inhibit_sleep,
     )
 
 
@@ -747,6 +774,7 @@ def _execute_container(
     append_system_prompt: str | None = None,
     project_image: str | None = None,
     deps_list: list[DepsInfo] | None = None,
+    inhibit_sleep: bool = True,
 ) -> None:
     """Execute the container with Claude Code.
 
@@ -764,6 +792,7 @@ def _execute_container(
         append_system_prompt: Custom instructions to append to system prompt.
         project_image: Project-specific image with deps (overrides stack image).
         deps_list: List of detected dependencies (for cache mounts).
+        inhibit_sleep: If True, prevent system sleep during execution.
     """
     console.print("[dim]Starting Claude Code...[/dim]\n")
 
@@ -787,10 +816,18 @@ def _execute_container(
         console.print(f"[red]Error: {e}[/red]")
         sys.exit(1)
 
+    # Stream mode (-dd): close stdin for watch-only (no user input)
+    stdin = subprocess.DEVNULL if debug >= 2 else None
+
     try:
-        # Stream mode (-dd): close stdin for watch-only (no user input)
-        stdin = subprocess.DEVNULL if debug >= 2 else None
-        subprocess.run(cmd, check=True, stdin=stdin)
+        if inhibit_sleep:
+            from .sleepctl import run_with_sleep_inhibition
+
+            returncode = run_with_sleep_inhibition(cmd, stdin=stdin)
+            if returncode not in (0, 130):  # 130 = Ctrl+C
+                sys.exit(returncode)
+        else:
+            subprocess.run(cmd, check=True, stdin=stdin)
     except subprocess.CalledProcessError as e:
         if e.returncode != 130:
             sys.exit(e.returncode)
@@ -915,6 +952,7 @@ def _try_run_existing_image(
     model: str | None = None,
     quiet: bool = False,
     append_system_prompt: str | None = None,
+    inhibit_sleep: bool = True,
 ) -> bool:
     """Try to run using existing project image. Returns True if handled."""
     if not _project_image_exists(project_name, stack):
@@ -952,6 +990,7 @@ def _try_run_existing_image(
         append_system_prompt=append_system_prompt,
         project_image=project_image,
         deps_list=deps_list,
+        inhibit_sleep=inhibit_sleep,
     )
     return True
 
@@ -972,6 +1011,7 @@ def _build_and_run(
     model: str | None = None,
     quiet: bool = False,
     append_system_prompt: str | None = None,
+    inhibit_sleep: bool = True,
 ) -> None:
     """Build images and run container (Phase 3)."""
     console.print()
@@ -1026,6 +1066,7 @@ def _build_and_run(
         append_system_prompt=append_system_prompt,
         project_image=built_project_image,
         deps_list=deps_list if resolved_deps_mode != DepsMode.SKIP else None,
+        inhibit_sleep=inhibit_sleep,
     )
 
 
@@ -1044,6 +1085,7 @@ def _run(
     append_system_prompt: str | None = None,
     unattended: bool = False,
     prune: bool = True,
+    inhibit_sleep: bool = True,
 ) -> None:
     """Run Claude Code in Docker container."""
     if not check_docker():
@@ -1088,6 +1130,7 @@ def _run(
         model=model,
         quiet=quiet,
         append_system_prompt=append_system_prompt,
+        inhibit_sleep=inhibit_sleep,
     ):
         return
 
@@ -1135,6 +1178,7 @@ def _run(
         model=model,
         quiet=quiet,
         append_system_prompt=append_system_prompt,
+        inhibit_sleep=inhibit_sleep,
     )
 
 

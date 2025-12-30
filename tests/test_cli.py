@@ -592,6 +592,7 @@ class TestMainRunFlow:
             patch("ccbox.cli.detect_dependencies", return_value=[]),
             patch("ccbox.cli.image_exists", return_value=True),
             patch("subprocess.run"),
+            patch("ccbox.sleepctl.run_with_sleep_inhibition", return_value=0),
         ):
             from ccbox.detector import DetectionResult
 
@@ -884,6 +885,7 @@ class TestRunFlowExtended:
             patch("ccbox.cli.image_exists", side_effect=image_exists_side_effect),
             patch("ccbox.cli.build_image", return_value=True),
             patch("subprocess.run"),
+            patch("ccbox.sleepctl.run_with_sleep_inhibition", return_value=0),
         ):
             from ccbox.detector import DetectionResult
 
@@ -932,17 +934,9 @@ class TestRunFlowExtended:
         """Test keyboard interrupt handling during container execution."""
         runner = CliRunner()
 
-        # Mock subprocess.run to raise KeyboardInterrupt only for docker run
-        def subprocess_side_effect(*args: object, **kwargs: object) -> object:
-            cmd = args[0] if args else kwargs.get("args", [])
-            if isinstance(cmd, list) and "run" in cmd:
-                raise KeyboardInterrupt
-            from unittest.mock import MagicMock
-
-            result = MagicMock()
-            result.returncode = 0
-            result.stdout = ""
-            return result
+        # Mock run_with_sleep_inhibition to raise KeyboardInterrupt
+        def sleep_inhibit_side_effect(*args: object, **kwargs: object) -> int:
+            raise KeyboardInterrupt
 
         with (
             patch("ccbox.cli.check_docker", return_value=True),
@@ -952,7 +946,11 @@ class TestRunFlowExtended:
             patch("ccbox.cli.image_exists", return_value=True),
             patch("ccbox.cli._project_image_exists", return_value=False),
             patch("ccbox.cli.build_image", return_value=True),
-            patch("subprocess.run", side_effect=subprocess_side_effect),
+            patch("subprocess.run"),
+            patch(
+                "ccbox.sleepctl.run_with_sleep_inhibition",
+                side_effect=sleep_inhibit_side_effect,
+            ),
         ):
             from ccbox.detector import DetectionResult
 
@@ -1263,6 +1261,7 @@ class TestChdirOption:
             patch("ccbox.cli.detect_project_type") as mock_detect,
             patch("ccbox.cli.image_exists", return_value=True),
             patch("subprocess.run"),  # Mock docker run
+            patch("ccbox.sleepctl.run_with_sleep_inhibition", return_value=0),
         ):
             from ccbox.detector import DetectionResult
 
@@ -1294,6 +1293,7 @@ class TestInteractiveStackSelection:
             patch("ccbox.cli.detect_project_type") as mock_detect,
             patch("ccbox.cli.image_exists", return_value=True),
             patch("subprocess.run"),
+            patch("ccbox.sleepctl.run_with_sleep_inhibition", return_value=0),
         ):
             from ccbox.detector import DetectionResult
 
