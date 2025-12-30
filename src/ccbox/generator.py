@@ -360,6 +360,7 @@ export UV_THREADPOOL_SIZE=$(nproc)
 _log_verbose "NODE_OPTIONS: $NODE_OPTIONS"
 _log_verbose "UV_THREADPOOL_SIZE: $UV_THREADPOOL_SIZE"
 
+git config --global core.fileMode false 2>/dev/null || true
 git config --global --add safe.directory '*' 2>/dev/null || true
 
 # Verify claude command exists
