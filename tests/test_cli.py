@@ -9,6 +9,12 @@ from unittest.mock import MagicMock, patch
 from click.testing import CliRunner
 
 from ccbox.cli import (
+    _cleanup_ccbox_dangling_images,
+    _get_ccbox_image_ids,
+    _get_dangling_image_ids,
+    _image_has_ccbox_parent,
+    _remove_ccbox_containers,
+    _remove_ccbox_images,
     _start_docker_desktop,
     build_image,
     check_docker,
@@ -992,6 +998,164 @@ class TestCleanCommand:
             assert "complete" in result.output.lower()
 
 
+class TestPruneCommand:
+    """Tests for prune command (deep clean)."""
+
+    def test_prune_requires_confirmation(self) -> None:
+        """Test prune requires confirmation without --force."""
+        runner = CliRunner()
+        with patch("ccbox.cli.check_docker", return_value=True):
+            result = runner.invoke(cli, ["prune"], input="n\n")
+            assert result.exit_code == 0
+            assert "Cancelled" in result.output
+
+    def test_prune_with_force_flag(self) -> None:
+        """Test prune skips confirmation with --force."""
+        runner = CliRunner()
+        with (
+            patch("ccbox.cli.check_docker", return_value=True),
+            patch("subprocess.run") as mock_run,
+            patch("pathlib.Path.exists", return_value=False),
+        ):
+            mock_run.return_value = MagicMock(stdout="", returncode=0)
+            result = runner.invoke(cli, ["prune", "-f"])
+            assert result.exit_code == 0
+            assert "Deep clean complete" in result.output
+
+    def test_prune_no_docker(self) -> None:
+        """Test prune when Docker is not running."""
+        runner = CliRunner()
+        with patch("ccbox.cli.check_docker", return_value=False):
+            result = runner.invoke(cli, ["prune", "-f"])
+            assert result.exit_code == 1
+            assert "Docker" in result.output
+
+    def test_prune_only_targets_ccbox_resources(self) -> None:
+        """Test prune only removes ccbox-prefixed resources."""
+        runner = CliRunner()
+        with (
+            patch("ccbox.cli.check_docker", return_value=True),
+            patch("subprocess.run") as mock_run,
+            patch("pathlib.Path.exists", return_value=False),
+        ):
+            mock_run.return_value = MagicMock(stdout="ccbox-project-abc123\n", returncode=0)
+            result = runner.invoke(cli, ["prune", "-f"])
+            assert result.exit_code == 0
+            # Verify docker commands target ccbox- prefix
+            calls = [str(call) for call in mock_run.call_args_list]
+            assert any("ccbox-" in call for call in calls)
+
+
+class TestPruneSystemFlag:
+    """Tests for prune --system flag (full Docker cleanup)."""
+
+    def test_prune_system_requires_confirmation(self) -> None:
+        """Test prune --system requires confirmation."""
+        runner = CliRunner()
+        with (
+            patch("ccbox.cli.check_docker", return_value=True),
+            patch("ccbox.cli._get_docker_disk_usage", return_value={
+                "containers": "0B", "images": "1GB", "volumes": "500MB", "cache": "2GB"
+            }),
+        ):
+            result = runner.invoke(cli, ["prune", "--system"], input="n\n")
+            assert result.exit_code == 0
+            assert "Cancelled" in result.output
+
+    def test_prune_system_shows_warning(self) -> None:
+        """Test prune --system shows warning about affecting all Docker projects."""
+        runner = CliRunner()
+        with (
+            patch("ccbox.cli.check_docker", return_value=True),
+            patch("ccbox.cli._get_docker_disk_usage", return_value={
+                "containers": "0B", "images": "1GB", "volumes": "500MB", "cache": "2GB"
+            }),
+        ):
+            result = runner.invoke(cli, ["prune", "--system"], input="n\n")
+            assert "WARNING" in result.output
+            assert "ALL Docker projects" in result.output
+
+    def test_prune_system_with_force(self) -> None:
+        """Test prune --system -f skips confirmation."""
+        runner = CliRunner()
+        with (
+            patch("ccbox.cli.check_docker", return_value=True),
+            patch("subprocess.run") as mock_run,
+            patch("ccbox.cli._get_docker_disk_usage", return_value={
+                "containers": "0B", "images": "0B", "volumes": "0B", "cache": "0B"
+            }),
+        ):
+            mock_run.return_value = MagicMock(stdout="", returncode=0)
+            result = runner.invoke(cli, ["prune", "--system", "-f"])
+            assert result.exit_code == 0
+            assert "System cleanup complete" in result.output
+
+    def test_prune_system_shows_disk_usage_table(self) -> None:
+        """Test prune --system shows disk usage table."""
+        runner = CliRunner()
+        with (
+            patch("ccbox.cli.check_docker", return_value=True),
+            patch("ccbox.cli._get_docker_disk_usage", return_value={
+                "containers": "0B", "images": "1.5GB", "volumes": "500MB", "cache": "3GB"
+            }),
+        ):
+            result = runner.invoke(cli, ["prune", "--system"], input="n\n")
+            assert "Containers" in result.output
+            assert "Images" in result.output
+            assert "Volumes" in result.output
+            assert "Build Cache" in result.output
+
+    def test_prune_system_help_shows_option(self) -> None:
+        """Test --system option appears in help."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["prune", "--help"])
+        assert "--system" in result.output
+        assert "Docker system" in result.output or "entire Docker" in result.output
+
+
+class TestPruneStaleResources:
+    """Tests for pre-run stale resource cleanup."""
+
+    def test_prune_stale_resources_removes_exited_containers(self) -> None:
+        """Test _prune_stale_resources removes exited ccbox containers."""
+        from ccbox.cli import _prune_stale_resources
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(stdout="abc123\ndef456\n", returncode=0)
+            results = _prune_stale_resources(verbose=False)
+            assert results["containers"] == 2
+
+    def test_prune_stale_resources_no_containers(self) -> None:
+        """Test _prune_stale_resources when no stale containers exist."""
+        from ccbox.cli import _prune_stale_resources
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(stdout="", returncode=0)
+            results = _prune_stale_resources(verbose=False)
+            assert results["containers"] == 0
+
+    def test_prune_stale_resources_timeout_handling(self) -> None:
+        """Test _prune_stale_resources handles timeout gracefully."""
+        from subprocess import TimeoutExpired
+
+        from ccbox.cli import _prune_stale_resources
+
+        with patch("subprocess.run", side_effect=TimeoutExpired(cmd="docker", timeout=30)):
+            results = _prune_stale_resources(verbose=False)
+            assert results["containers"] == 0
+
+
+class TestNoPruneFlag:
+    """Tests for --no-prune CLI flag."""
+
+    def test_no_prune_flag_in_help(self) -> None:
+        """Test --no-prune flag appears in help."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--help"])
+        assert "--no-prune" in result.output
+        assert "Skip automatic cleanup" in result.output
+
+
 class TestDoctorDiskCheck:
     """Tests for doctor disk space check."""
 
@@ -1387,3 +1551,382 @@ class TestBenchmarkCLIOptions:
             assert "--dangerously-skip-permissions" in cmd_bare
         finally:
             claude_dir.rmdir()
+
+
+class TestCleanupCCBoxDanglingImages:
+    """Tests for _cleanup_ccbox_dangling_images() function.
+
+    This function is called after each build to prevent disk accumulation
+    from intermediate build layers. It ONLY removes dangling images whose
+    parent chain includes a ccbox image - non-ccbox dangling images are preserved.
+    """
+
+    def test_no_ccbox_images_returns_zero(self) -> None:
+        """When no ccbox images exist, nothing should be removed."""
+        with patch("ccbox.cli.subprocess.run") as mock_run:
+            # Mock: no ccbox images found
+            ccbox_result = MagicMock()
+            ccbox_result.returncode = 0
+            ccbox_result.stdout = ""
+            mock_run.return_value = ccbox_result
+
+            result = _cleanup_ccbox_dangling_images()
+            assert result == 0
+            # Only one call made (to get ccbox images)
+            assert mock_run.call_count == 1
+
+    def test_no_dangling_images_returns_zero(self) -> None:
+        """When ccbox images exist but no dangling images, nothing removed."""
+        with patch("ccbox.cli.subprocess.run") as mock_run:
+            def side_effect(*args: object, **kwargs: object) -> MagicMock:
+                cmd = args[0]
+                result = MagicMock()
+                result.returncode = 0
+
+                if "images" in cmd and "ccbox" in cmd:
+                    # ccbox images exist
+                    result.stdout = "abc123\ndef456"
+                elif "dangling=true" in str(cmd):
+                    # No dangling images
+                    result.stdout = ""
+                return result
+
+            mock_run.side_effect = side_effect
+
+            result = _cleanup_ccbox_dangling_images()
+            assert result == 0
+
+    def test_dangling_without_ccbox_parent_not_removed(self) -> None:
+        """Dangling images not from ccbox should NOT be removed."""
+        with patch("ccbox.cli.subprocess.run") as mock_run:
+            def side_effect(*args: object, **kwargs: object) -> MagicMock:
+                cmd = args[0]
+                result = MagicMock()
+                result.returncode = 0
+
+                if "images" in cmd and "--format" in cmd:
+                    # ccbox images
+                    result.stdout = "ccbox111\nccbox222"
+                elif "dangling=true" in str(cmd):
+                    # Dangling image exists
+                    result.stdout = "dangle999"
+                elif "history" in cmd:
+                    # History shows NO ccbox parent (different IDs)
+                    result.stdout = "other111\nother222\nother333"
+                return result
+
+            mock_run.side_effect = side_effect
+
+            result = _cleanup_ccbox_dangling_images()
+            # Nothing removed because dangling has no ccbox parent
+            assert result == 0
+            # No docker rmi calls made
+            for call in mock_run.call_args_list:
+                assert "rmi" not in str(call)
+
+    def test_dangling_with_ccbox_parent_removed(self) -> None:
+        """Dangling images from ccbox should be removed."""
+        with patch("ccbox.cli.subprocess.run") as mock_run:
+            def side_effect(*args: object, **kwargs: object) -> MagicMock:
+                cmd = args[0]
+                result = MagicMock()
+                result.returncode = 0
+
+                if "images" in cmd and "--format" in cmd:
+                    # ccbox images
+                    result.stdout = "ccbox111\nccbox222"
+                elif "dangling=true" in str(cmd):
+                    # Dangling image exists
+                    result.stdout = "dangle999"
+                elif "history" in cmd:
+                    # History INCLUDES a ccbox parent ID
+                    result.stdout = "layer1\nccbox111\nlayer2"
+                elif "rmi" in cmd:
+                    # Successful removal
+                    result.returncode = 0
+                return result
+
+            mock_run.side_effect = side_effect
+
+            result = _cleanup_ccbox_dangling_images()
+            # One dangling image removed
+            assert result == 1
+            # Verify rmi was called
+            rmi_calls = [c for c in mock_run.call_args_list if "rmi" in str(c)]
+            assert len(rmi_calls) == 1
+
+    def test_timeout_returns_zero(self) -> None:
+        """Timeout should be handled gracefully, returning 0."""
+        import subprocess
+
+        with patch("ccbox.cli.subprocess.run") as mock_run:
+            mock_run.side_effect = subprocess.TimeoutExpired(cmd="docker", timeout=30)
+
+            result = _cleanup_ccbox_dangling_images()
+            assert result == 0
+
+    def test_docker_not_found_returns_zero(self) -> None:
+        """FileNotFoundError (docker not installed) handled gracefully."""
+        with patch("ccbox.cli.subprocess.run") as mock_run:
+            mock_run.side_effect = FileNotFoundError("docker not found")
+
+            result = _cleanup_ccbox_dangling_images()
+            assert result == 0
+
+
+class TestPromptWhitespaceValidation:
+    """Tests for prompt whitespace-only validation."""
+
+    def test_prompt_whitespace_only_rejected(self) -> None:
+        """Whitespace-only prompt should be rejected."""
+        runner = CliRunner()
+        with patch("ccbox.cli.check_docker", return_value=True):
+            result = runner.invoke(cli, ["--prompt", "   "])
+            assert result.exit_code == 1
+            assert "empty or whitespace-only" in result.output
+
+    def test_prompt_tabs_and_newlines_rejected(self) -> None:
+        """Tabs and newlines only should be rejected."""
+        runner = CliRunner()
+        with patch("ccbox.cli.check_docker", return_value=True):
+            result = runner.invoke(cli, ["--prompt", "\t\n  \t"])
+            assert result.exit_code == 1
+            assert "empty or whitespace-only" in result.output
+
+
+class TestProjectImageNameValidation:
+    """Tests for project image name length validation."""
+
+    def test_long_project_name_truncated(self) -> None:
+        """Very long project names should be truncated to fit Docker limits."""
+        from ccbox.cli import _get_project_image_name
+        from ccbox.config import LanguageStack
+
+        # 200-char project name
+        long_name = "a" * 200
+        result = _get_project_image_name(long_name, LanguageStack.BASE)
+
+        # Result should be under 128 chars total
+        assert len(result) <= 128
+        assert result.startswith("ccbox-")
+        assert result.endswith(":base")
+
+
+class TestExtractedHelperFunctions:
+    """Tests for extracted helper functions (refactored from _cleanup_ccbox_dangling_images)."""
+
+    def test_get_ccbox_image_ids_success(self) -> None:
+        """Test getting ccbox image IDs successfully."""
+        with patch("ccbox.cli.subprocess.run") as mock_run:
+            mock_result = MagicMock()
+            mock_result.returncode = 0
+            mock_result.stdout = "abc123\ndef456\nghi789"
+            mock_run.return_value = mock_result
+
+            result = _get_ccbox_image_ids()
+
+            assert result == {"abc123", "def456", "ghi789"}
+            mock_run.assert_called_once()
+            assert "ccbox" in mock_run.call_args[0][0]
+
+    def test_get_ccbox_image_ids_empty(self) -> None:
+        """Test empty result when no ccbox images."""
+        with patch("ccbox.cli.subprocess.run") as mock_run:
+            mock_result = MagicMock()
+            mock_result.returncode = 0
+            mock_result.stdout = ""
+            mock_run.return_value = mock_result
+
+            result = _get_ccbox_image_ids()
+
+            assert result == set()
+
+    def test_get_ccbox_image_ids_failure(self) -> None:
+        """Test graceful handling of docker command failure."""
+        with patch("ccbox.cli.subprocess.run") as mock_run:
+            mock_result = MagicMock()
+            mock_result.returncode = 1
+            mock_run.return_value = mock_result
+
+            result = _get_ccbox_image_ids()
+
+            assert result == set()
+
+    def test_get_dangling_image_ids_success(self) -> None:
+        """Test getting dangling image IDs successfully."""
+        with patch("ccbox.cli.subprocess.run") as mock_run:
+            mock_result = MagicMock()
+            mock_result.returncode = 0
+            mock_result.stdout = "dangle1\ndangle2"
+            mock_run.return_value = mock_result
+
+            result = _get_dangling_image_ids()
+
+            assert result == ["dangle1", "dangle2"]
+            assert "dangling=true" in str(mock_run.call_args)
+
+    def test_get_dangling_image_ids_empty(self) -> None:
+        """Test empty result when no dangling images."""
+        with patch("ccbox.cli.subprocess.run") as mock_run:
+            mock_result = MagicMock()
+            mock_result.returncode = 0
+            mock_result.stdout = ""
+            mock_run.return_value = mock_result
+
+            result = _get_dangling_image_ids()
+
+            assert result == []
+
+    def test_image_has_ccbox_parent_true(self) -> None:
+        """Test detecting ccbox parent in image history."""
+        with patch("ccbox.cli.subprocess.run") as mock_run:
+            mock_result = MagicMock()
+            mock_result.returncode = 0
+            mock_result.stdout = "layer1\nccbox123\nlayer2"
+            mock_run.return_value = mock_result
+
+            result = _image_has_ccbox_parent("test-image", {"ccbox123", "ccbox456"})
+
+            assert result is True
+            assert "history" in str(mock_run.call_args)
+
+    def test_image_has_ccbox_parent_false(self) -> None:
+        """Test no ccbox parent detected when history has no match."""
+        with patch("ccbox.cli.subprocess.run") as mock_run:
+            mock_result = MagicMock()
+            mock_result.returncode = 0
+            mock_result.stdout = "layer1\nlayer2\nlayer3"
+            mock_run.return_value = mock_result
+
+            result = _image_has_ccbox_parent("test-image", {"ccbox123", "ccbox456"})
+
+            assert result is False
+
+
+class TestSharedCleanupHelpers:
+    """Tests for shared cleanup helper functions."""
+
+    def test_remove_ccbox_containers_success(self) -> None:
+        """Test removing ccbox containers successfully."""
+        with patch("ccbox.cli.subprocess.run") as mock_run:
+            def side_effect(*args: object, **kwargs: object) -> MagicMock:
+                cmd = args[0]
+                result = MagicMock()
+                result.returncode = 0
+                if "ps" in cmd:
+                    result.stdout = "ccbox-project1\nccbox-project2"
+                return result
+
+            mock_run.side_effect = side_effect
+
+            removed = _remove_ccbox_containers()
+
+            assert removed == 2
+            # Verify docker rm was called for each container
+            rm_calls = [c for c in mock_run.call_args_list if "rm" in c[0][0]]
+            assert len(rm_calls) == 2
+
+    def test_remove_ccbox_containers_none(self) -> None:
+        """Test when no containers to remove."""
+        with patch("ccbox.cli.subprocess.run") as mock_run:
+            mock_result = MagicMock()
+            mock_result.returncode = 0
+            mock_result.stdout = ""
+            mock_run.return_value = mock_result
+
+            removed = _remove_ccbox_containers()
+
+            assert removed == 0
+
+    def test_remove_ccbox_images_success(self) -> None:
+        """Test removing ccbox images successfully."""
+        with patch("ccbox.cli.subprocess.run") as mock_run:
+            def side_effect(*args: object, **kwargs: object) -> MagicMock:
+                cmd = args[0]
+                result = MagicMock()
+
+                if "docker" in cmd and "rmi" in cmd:
+                    # Stack image removal
+                    result.returncode = 0
+                elif "docker" in cmd and "images" in cmd:
+                    # List images for project images
+                    result.returncode = 0
+                    result.stdout = "ccbox-myproject:base\nccbox-other:go\nunrelated:latest"
+                else:
+                    result.returncode = 0
+
+                return result
+
+            mock_run.side_effect = side_effect
+
+            removed = _remove_ccbox_images()
+
+            # Should have removed stack images + project images
+            assert removed >= 2  # At least 2 project images
+
+    def test_remove_ccbox_images_timeout_handled(self) -> None:
+        """Test timeout handling in image removal."""
+        import subprocess
+
+        with patch("ccbox.cli.subprocess.run") as mock_run:
+            mock_run.side_effect = subprocess.TimeoutExpired(cmd="docker", timeout=30)
+
+            removed = _remove_ccbox_images()
+
+            assert removed == 0
+
+
+class TestPruneIntegration:
+    """Integration tests for prune workflow."""
+
+    def test_prune_calls_helpers_in_order(self) -> None:
+        """Test prune command calls cleanup helpers in correct sequence."""
+        runner = CliRunner()
+        with (
+            patch("ccbox.cli.check_docker", return_value=True),
+            patch("ccbox.cli._remove_ccbox_containers", return_value=3) as mock_containers,
+            patch("ccbox.cli._remove_ccbox_images", return_value=5) as mock_images,
+            patch("ccbox.cli.shutil.rmtree") as mock_rmtree,
+            patch("ccbox.cli.Path.exists", return_value=True),
+        ):
+            result = runner.invoke(cli, ["prune", "-f"])
+
+            # Verify order: containers first, then images
+            assert mock_containers.called
+            assert mock_images.called
+            assert mock_rmtree.called
+
+            # Verify success
+            assert result.exit_code == 0
+            assert "Deep clean complete" in result.output
+            assert "3 container(s)" in result.output
+            assert "5 image(s)" in result.output
+
+    def test_prune_handles_empty_state(self) -> None:
+        """Test prune handles case where nothing to remove."""
+        runner = CliRunner()
+        with (
+            patch("ccbox.cli.check_docker", return_value=True),
+            patch("ccbox.cli._remove_ccbox_containers", return_value=0),
+            patch("ccbox.cli._remove_ccbox_images", return_value=0),
+            patch("ccbox.cli.Path.exists", return_value=False),
+        ):
+            result = runner.invoke(cli, ["prune", "-f"])
+
+            assert result.exit_code == 0
+            assert "Nothing to remove" in result.output
+
+    def test_clean_uses_shared_helpers(self) -> None:
+        """Test clean command uses shared helper functions."""
+        runner = CliRunner()
+        with (
+            patch("ccbox.cli.check_docker", return_value=True),
+            patch("ccbox.cli._remove_ccbox_containers", return_value=2) as mock_containers,
+            patch("ccbox.cli._remove_ccbox_images", return_value=3) as mock_images,
+        ):
+            result = runner.invoke(cli, ["clean", "-f"])
+
+            assert mock_containers.called
+            assert mock_images.called
+            assert result.exit_code == 0
+            assert "Cleanup complete" in result.output

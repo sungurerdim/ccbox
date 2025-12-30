@@ -40,9 +40,13 @@ ERR_DOCKER_NOT_RUNNING = "[red]Error: Docker is not running.[/red]"
 # Timeout constants (seconds)
 DOCKER_BUILD_TIMEOUT = 600  # 10 min for image builds
 DOCKER_COMMAND_TIMEOUT = 30  # 30s for docker info/inspect/version
+PRUNE_TIMEOUT = 60  # 60s for prune operations
 
 # Validation constants
 MAX_PROMPT_LENGTH = 5000  # Maximum characters for --prompt parameter
+
+# Prune settings
+PRUNE_CACHE_AGE = "168h"  # 7 days - keep recent build cache
 
 
 def _check_docker_status() -> bool:
@@ -114,6 +118,239 @@ def check_docker(auto_start: bool = True) -> bool:
     return False
 
 
+def _get_ccbox_image_ids() -> set[str]:
+    """Get all ccbox image IDs for parent chain checking.
+
+    Returns:
+        Set of ccbox image IDs, or empty set on failure.
+    """
+    try:
+        result = subprocess.run(
+            ["docker", "images", "--format", "{{.ID}}", "ccbox"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=DOCKER_COMMAND_TIMEOUT,
+        )
+        if result.returncode != 0:
+            return set()
+        ids = set(result.stdout.strip().split("\n"))
+        return ids - {""}  # Remove empty string if present
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return set()
+
+
+def _get_dangling_image_ids() -> list[str]:
+    """Get all dangling image IDs.
+
+    Returns:
+        List of dangling image IDs, or empty list on failure.
+    """
+    try:
+        result = subprocess.run(
+            ["docker", "images", "-f", "dangling=true", "-q"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=DOCKER_COMMAND_TIMEOUT,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return []
+        return [i for i in result.stdout.strip().split("\n") if i]
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return []
+
+
+def _image_has_ccbox_parent(image_id: str, ccbox_ids: set[str]) -> bool:
+    """Check if an image's parent chain includes a ccbox image.
+
+    Args:
+        image_id: Docker image ID to check.
+        ccbox_ids: Set of known ccbox image IDs.
+
+    Returns:
+        True if image has ccbox parent, False otherwise.
+    """
+    try:
+        result = subprocess.run(
+            ["docker", "history", "--no-trunc", "-q", image_id],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=DOCKER_COMMAND_TIMEOUT,
+        )
+        if result.returncode != 0:
+            return False
+        history_ids = set(result.stdout.strip().split("\n"))
+        return bool(history_ids & ccbox_ids)  # Intersection check
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+
+
+def _cleanup_ccbox_dangling_images() -> int:
+    """Post-build cleanup: remove ONLY ccbox-originated dangling images.
+
+    Called after each image build to prevent disk accumulation from rebuilds.
+    This is NOT dead code - it's essential for cleanup when users don't run
+    `ccbox prune` manually.
+
+    Safety mechanism:
+        Only removes dangling images whose parent layer chain includes a ccbox
+        image ID. Non-ccbox dangling images are left untouched.
+
+    Returns:
+        Number of ccbox dangling images removed.
+    """
+    ccbox_ids = _get_ccbox_image_ids()
+    if not ccbox_ids:
+        return 0
+
+    dangling_ids = _get_dangling_image_ids()
+    if not dangling_ids:
+        return 0
+
+    removed = 0
+    for image_id in dangling_ids:
+        if _image_has_ccbox_parent(image_id, ccbox_ids):
+            try:
+                result = subprocess.run(
+                    ["docker", "rmi", "-f", image_id],
+                    capture_output=True,
+                    check=False,
+                    timeout=DOCKER_COMMAND_TIMEOUT,
+                )
+                if result.returncode == 0:
+                    removed += 1
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                continue
+    return removed
+
+
+def _prune_stale_resources(verbose: bool = False) -> dict[str, int]:
+    """Prune stale ccbox Docker resources before run.
+
+    Only cleans ccbox-specific resources - does NOT touch other Docker projects.
+
+    Args:
+        verbose: Show prune output if True.
+
+    Returns:
+        Dict with counts of pruned resources by type.
+    """
+    results: dict[str, int] = {"containers": 0}
+
+    # Remove stopped ccbox containers (crash recovery - shouldn't exist due to --rm)
+    # Only targets containers with ccbox- prefix
+    try:
+        result = subprocess.run(
+            ["docker", "ps", "-a", "--filter", "name=ccbox-", "--filter", "status=exited", "-q"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=DOCKER_COMMAND_TIMEOUT,
+        )
+        container_ids = [c for c in result.stdout.strip().split("\n") if c]
+        if container_ids:
+            subprocess.run(
+                ["docker", "rm", "-f", *container_ids],
+                capture_output=True,
+                check=False,
+                timeout=DOCKER_COMMAND_TIMEOUT,
+            )
+            results["containers"] = len(container_ids)
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        # Log warning for debugging in CI/CD environments
+        console.print("[dim]Docker cleanup skipped (timeout or not found)[/dim]")
+
+    # Note: We don't prune global dangling images or build cache here
+    # as they may belong to other Docker projects. ccbox uses --no-cache
+    # so it doesn't create intermediate cache anyway.
+
+    # Show summary if verbose and something was pruned
+    if verbose and results["containers"] > 0:
+        console.print(f"[dim]Pruned: {results['containers']} stale container(s)[/dim]")
+
+    return results
+
+
+def _remove_ccbox_containers() -> int:
+    """Remove all ccbox containers (running + stopped).
+
+    Returns:
+        Number of containers removed.
+    """
+    try:
+        result = subprocess.run(
+            ["docker", "ps", "-a", "--filter", "name=ccbox-", "--format", "{{.Names}}"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=DOCKER_COMMAND_TIMEOUT,
+        )
+        removed = 0
+        for name in result.stdout.strip().split("\n"):
+            if name:
+                rm_result = subprocess.run(
+                    ["docker", "rm", "-f", name],
+                    capture_output=True,
+                    check=False,
+                    timeout=DOCKER_COMMAND_TIMEOUT,
+                )
+                if rm_result.returncode == 0:
+                    removed += 1
+        return removed
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return 0
+
+
+def _remove_ccbox_images() -> int:
+    """Remove all ccbox images (stacks + project images).
+
+    Returns:
+        Number of images removed.
+    """
+    removed = 0
+
+    # Remove stack images (ccbox:base, ccbox:go, etc.)
+    for stack in LanguageStack:
+        try:
+            result = subprocess.run(
+                ["docker", "rmi", "-f", get_image_name(stack)],
+                capture_output=True,
+                check=False,
+                timeout=DOCKER_COMMAND_TIMEOUT,
+            )
+            if result.returncode == 0:
+                removed += 1
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            continue
+
+    # Remove project images (ccbox-projectname:stack)
+    try:
+        images_result = subprocess.run(
+            ["docker", "images", "--format", "{{.Repository}}:{{.Tag}}"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=DOCKER_COMMAND_TIMEOUT,
+        )
+        if images_result.returncode == 0:
+            for image in images_result.stdout.strip().split("\n"):
+                if image.startswith("ccbox-"):
+                    rmi_result = subprocess.run(
+                        ["docker", "rmi", "-f", image],
+                        capture_output=True,
+                        check=False,
+                        timeout=DOCKER_COMMAND_TIMEOUT,
+                    )
+                    if rmi_result.returncode == 0:
+                        removed += 1
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+
+    return removed
+
+
 def build_image(stack: LanguageStack) -> bool:
     """Build Docker image for stack with BuildKit optimization.
 
@@ -156,8 +393,9 @@ def build_image(stack: LanguageStack) -> bool:
         )
         console.print(f"[green]✓ Built {image_name}[/green]")
 
-        # CCO files are now installed inside image at /opt/cco/
-        # No post-build host writes needed
+        # Post-build cleanup: remove ccbox-originated dangling images only
+        # Essential for preventing disk accumulation from repeated rebuilds
+        _cleanup_ccbox_dangling_images()
 
         return True
     except subprocess.CalledProcessError:
@@ -238,6 +476,11 @@ def get_git_config() -> tuple[str, str]:
     "--append-system-prompt",
     help="Append custom instructions to Claude's system prompt",
 )
+@click.option(
+    "--no-prune",
+    is_flag=True,
+    help="Skip automatic cleanup of stale Docker resources",
+)
 @click.pass_context
 @click.version_option(version=__version__, prog_name="ccbox")
 def cli(
@@ -255,6 +498,7 @@ def cli(
     model: str | None,
     quiet: bool,
     append_system_prompt: str | None,
+    no_prune: bool,
 ) -> None:
     """ccbox - Run Claude Code in isolated Docker containers.
 
@@ -270,6 +514,9 @@ def cli(
     # Validate prompt parameter
     if prompt is not None:
         prompt = prompt.strip()
+        if not prompt:
+            console.print("[red]Error: --prompt cannot be empty or whitespace-only[/red]")
+            sys.exit(1)
         if len(prompt) > MAX_PROMPT_LENGTH:
             console.print(
                 f"[red]Error: --prompt must be {MAX_PROMPT_LENGTH} characters or less[/red]"
@@ -289,6 +536,7 @@ def cli(
         quiet=quiet,
         append_system_prompt=append_system_prompt,
         unattended=yes,
+        prune=not no_prune,
     )
 
 
@@ -549,9 +797,17 @@ def _execute_container(
 
 
 def _get_project_image_name(project_name: str, stack: LanguageStack) -> str:
-    """Get project-specific image name."""
+    """Get project-specific image name.
+
+    Docker image tags have length limits (128 chars max for tag part).
+    This function sanitizes and validates the project name.
+    """
     # Sanitize project name for Docker tag
     safe_name = "".join(c if c.isalnum() or c in "-_" else "-" for c in project_name.lower())
+    # Docker tag limit is 128 chars; ccbox- prefix is 6 chars, :stack is ~10 chars max
+    max_name_len = 110
+    if len(safe_name) > max_name_len:
+        safe_name = safe_name[:max_name_len]
     return f"ccbox-{safe_name}:{stack.value}"
 
 
@@ -783,12 +1039,17 @@ def _run(
     quiet: bool = False,
     append_system_prompt: str | None = None,
     unattended: bool = False,
+    prune: bool = True,
 ) -> None:
     """Run Claude Code in Docker container."""
     if not check_docker():
         console.print(ERR_DOCKER_NOT_RUNNING)
         console.print("Start Docker and try again.")
         sys.exit(1)
+
+    # Pre-run cleanup: remove stale resources (crashed containers, dangling images, old cache)
+    if prune:
+        _prune_stale_resources(verbose=debug > 0)
 
     # Validate project path early
     project_path = Path(path).resolve()
@@ -941,51 +1202,229 @@ def clean(force: bool) -> None:
         return
 
     console.print("[dim]Removing containers...[/dim]")
-    result = subprocess.run(
-        ["docker", "ps", "-a", "--filter", "name=ccbox-", "--format", "{{.Names}}"],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=DOCKER_COMMAND_TIMEOUT,
-    )
-    for name in result.stdout.strip().split("\n"):
-        if name:
-            subprocess.run(
-                ["docker", "rm", "-f", name],
-                capture_output=True,
-                check=False,
-                timeout=DOCKER_COMMAND_TIMEOUT,
-            )
+    containers_removed = _remove_ccbox_containers()
 
     console.print("[dim]Removing images...[/dim]")
-    # Remove stack images (ccbox:base, ccbox:node, etc.)
-    for stack in LanguageStack:
-        subprocess.run(
-            ["docker", "rmi", "-f", get_image_name(stack)],
+    images_removed = _remove_ccbox_images()
+
+    console.print("[green]✓ Cleanup complete[/green]")
+    if containers_removed or images_removed:
+        parts = []
+        if containers_removed:
+            parts.append(f"{containers_removed} container(s)")
+        if images_removed:
+            parts.append(f"{images_removed} image(s)")
+        console.print(f"[dim]Removed: {', '.join(parts)}[/dim]")
+
+
+def _prune_system(force: bool) -> None:
+    """Prune entire Docker system (all unused resources).
+
+    Shows detailed breakdown of what will be removed and confirms before proceeding.
+
+    Args:
+        force: Skip confirmation if True.
+    """
+    # Get disk usage for display
+    usage = _get_docker_disk_usage()
+
+    if not force:
+        console.print(Panel.fit("[bold yellow]Docker System Cleanup[/bold yellow]"))
+        console.print()
+        console.print("[yellow]This will remove ALL unused Docker resources:[/yellow]")
+        console.print()
+
+        table = Table(show_header=True, header_style="bold", box=None)
+        table.add_column("Resource", style="cyan")
+        table.add_column("What gets removed")
+        table.add_column("Reclaimable", justify="right", style="green")
+
+        table.add_row(
+            "Containers",
+            "All stopped containers",
+            usage["containers"],
+        )
+        table.add_row(
+            "Images",
+            "Dangling images (<none>:<none>)",
+            usage["images"],
+        )
+        table.add_row(
+            "Volumes",
+            "Unused volumes (not attached to containers)",
+            usage["volumes"],
+        )
+        table.add_row(
+            "Build Cache",
+            "All cached build layers",
+            usage["cache"],
+        )
+
+        console.print(table)
+        console.print()
+        console.print(
+            "[red bold]⚠ WARNING:[/red bold] This affects ALL Docker projects, not just ccbox!"
+        )
+        console.print("[dim]Running containers and their images/volumes will NOT be removed.[/dim]")
+        console.print()
+
+        if not click.confirm("Continue with full system cleanup?", default=False):
+            console.print("[dim]Cancelled.[/dim]")
+            return
+
+    console.print()
+    console.print("[bold]Cleaning Docker system...[/bold]")
+
+    # 1. Remove stopped containers
+    console.print("[dim]Removing stopped containers...[/dim]")
+    subprocess.run(
+        ["docker", "container", "prune", "-f"],
+        capture_output=True,
+        check=False,
+        timeout=PRUNE_TIMEOUT,
+    )
+
+    # 2. Remove dangling images
+    console.print("[dim]Removing dangling images...[/dim]")
+    subprocess.run(
+        ["docker", "image", "prune", "-f"],
+        capture_output=True,
+        check=False,
+        timeout=PRUNE_TIMEOUT,
+    )
+
+    # 3. Remove unused volumes
+    console.print("[dim]Removing unused volumes...[/dim]")
+    subprocess.run(
+        ["docker", "volume", "prune", "-f"],
+        capture_output=True,
+        check=False,
+        timeout=PRUNE_TIMEOUT,
+    )
+
+    # 4. Remove build cache
+    console.print("[dim]Removing build cache...[/dim]")
+    subprocess.run(
+        ["docker", "builder", "prune", "-f", "--all"],
+        capture_output=True,
+        check=False,
+        timeout=PRUNE_TIMEOUT,
+    )
+
+    # Show final disk usage
+    console.print()
+    console.print("[green]✓ System cleanup complete[/green]")
+
+    # Get new usage to show what was freed
+    new_usage = _get_docker_disk_usage()
+    console.print(
+        f"[dim]Remaining: Images {new_usage['images']}, "
+        f"Volumes {new_usage['volumes']}, Cache {new_usage['cache']}[/dim]"
+    )
+
+
+def _get_docker_disk_usage() -> dict[str, str]:
+    """Get Docker disk usage for display.
+
+    Returns:
+        Dict with size strings for containers, images, volumes, and cache.
+    """
+    usage: dict[str, str] = {"containers": "?", "images": "?", "volumes": "?", "cache": "?"}
+    try:
+        result = subprocess.run(
+            ["docker", "system", "df", "--format", "{{.Type}}\t{{.Size}}\t{{.Reclaimable}}"],
             capture_output=True,
+            text=True,
             check=False,
             timeout=DOCKER_COMMAND_TIMEOUT,
         )
+        if result.returncode == 0:
+            for line in result.stdout.strip().split("\n"):
+                parts = line.split("\t")
+                if len(parts) >= 3:
+                    resource_type = parts[0].lower()
+                    reclaimable = parts[2]
+                    if "images" in resource_type:
+                        usage["images"] = reclaimable
+                    elif "containers" in resource_type:
+                        usage["containers"] = reclaimable
+                    elif "volumes" in resource_type:
+                        usage["volumes"] = reclaimable
+                    elif "build" in resource_type:
+                        usage["cache"] = reclaimable
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        # Disk usage unavailable - return empty dict, caller handles gracefully
+        console.print("[dim]Docker disk usage unavailable (timeout or not found)[/dim]")
+    return usage
 
-    # Remove project images (ccbox-projectname:stack)
-    result = subprocess.run(
-        ["docker", "images", "--format", "{{.Repository}}:{{.Tag}}"],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=DOCKER_COMMAND_TIMEOUT,
-    )
-    if result.returncode == 0:
-        for image in result.stdout.strip().split("\n"):
-            if image.startswith("ccbox-"):
-                subprocess.run(
-                    ["docker", "rmi", "-f", image],
-                    capture_output=True,
-                    check=False,
-                    timeout=DOCKER_COMMAND_TIMEOUT,
-                )
 
-    console.print("[green]✓ Cleanup complete[/green]")
+@cli.command()
+@click.option("--force", "-f", is_flag=True, help="Skip confirmation")
+@click.option(
+    "--system",
+    is_flag=True,
+    help="Clean entire Docker system (all unused containers, images, volumes, cache)",
+)
+def prune(force: bool, system: bool) -> None:
+    """Deep clean: remove ccbox or entire Docker system resources.
+
+    By default, removes only ccbox resources (containers, images, temp files).
+
+    With --system, removes ALL unused Docker resources system-wide:
+    stopped containers, dangling images, unused volumes, and build cache.
+    """
+    if not check_docker():
+        console.print(ERR_DOCKER_NOT_RUNNING)
+        sys.exit(1)
+
+    if system:
+        _prune_system(force)
+        return
+
+    if not force:
+        console.print("[yellow]This will remove ALL ccbox resources:[/yellow]")
+        console.print("  • All ccbox containers (running + stopped)")
+        console.print("  • All ccbox images (stacks + project images)")
+        console.print("  • Temporary build files (/tmp/ccbox)")
+        console.print()
+        if not click.confirm("Continue with deep clean?", default=False):
+            console.print("[dim]Cancelled.[/dim]")
+            return
+
+    # 1. Stop and remove ALL ccbox containers (including running ones)
+    console.print("[dim]Removing containers...[/dim]")
+    containers_removed = _remove_ccbox_containers()
+
+    # 2. Remove ALL ccbox images (stacks + project images)
+    console.print("[dim]Removing images...[/dim]")
+    images_removed = _remove_ccbox_images()
+
+    # Note: We intentionally do NOT prune global dangling images or build cache
+    # as they may belong to other Docker projects. ccbox uses --no-cache anyway,
+    # so it doesn't create intermediate build cache.
+
+    # 3. Clean up ccbox build directory
+    console.print("[dim]Removing temp files...[/dim]")
+    build_dir = Path("/tmp/ccbox")
+    tmpdir_removed = 0
+    if build_dir.exists():
+        shutil.rmtree(build_dir, ignore_errors=True)
+        tmpdir_removed = 1
+
+    # Summary
+    console.print()
+    console.print("[green]✓ Deep clean complete[/green]")
+    parts = []
+    if containers_removed:
+        parts.append(f"{containers_removed} container(s)")
+    if images_removed:
+        parts.append(f"{images_removed} image(s)")
+    if tmpdir_removed:
+        parts.append("temp files")
+    if parts:
+        console.print(f"[dim]Removed: {', '.join(parts)}[/dim]")
+    else:
+        console.print("[dim]Nothing to remove - already clean[/dim]")
 
 
 @cli.command()

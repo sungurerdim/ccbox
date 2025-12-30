@@ -82,6 +82,8 @@ ccbox update             # Rebuild base image with latest Claude Code
 ccbox update -s go       # Rebuild specific stack
 ccbox update -a          # Rebuild all installed images
 ccbox clean              # Remove all ccbox containers and images
+ccbox prune              # Deep clean: reset ccbox to fresh state
+ccbox prune --system     # Full Docker cleanup (all unused resources)
 ccbox doctor             # Check system status and project detection
 ccbox stacks             # List available stacks
 ```
@@ -105,6 +107,7 @@ ccbox stacks             # List available stacks
 | `--model` | `-m` | Model name (opus, sonnet, haiku, etc.) |
 | `--quiet` | `-q` | Quiet mode (only Claude's response) |
 | `--append-system-prompt` | | Custom instructions for Claude |
+| `--no-prune` | | Skip automatic cleanup of stale resources |
 
 ## Dependencies
 
@@ -364,6 +367,55 @@ Containers: `ccbox-{project-name}-{uuid}`
 
 Running `ccbox` in the same project reuses the same image, no duplicates.
 
+## Cleanup & Maintenance
+
+### Automatic Cleanup (Pre-run)
+
+By default, ccbox automatically cleans up stale resources before each run:
+- Stopped ccbox containers (from crashed sessions or ungraceful terminations)
+- Dangling images from ccbox rebuilds (checked via parent chain)
+- Only targets ccbox-prefixed resources - other Docker projects are never affected
+
+Use `--no-prune` to skip automatic cleanup. This is useful if you want to inspect crashed containers for debugging (e.g., to check logs or state from a failed session).
+
+### Manual Cleanup
+
+```bash
+# Remove all ccbox resources (containers, images, temp files)
+ccbox clean              # Interactive, asks confirmation
+ccbox clean -f           # Force, no confirmation
+
+# Deep clean: reset ccbox to fresh state
+ccbox prune              # Interactive, asks confirmation
+ccbox prune -f           # Force, no confirmation
+
+# Full Docker cleanup (affects ALL Docker projects!)
+ccbox prune --system     # Shows detailed breakdown, asks confirmation
+ccbox prune --system -f  # Force, no confirmation
+```
+
+### What Each Command Removes
+
+| Command | Targets | Safe for Multi-Project? |
+|---------|---------|------------------------|
+| `ccbox clean` | ccbox containers + images | ✅ Yes |
+| `ccbox prune` | ccbox containers + images + temp files | ✅ Yes |
+| `ccbox prune --system` | ALL stopped containers, dangling images, unused volumes, build cache | ⚠️ Affects all Docker projects |
+
+### Docker Disk Usage
+
+The `ccbox prune --system` command shows a detailed breakdown of what will be cleaned:
+
+```
+Resource      What gets removed                         Reclaimable
+Containers    All stopped containers                    0B
+Images        Dangling images (<none>:<none>)          1.2GB (50%)
+Volumes       Unused volumes (not attached)             500MB
+Build Cache   All cached build layers                   3.5GB
+
+⚠ WARNING: This affects ALL Docker projects, not just ccbox!
+```
+
 ## Requirements
 
 - Docker (running - auto-starts on Windows/Mac if not)
@@ -390,8 +442,8 @@ sudo usermod -aG docker $USER
 
 ### Rebuild from scratch
 ```bash
-ccbox clean -f
-ccbox
+ccbox prune -f   # Remove all ccbox resources
+ccbox            # Fresh start
 ```
 
 ### Windows/WSL path issues
