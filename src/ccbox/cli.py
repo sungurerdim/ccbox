@@ -376,6 +376,7 @@ def build_image(stack: LanguageStack) -> bool:
 
     try:
         # Disable all Docker cache to ensure fresh builds (Claude Code + CCO updates)
+        # Redirect stderr to stdout so build progress doesn't appear as errors
         subprocess.run(
             [
                 "docker",
@@ -390,6 +391,7 @@ def build_image(stack: LanguageStack) -> bool:
             ],
             check=True,
             env=env,
+            stderr=subprocess.STDOUT,
         )
         console.print(f"[green]✓ Built {image_name}[/green]")
 
@@ -875,6 +877,7 @@ def _build_project_image(
 
     try:
         # Build image with project context (for copying dependency files)
+        # Redirect stderr to stdout so build progress doesn't appear as errors
         subprocess.run(
             [
                 "docker",
@@ -889,6 +892,7 @@ def _build_project_image(
             check=True,
             env=env,
             timeout=DOCKER_BUILD_TIMEOUT,
+            stderr=subprocess.STDOUT,
         )
         console.print(f"[green]✓ Built {image_name}[/green]")
         return image_name
