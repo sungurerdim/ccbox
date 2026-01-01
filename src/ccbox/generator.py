@@ -354,8 +354,10 @@ if [[ -d "$PWD/.claude" ]]; then
     _log_verbose "Project .claude contents: $(ls -A "$PWD/.claude" 2>/dev/null | tr '\\n' ' ')"
 fi
 
-# Runtime config (as node user) - append to existing NODE_OPTIONS (preserves --no-warnings from docker run)
-export NODE_OPTIONS="${NODE_OPTIONS:-} --max-old-space-size=$(( $(free -m | awk '/^Mem:/{print $2}') * 3 / 4 ))"
+# Runtime config (as node user) - append to existing NODE_OPTIONS (preserves flags from docker run)
+# --max-old-space-size: dynamic heap limit (3/4 of available RAM)
+# --max-semi-space-size: larger young generation reduces GC pauses for smoother output
+export NODE_OPTIONS="${NODE_OPTIONS:-} --max-old-space-size=$(( $(free -m | awk '/^Mem:/{print $2}') * 3 / 4 )) --max-semi-space-size=64"
 export UV_THREADPOOL_SIZE=$(nproc)
 _log_verbose "NODE_OPTIONS: $NODE_OPTIONS"
 _log_verbose "UV_THREADPOOL_SIZE: $UV_THREADPOOL_SIZE"
@@ -376,6 +378,10 @@ _log "Starting Claude Code..."
 
 # Use stdbuf for unbuffered output in non-TTY mode (--print with pipes)
 if [[ -t 1 ]]; then
+    # TTY mode: Enable synchronized output (mode 2026) if terminal supports it
+    # This reduces flickering by batching terminal updates atomically
+    # Terminals that don't support it will silently ignore the sequence
+    printf '\\e[?2026h' 2>/dev/null || true
     exec claude --dangerously-skip-permissions "$@"
 else
     exec stdbuf -oL -eL claude --dangerously-skip-permissions "$@"
@@ -720,6 +726,10 @@ def get_docker_run_cmd(
             "-e",
             "TERM=xterm-256color",
             "-e",
+            "COLORTERM=truecolor",  # Modern terminal color capability hint
+            "-e",
+            "FORCE_COLOR=1",  # Ensure ANSI colors enabled (fallback for TTY detection)
+            "-e",
             "CLAUDE_CONFIG_DIR=/home/node/.claude",  # Override default ~/.config/claude
             "-e",
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",  # Disable telemetry, error reporting
@@ -728,7 +738,10 @@ def get_docker_run_cmd(
             "-e",
             "PYTHONUNBUFFERED=1",  # Force unbuffered output for streaming
             "-e",
-            "NODE_OPTIONS=--no-warnings",  # Suppress Node.js warnings
+            # Node.js optimizations: suppress warnings, reduce GC pauses
+            "NODE_OPTIONS=--no-warnings --disable-warning=ExperimentalWarning --disable-warning=DeprecationWarning",
+            "-e",
+            "NODE_NO_READLINE=1",  # Reduce readline interference for cleaner output
         ]
     )
 
