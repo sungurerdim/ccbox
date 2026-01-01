@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextlib
 import os
 import select
+import signal
 import sys
 import threading
 import time
@@ -23,12 +24,20 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from subprocess import Popen
+    from types import FrameType
 
 # Default timeout: 15 minutes
 DEFAULT_HEARTBEAT_TIMEOUT_SECONDS = 900
 
 # Check interval for timeout detection
 CHECK_INTERVAL_SECONDS = 30.0
+
+# Thread join timeout (seconds) - longer for graceful shutdown
+THREAD_JOIN_TIMEOUT = 5.0
+
+# Process termination timeout before SIGKILL (seconds)
+PROCESS_TERM_TIMEOUT = 3.0
 
 
 @dataclass
@@ -156,7 +165,7 @@ class SleepInhibitor:
         """Stop the background monitor thread."""
         self._stop_event.set()
         if self._monitor_thread is not None:
-            self._monitor_thread.join(timeout=2.0)
+            self._monitor_thread.join(timeout=THREAD_JOIN_TIMEOUT)
             self._monitor_thread = None
 
     def _monitor_loop(self) -> None:
@@ -208,19 +217,71 @@ def _relay_pty_output(
                 break  # FD closed
 
 
+def _terminate_process(proc: Popen[bytes], timeout: float = PROCESS_TERM_TIMEOUT) -> None:
+    """Gracefully terminate a process, escalating to SIGKILL if needed.
+
+    Args:
+        proc: Process to terminate
+        timeout: Seconds to wait before SIGKILL
+    """
+    if proc.poll() is not None:
+        return  # Already dead
+
+    # Try graceful termination first
+    proc.terminate()
+    try:
+        proc.wait(timeout=timeout)
+    except Exception:
+        # Process didn't die, force kill
+        with contextlib.suppress(OSError):
+            proc.kill()
+        with contextlib.suppress(Exception):
+            proc.wait(timeout=1.0)
+
+
+def _close_fd_safe(fd: int) -> None:
+    """Safely close a file descriptor, ignoring errors."""
+    if fd >= 0:
+        with contextlib.suppress(OSError):
+            os.close(fd)
+
+
 def _run_with_pty(
     cmd: list[str],
     inhibitor: SleepInhibitor,
     stdin: int | None,
 ) -> int:
-    """Run with PTY for Unix systems."""
+    """Run with PTY for Unix systems.
+
+    Includes proper signal handling and resource cleanup for long sessions.
+    """
     import pty
     import subprocess
 
     # Create PTY for output
     master_fd, slave_fd = pty.openpty()
-
     stop_event = threading.Event()
+    proc: Popen[bytes] | None = None
+    relay_thread: threading.Thread | None = None
+    return_code = 1  # Default to error
+    shutdown_initiated = False
+
+    def signal_handler(signum: int, frame: FrameType | None) -> None:
+        """Handle termination signals gracefully."""
+        nonlocal shutdown_initiated
+        if shutdown_initiated:
+            return  # Prevent re-entry
+        shutdown_initiated = True
+
+        stop_event.set()
+        if proc is not None:
+            _terminate_process(proc)
+
+    # Install signal handlers (Unix only)
+    old_sigterm = signal.signal(signal.SIGTERM, signal_handler)
+    old_sigint = signal.signal(signal.SIGINT, signal_handler)
+    # Ignore SIGPIPE to prevent crashes on broken pipe
+    old_sigpipe = signal.signal(signal.SIGPIPE, signal.SIG_IGN)
 
     try:
         proc = subprocess.Popen(
@@ -229,35 +290,62 @@ def _run_with_pty(
             stdout=slave_fd,
             stderr=slave_fd,
             close_fds=True,
+            start_new_session=True,  # Process group for clean termination
         )
 
-        # Close slave in parent - child has it
-        os.close(slave_fd)
+        # Close slave in parent immediately - child has it
+        _close_fd_safe(slave_fd)
         slave_fd = -1
 
         # Start relay thread
         relay_thread = threading.Thread(
             target=_relay_pty_output,
             args=(master_fd, inhibitor._monitor, stop_event),
+            name="ccbox-pty-relay",
             daemon=True,
         )
         relay_thread.start()
 
-        # Wait for process
-        return_code = proc.wait()
+        # Wait for process with periodic checks
+        while proc.poll() is None:
+            try:
+                return_code = proc.wait(timeout=1.0)
+                break
+            except subprocess.TimeoutExpired:
+                # Check if shutdown was requested
+                if shutdown_initiated:
+                    _terminate_process(proc)
+                    return_code = 128 + signal.SIGTERM
+                    break
+                continue
 
-        # Signal relay to stop and wait
-        stop_event.set()
-        relay_thread.join(timeout=1.0)
+        if proc.returncode is not None:
+            return_code = proc.returncode
 
-        return return_code
+    except Exception:
+        # Ensure process is terminated on any error
+        if proc is not None:
+            _terminate_process(proc)
+        raise
 
     finally:
+        # Cleanup in correct order
         stop_event.set()
-        if slave_fd >= 0:
-            os.close(slave_fd)
-        with contextlib.suppress(OSError):
-            os.close(master_fd)
+
+        # Wait for relay thread with timeout
+        if relay_thread is not None and relay_thread.is_alive():
+            relay_thread.join(timeout=THREAD_JOIN_TIMEOUT)
+
+        # Close file descriptors
+        _close_fd_safe(slave_fd)
+        _close_fd_safe(master_fd)
+
+        # Restore signal handlers
+        signal.signal(signal.SIGTERM, old_sigterm)
+        signal.signal(signal.SIGINT, old_sigint)
+        signal.signal(signal.SIGPIPE, old_sigpipe)
+
+    return return_code
 
 
 def _run_with_pipes(
@@ -265,28 +353,76 @@ def _run_with_pipes(
     inhibitor: SleepInhibitor,
     stdin: int | None,
 ) -> int:
-    """Run with pipes for Windows or fallback."""
+    """Run with pipes for Windows or fallback.
+
+    Includes proper signal handling and resource cleanup.
+    """
     import subprocess
 
-    proc = subprocess.Popen(
-        cmd,
-        stdin=stdin,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
+    proc: Popen[bytes] | None = None
+    return_code = 1
+    shutdown_initiated = False
+
+    def signal_handler(signum: int, frame: FrameType | None) -> None:
+        """Handle termination signals gracefully."""
+        nonlocal shutdown_initiated
+        if shutdown_initiated:
+            return
+        shutdown_initiated = True
+        if proc is not None:
+            _terminate_process(proc)
+
+    # Install signal handlers
+    old_sigterm = signal.signal(signal.SIGTERM, signal_handler)
+    old_sigint = signal.signal(signal.SIGINT, signal_handler)
 
     try:
-        assert proc.stdout is not None
-        # Read output and relay
-        for line in iter(proc.stdout.readline, b""):
-            inhibitor.pulse()
-            sys.stdout.buffer.write(line)
-            sys.stdout.buffer.flush()
+        proc = subprocess.Popen(
+            cmd,
+            stdin=stdin,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
 
-        return proc.wait()
+        assert proc.stdout is not None
+
+        # Read output and relay with timeout checks
+        while True:
+            if shutdown_initiated:
+                _terminate_process(proc)
+                return_code = 128 + signal.SIGTERM
+                break
+
+            line = proc.stdout.readline()
+            if not line:
+                # EOF - process finished or pipe closed
+                break
+
+            inhibitor.pulse()
+            try:
+                sys.stdout.buffer.write(line)
+                sys.stdout.buffer.flush()
+            except OSError:
+                # Broken pipe on output side
+                break
+
+        return_code = proc.wait()
+
+    except Exception:
+        if proc is not None:
+            _terminate_process(proc)
+        raise
+
     finally:
-        if proc.stdout:
-            proc.stdout.close()
+        if proc is not None and proc.stdout:
+            with contextlib.suppress(OSError):
+                proc.stdout.close()
+
+        # Restore signal handlers
+        signal.signal(signal.SIGTERM, old_sigterm)
+        signal.signal(signal.SIGINT, old_sigint)
+
+    return return_code
 
 
 def run_with_sleep_inhibition(

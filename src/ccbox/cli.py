@@ -767,6 +767,53 @@ def _ensure_image_ready(stack: LanguageStack, build_only: bool) -> bool:
     return True
 
 
+def _diagnose_container_failure(returncode: int, project_name: str) -> None:
+    """Diagnose container failure and provide actionable feedback.
+
+    Args:
+        returncode: Container exit code.
+        project_name: Name of the project for container lookup.
+    """
+    # Known exit codes
+    if returncode == 137:
+        console.print("[yellow]Container was killed (OOM or manual stop)[/yellow]")
+        console.print("[dim]Try: ccbox --unrestricted (removes memory limits)[/dim]")
+        return
+    if returncode == 139:
+        console.print("[yellow]Container crashed (segmentation fault)[/yellow]")
+        return
+    if returncode == 143:
+        console.print("[dim]Container terminated by signal[/dim]")
+        return
+
+    # Check Docker daemon health
+    if not _check_docker_status():
+        console.print("[red]Docker daemon is not responding[/red]")
+        console.print("[dim]Docker may have restarted or crashed during session[/dim]")
+        return
+
+    # Check for container still running (shouldn't happen with --rm)
+    try:
+        result = subprocess.run(
+            ["docker", "ps", "-q", "--filter", f"name=ccbox-{project_name}"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=DOCKER_COMMAND_TIMEOUT,
+        )
+        if result.stdout.strip():
+            console.print("[yellow]Container still running (cleanup failed)[/yellow]")
+            console.print(f"[dim]Run: docker rm -f ccbox-{project_name}[/dim]")
+            return
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+
+    # Generic error with exit code
+    if returncode != 0:
+        console.print(f"[yellow]Container exited with code {returncode}[/yellow]")
+        console.print("[dim]Run with --debug-logs to preserve logs for investigation[/dim]")
+
+
 def _execute_container(
     config: Config,
     project_path: Path,
@@ -830,20 +877,24 @@ def _execute_container(
     # Stream mode (-dd): close stdin for watch-only (no user input)
     stdin = subprocess.DEVNULL if debug >= 2 else None
 
+    returncode = 0
     try:
         if inhibit_sleep:
             from .sleepctl import run_with_sleep_inhibition
 
             returncode = run_with_sleep_inhibition(cmd, stdin=stdin)
-            if returncode not in (0, 130):  # 130 = Ctrl+C
-                sys.exit(returncode)
         else:
-            subprocess.run(cmd, check=True, stdin=stdin)
+            result = subprocess.run(cmd, check=False, stdin=stdin)
+            returncode = result.returncode
     except subprocess.CalledProcessError as e:
-        if e.returncode != 130:
-            sys.exit(e.returncode)
+        returncode = e.returncode
     except KeyboardInterrupt:
-        pass
+        returncode = 130  # Standard Ctrl+C code
+
+    # Handle exit codes
+    if returncode not in (0, 130):  # 0 = success, 130 = Ctrl+C
+        _diagnose_container_failure(returncode, project_name)
+        sys.exit(returncode)
 
 
 def _get_project_image_name(project_name: str, stack: LanguageStack) -> str:
