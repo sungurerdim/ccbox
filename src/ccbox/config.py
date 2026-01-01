@@ -1,4 +1,10 @@
-"""Configuration management for ccbox."""
+"""Configuration management for ccbox.
+
+Dependency direction:
+    This module has minimal dependencies (near-leaf module).
+    It may be imported by: cli.py, generator.py, docker.py, paths.py
+    It should NOT import from: cli, generator, sleepctl
+"""
 
 from __future__ import annotations
 
@@ -8,6 +14,8 @@ import uuid
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+
+from .constants import DOCKER_COMMAND_TIMEOUT as _DOCKER_COMMAND_TIMEOUT
 
 
 class LanguageStack(str, Enum):
@@ -121,7 +129,8 @@ def get_image_name(stack: LanguageStack) -> str:
     return f"ccbox:{stack.value}"
 
 
-DOCKER_COMMAND_TIMEOUT = 30  # seconds for quick docker commands
+# Re-export from constants for backward compatibility
+DOCKER_COMMAND_TIMEOUT = _DOCKER_COMMAND_TIMEOUT
 
 
 def image_exists(stack: LanguageStack) -> bool:

@@ -78,30 +78,35 @@ class TestSleepInhibitor:
 
     def test_context_manager_cleanup(self) -> None:
         """Context manager should properly clean up on exit."""
-        with patch("ccbox.sleepctl.SleepInhibitor._start_inhibition"):
-            with patch("ccbox.sleepctl.SleepInhibitor._stop_inhibition") as mock_stop:
-                with SleepInhibitor(timeout_seconds=10.0):
-                    pass
-                mock_stop.assert_called()
+        with (
+            patch("ccbox.sleepctl.SleepInhibitor._start_inhibition"),
+            patch("ccbox.sleepctl.SleepInhibitor._stop_inhibition") as mock_stop,
+        ):
+            with SleepInhibitor(timeout_seconds=10.0):
+                pass
+            mock_stop.assert_called()
 
     def test_context_manager_cleanup_on_exception(self) -> None:
         """Context manager should clean up even on exception."""
-        with patch("ccbox.sleepctl.SleepInhibitor._start_inhibition"):
-            with patch("ccbox.sleepctl.SleepInhibitor._stop_inhibition") as mock_stop:
-                with pytest.raises(ValueError):
-                    with SleepInhibitor(timeout_seconds=10.0):
-                        raise ValueError("test error")
-                mock_stop.assert_called()
+        with (
+            patch("ccbox.sleepctl.SleepInhibitor._start_inhibition"),
+            patch("ccbox.sleepctl.SleepInhibitor._stop_inhibition") as mock_stop,
+        ):
+            with pytest.raises(ValueError), SleepInhibitor(timeout_seconds=10.0):
+                raise ValueError("test error")
+            mock_stop.assert_called()
 
     def test_pulse_updates_monitor(self) -> None:
         """Pulse should update the internal monitor."""
-        with patch("ccbox.sleepctl.SleepInhibitor._start_inhibition"):
-            with SleepInhibitor(timeout_seconds=10.0) as inhibitor:
-                initial = inhibitor._monitor.seconds_since_last_pulse()
-                time.sleep(0.05)
-                inhibitor.pulse()
-                after_pulse = inhibitor._monitor.seconds_since_last_pulse()
-                assert after_pulse < initial
+        with (
+            patch("ccbox.sleepctl.SleepInhibitor._start_inhibition"),
+            SleepInhibitor(timeout_seconds=10.0) as inhibitor,
+        ):
+            initial = inhibitor._monitor.seconds_since_last_pulse()
+            time.sleep(0.05)
+            inhibitor.pulse()
+            after_pulse = inhibitor._monitor.seconds_since_last_pulse()
+            assert after_pulse < initial
 
     def test_timeout_callback_called(self) -> None:
         """Timeout callback should be called when timeout occurs."""
@@ -110,14 +115,12 @@ class TestSleepInhibitor:
         def on_timeout() -> None:
             callback_called.set()
 
-        with patch("ccbox.sleepctl.SleepInhibitor._start_inhibition"):
-            with SleepInhibitor(
-                timeout_seconds=0.05,
-                on_timeout=on_timeout,
-                check_interval=0.02,
-            ):
-                # Wait for timeout to trigger
-                callback_called.wait(timeout=0.5)
+        with (
+            patch("ccbox.sleepctl.SleepInhibitor._start_inhibition"),
+            SleepInhibitor(timeout_seconds=0.05, on_timeout=on_timeout, check_interval=0.02),
+        ):
+            # Wait for timeout to trigger
+            callback_called.wait(timeout=0.5)
 
         assert callback_called.is_set(), "Timeout callback was not called"
 
@@ -142,12 +145,14 @@ class TestSleepInhibitor:
 
     def test_graceful_degradation_no_wakepy(self) -> None:
         """Should continue gracefully if wakepy is not available."""
-        with patch.dict(sys.modules, {"wakepy": None}):
-            with patch("builtins.__import__", side_effect=ImportError("No module")):
-                # Should not raise, just log warning
-                inhibitor = SleepInhibitor(timeout_seconds=10.0)
-                inhibitor._start_inhibition()
-                assert not inhibitor._active
+        with (
+            patch.dict(sys.modules, {"wakepy": None}),
+            patch("builtins.__import__", side_effect=ImportError("No module")),
+        ):
+            # Should not raise, just log warning
+            inhibitor = SleepInhibitor(timeout_seconds=10.0)
+            inhibitor._start_inhibition()
+            assert not inhibitor._active
 
     def test_is_active_property(self) -> None:
         """is_active should reflect inhibition state."""
@@ -194,30 +199,34 @@ class TestRunWithSleepInhibition:
 
     def test_timeout_from_env(self) -> None:
         """Timeout should be read from environment variable."""
-        with patch.dict("os.environ", {"CCBOX_SLEEP_TIMEOUT_SECONDS": "300"}):
-            with patch("ccbox.sleepctl.SleepInhibitor") as mock_inhibitor:
-                mock_instance = MagicMock()
-                mock_inhibitor.return_value.__enter__ = MagicMock(return_value=mock_instance)
-                mock_inhibitor.return_value.__exit__ = MagicMock(return_value=None)
+        with (
+            patch.dict("os.environ", {"CCBOX_SLEEP_TIMEOUT_SECONDS": "300"}),
+            patch("ccbox.sleepctl.SleepInhibitor") as mock_inhibitor,
+        ):
+            mock_instance = MagicMock()
+            mock_inhibitor.return_value.__enter__ = MagicMock(return_value=mock_instance)
+            mock_inhibitor.return_value.__exit__ = MagicMock(return_value=None)
 
-                run_with_sleep_inhibition(["true"])
+            run_with_sleep_inhibition(["true"])
 
-                # Check that SleepInhibitor was called with correct timeout
-                call_kwargs = mock_inhibitor.call_args[1]
-                assert call_kwargs["timeout_seconds"] == 300.0
+            # Check that SleepInhibitor was called with correct timeout
+            call_kwargs = mock_inhibitor.call_args[1]
+            assert call_kwargs["timeout_seconds"] == 300.0
 
     def test_explicit_timeout_overrides_env(self) -> None:
         """Explicit timeout parameter should override environment variable."""
-        with patch.dict("os.environ", {"CCBOX_SLEEP_TIMEOUT_SECONDS": "300"}):
-            with patch("ccbox.sleepctl.SleepInhibitor") as mock_inhibitor:
-                mock_instance = MagicMock()
-                mock_inhibitor.return_value.__enter__ = MagicMock(return_value=mock_instance)
-                mock_inhibitor.return_value.__exit__ = MagicMock(return_value=None)
+        with (
+            patch.dict("os.environ", {"CCBOX_SLEEP_TIMEOUT_SECONDS": "300"}),
+            patch("ccbox.sleepctl.SleepInhibitor") as mock_inhibitor,
+        ):
+            mock_instance = MagicMock()
+            mock_inhibitor.return_value.__enter__ = MagicMock(return_value=mock_instance)
+            mock_inhibitor.return_value.__exit__ = MagicMock(return_value=None)
 
-                run_with_sleep_inhibition(["true"], timeout_seconds=120.0)
+            run_with_sleep_inhibition(["true"], timeout_seconds=120.0)
 
-                call_kwargs = mock_inhibitor.call_args[1]
-                assert call_kwargs["timeout_seconds"] == 120.0
+            call_kwargs = mock_inhibitor.call_args[1]
+            assert call_kwargs["timeout_seconds"] == 120.0
 
 
 class TestEdgeCases:

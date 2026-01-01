@@ -19,16 +19,75 @@ class DepsMode(str, Enum):
     SKIP = "skip"  # Don't install dependencies
 
 
-@dataclass
+@dataclass(frozen=True)
 class DepsInfo:
     """Detected dependency information for a project."""
 
     name: str  # Package manager name (e.g., "pip", "npm")
-    files: list[str]  # Files that triggered detection
+    files: tuple[str, ...]  # Files that triggered detection (immutable)
     install_all: str  # Command to install all deps (including dev)
     install_prod: str  # Command to install prod-only deps
     has_dev: bool = True  # Whether dev dependencies are distinguishable
     priority: int = 0  # Higher = run first
+
+    @classmethod
+    def create(
+        cls,
+        name: str,
+        files: list[str],
+        install_all: str,
+        install_prod: str,
+        has_dev: bool = True,
+        priority: int = 0,
+    ) -> DepsInfo:
+        """Create DepsInfo with list-to-tuple conversion for files."""
+        return cls(
+            name=name,
+            files=tuple(files),
+            install_all=install_all,
+            install_prod=install_prod,
+            has_dev=has_dev,
+            priority=priority,
+        )
+
+
+@dataclass(frozen=True)
+class PackageManager:
+    """Package manager detection configuration.
+
+    Immutable dataclass representing a package manager's detection rules
+    and installation commands.
+    """
+
+    name: str  # Package manager name (e.g., "pip", "npm")
+    detect_files: tuple[str, ...]  # Files/patterns that trigger detection
+    install_all: str | None = None  # Command to install all deps (None if custom)
+    install_prod: str | None = None  # Command for prod-only (None if custom)
+    has_dev: bool = True  # Whether dev deps are distinguishable
+    priority: int = 5  # Higher = run first
+    detect_fn: str | None = None  # Custom detection function name
+
+    @classmethod
+    def create(
+        cls,
+        name: str,
+        detect: list[str],
+        install_all: str | None = None,
+        install_prod: str | None = None,
+        has_dev: bool = True,
+        priority: int = 5,
+        detect_fn: str | None = None,
+    ) -> PackageManager:
+        """Create PackageManager with list-to-tuple conversion."""
+        return cls(
+            name=name,
+            detect_files=tuple(detect),
+            install_all=install_all,
+            install_prod=install_prod,
+            has_dev=has_dev,
+            priority=priority,
+            detect_fn=detect_fn,
+        )
 
 
 # Priority constants for package managers (higher = run first)
@@ -39,6 +98,7 @@ PRIORITY_LOWEST = 1  # Catch-all or legacy detection
 
 
 # All supported package managers with detection rules
+# Note: Using dict format for backward compatibility; consider migrating to PackageManager
 PACKAGE_MANAGERS: list[dict[str, Any]] = [
     # ══════════════════════════════════════════════════════════════════════════
     # Python
@@ -434,7 +494,7 @@ def _detect_pip_pyproject(path: Path, files: list[str]) -> DepsInfo | None:
     )
     # fmt: on
 
-    return DepsInfo(
+    return DepsInfo.create(
         name="pip",
         files=files,
         install_all=install_script_all.strip(),
@@ -465,7 +525,7 @@ def _detect_pip_requirements(path: Path, files: list[str]) -> DepsInfo | None:
 
     if found_dev:
         dev_install = " ".join(f"-r {f}" for f in ["requirements.txt", *found_dev])
-        return DepsInfo(
+        return DepsInfo.create(
             name="pip",
             files=[*files, *found_dev],
             install_all=f"{pip_base} {dev_install}",
@@ -474,7 +534,7 @@ def _detect_pip_requirements(path: Path, files: list[str]) -> DepsInfo | None:
             priority=PRIORITY_HIGH,
         )
 
-    return DepsInfo(
+    return DepsInfo.create(
         name="pip",
         files=files,
         install_all=f"{pip_base} -r requirements.txt",
@@ -514,7 +574,7 @@ def _detect_pip_setup(path: Path, files: list[str]) -> DepsInfo | None:
     )
     # fmt: on
 
-    return DepsInfo(
+    return DepsInfo.create(
         name="pip",
         files=files,
         install_all=install_script.strip(),
@@ -532,7 +592,7 @@ def _detect_dotnet(path: Path, files: list[str]) -> DepsInfo | None:
     sln = list(path.glob("*.sln"))
 
     if csproj or fsproj or sln:
-        return DepsInfo(
+        return DepsInfo.create(
             name="dotnet",
             files=[str(f.name) for f in [*csproj, *fsproj, *sln]],
             install_all="dotnet restore",
@@ -549,7 +609,7 @@ def _detect_cabal(path: Path, files: list[str]) -> DepsInfo | None:
     cabal_project = path / "cabal.project"
 
     if cabal_files or cabal_project.exists():
-        return DepsInfo(
+        return DepsInfo.create(
             name="cabal",
             files=[str(f.name) for f in cabal_files]
             + (["cabal.project"] if cabal_project.exists() else []),
@@ -565,7 +625,7 @@ def _detect_luarocks(path: Path, files: list[str]) -> DepsInfo | None:
     """Detect LuaRocks projects."""
     rockspecs = list(path.glob("*.rockspec"))
     if rockspecs:
-        return DepsInfo(
+        return DepsInfo.create(
             name="luarocks",
             files=[str(f.name) for f in rockspecs],
             install_all="luarocks install --only-deps *.rockspec",
@@ -580,7 +640,7 @@ def _detect_nimble(path: Path, files: list[str]) -> DepsInfo | None:
     """Detect Nimble projects."""
     nimble_files = list(path.glob("*.nimble"))
     if nimble_files:
-        return DepsInfo(
+        return DepsInfo.create(
             name="nimble",
             files=[str(f.name) for f in nimble_files],
             install_all="nimble install -d",
@@ -597,7 +657,7 @@ def _detect_opam(path: Path, files: list[str]) -> DepsInfo | None:
     dune_project = path / "dune-project"
 
     if opam_files or dune_project.exists():
-        return DepsInfo(
+        return DepsInfo.create(
             name="opam",
             files=[str(f.name) for f in opam_files]
             + (["dune-project"] if dune_project.exists() else []),
@@ -626,7 +686,7 @@ def _detect_make(path: Path, files: list[str]) -> DepsInfo | None:
         # Try to find the most appropriate target
         for target in ["deps", "dependencies", "install", "setup"]:
             if f"{target}:" in content:
-                return DepsInfo(
+                return DepsInfo.create(
                     name="make",
                     files=files,
                     install_all=f"make {target}",
@@ -706,7 +766,7 @@ def detect_dependencies(path: Path) -> list[DepsInfo]:
 
         # Create DepsInfo from static config
         results.append(
-            DepsInfo(
+            DepsInfo.create(
                 name=pm["name"],
                 files=matched_files,
                 install_all=pm["install_all"],

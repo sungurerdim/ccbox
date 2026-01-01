@@ -30,12 +30,13 @@ classifiers = [
 dependencies = [
     "click>=8.3.1",
     "rich>=14.2.0",
-    "wakepy>=0.10.0",
+    "wakepy>=0.10.2.post1",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=9.0.2",
+    "pytest-cov>=6.1.1",
     "ruff>=0.14.10",
     "mypy>=1.19.1",
 ]
@@ -52,7 +53,7 @@ ccbox = "ccbox.cli:cli"
 where = ["src"]
 
 [tool.setuptools.package-data]
-ccbox = []
+ccbox = ["scripts/*.sh"]
 
 [tool.ruff]
 line-length = 100
@@ -79,3 +80,16 @@ disable_error_code = ["untyped-decorator", "import-untyped"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = "test_*.py"
+addopts = "-v"
+# For coverage: pytest --cov=ccbox --cov-report=term-missing --cov-fail-under=60
+
+[tool.coverage.run]
+source = ["src/ccbox"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]

@@ -2,16 +2,21 @@
 
 Handles path conversion between Windows, WSL, and Docker formats.
 Docker Desktop expects POSIX-style paths: /c/Users/... (not C:\\Users\\...)
+
+Dependency direction:
+    This module has NO internal dependencies (leaf module).
+    It may be imported by: generator.py, cli.py, docker.py
+    It should NOT import from any other ccbox modules.
 """
 
 from __future__ import annotations
 
+import functools
 import os
 import re
 from pathlib import Path
 
-# Cached WSL detection result
-_is_wsl_cached: bool | None = None
+from .config import ConfigPathError
 
 
 def is_windows_path(path: str | Path) -> bool:
@@ -28,30 +33,25 @@ def is_windows_path(path: str | Path) -> bool:
     return bool(re.match(r"^[A-Za-z]:[/\\]", path_str))
 
 
+@functools.cache
 def is_wsl() -> bool:
     """Check if running inside WSL.
 
-    Result is cached for performance.
+    Result is cached via functools.cache for performance.
 
     Returns:
         True if running in WSL environment.
     """
-    global _is_wsl_cached
-    if _is_wsl_cached is not None:
-        return _is_wsl_cached
-
     # Check for WSL-specific kernel
     try:
         with open("/proc/version", encoding="utf-8") as f:
             if "microsoft" in f.read().lower():
-                _is_wsl_cached = True
                 return True
     except (OSError, PermissionError):
         pass
 
     # Fallback: check WSL env vars
-    _is_wsl_cached = bool(os.environ.get("WSL_DISTRO_NAME") or os.environ.get("WSLENV"))
-    return _is_wsl_cached
+    return bool(os.environ.get("WSL_DISTRO_NAME") or os.environ.get("WSLENV"))
 
 
 def _normalize_path_separators(path_str: str) -> str:
@@ -147,6 +147,25 @@ def wsl_to_docker_path(path: str | Path) -> str:
     return path_str
 
 
+def _validate_docker_path(path: Path, resolved_str: str) -> None:
+    """Validate that resolved path is within expected boundaries.
+
+    Args:
+        path: Original path object.
+        resolved_str: Resolved Docker path string.
+
+    Raises:
+        ConfigPathError: If path validation fails.
+    """
+    # Check for path traversal attempts
+    if ".." in resolved_str:
+        raise ConfigPathError(f"Path traversal not allowed: {path}")
+
+    # Check for null bytes (security)
+    if "\x00" in resolved_str:
+        raise ConfigPathError(f"Null bytes not allowed in path: {path}")
+
+
 def resolve_for_docker(path: Path) -> str:
     """Resolve path to Docker-compatible format.
 
@@ -164,6 +183,9 @@ def resolve_for_docker(path: Path) -> str:
     Returns:
         Docker-compatible path string for volume mounts.
 
+    Raises:
+        ConfigPathError: If path validation fails.
+
     Examples:
         >>> resolve_for_docker(Path("D:/GitHub/Project"))
         '/d/GitHub/Project'
@@ -180,7 +202,9 @@ def resolve_for_docker(path: Path) -> str:
 
     # Case 1: Windows-style path (from click.Path with resolve_path=True on Windows)
     if is_windows_path(path_str):
-        return windows_to_docker_path(path_str)
+        result = windows_to_docker_path(path_str)
+        _validate_docker_path(path, result)
+        return result
 
     # Case 2: WSL mount path (/mnt/[a-z] or /mnt/[a-z]/...)
     # Check: starts with /mnt/, has at least 6 chars, 6th char is lowercase letter,
@@ -192,9 +216,12 @@ def resolve_for_docker(path: Path) -> str:
         and path_str[5].islower()
         and (len(path_str) == 6 or path_str[6] == "/")
     ):
-        return wsl_to_docker_path(path_str)
+        result = wsl_to_docker_path(path_str)
+        _validate_docker_path(path, result)
+        return result
 
     # Case 3: Native Linux/macOS path - use as-is
+    _validate_docker_path(path, path_str)
     return path_str
 
 
