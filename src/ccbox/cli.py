@@ -491,6 +491,12 @@ def get_git_config() -> tuple[str, str]:
     is_flag=True,
     help="Allow system sleep during execution",
 )
+@click.option(
+    "--unrestricted",
+    "-U",
+    is_flag=True,
+    help="Remove CPU/priority limits (use full system resources)",
+)
 @click.pass_context
 @click.version_option(version=__version__, prog_name="ccbox")
 def cli(
@@ -510,6 +516,7 @@ def cli(
     append_system_prompt: str | None,
     no_prune: bool,
     no_inhibit_sleep: bool,
+    unrestricted: bool,
 ) -> None:
     """ccbox - Run Claude Code in isolated Docker containers.
 
@@ -566,6 +573,7 @@ def cli(
         unattended=yes,
         prune=not no_prune,
         inhibit_sleep=not no_inhibit_sleep,
+        unrestricted=unrestricted,
     )
 
 
@@ -775,6 +783,7 @@ def _execute_container(
     project_image: str | None = None,
     deps_list: list[DepsInfo] | None = None,
     inhibit_sleep: bool = True,
+    unrestricted: bool = False,
 ) -> None:
     """Execute the container with Claude Code.
 
@@ -793,6 +802,7 @@ def _execute_container(
         project_image: Project-specific image with deps (overrides stack image).
         deps_list: List of detected dependencies (for cache mounts).
         inhibit_sleep: If True, prevent system sleep during execution.
+        unrestricted: If True, remove CPU/priority limits.
     """
     console.print("[dim]Starting Claude Code...[/dim]\n")
 
@@ -811,6 +821,7 @@ def _execute_container(
             append_system_prompt=append_system_prompt,
             project_image=project_image,
             deps_list=deps_list,
+            unrestricted=unrestricted,
         )
     except ConfigPathError as e:
         console.print(f"[red]Error: {e}[/red]")
@@ -953,6 +964,7 @@ def _try_run_existing_image(
     quiet: bool = False,
     append_system_prompt: str | None = None,
     inhibit_sleep: bool = True,
+    unrestricted: bool = False,
 ) -> bool:
     """Try to run using existing project image. Returns True if handled."""
     if not _project_image_exists(project_name, stack):
@@ -991,6 +1003,7 @@ def _try_run_existing_image(
         project_image=project_image,
         deps_list=deps_list,
         inhibit_sleep=inhibit_sleep,
+        unrestricted=unrestricted,
     )
     return True
 
@@ -1012,6 +1025,7 @@ def _build_and_run(
     quiet: bool = False,
     append_system_prompt: str | None = None,
     inhibit_sleep: bool = True,
+    unrestricted: bool = False,
 ) -> None:
     """Build images and run container (Phase 3)."""
     console.print()
@@ -1067,6 +1081,7 @@ def _build_and_run(
         project_image=built_project_image,
         deps_list=deps_list if resolved_deps_mode != DepsMode.SKIP else None,
         inhibit_sleep=inhibit_sleep,
+        unrestricted=unrestricted,
     )
 
 
@@ -1086,6 +1101,7 @@ def _run(
     unattended: bool = False,
     prune: bool = True,
     inhibit_sleep: bool = True,
+    unrestricted: bool = False,
 ) -> None:
     """Run Claude Code in Docker container."""
     if not check_docker():
@@ -1131,6 +1147,7 @@ def _run(
         quiet=quiet,
         append_system_prompt=append_system_prompt,
         inhibit_sleep=inhibit_sleep,
+        unrestricted=unrestricted,
     ):
         return
 
@@ -1179,6 +1196,7 @@ def _run(
         quiet=quiet,
         append_system_prompt=append_system_prompt,
         inhibit_sleep=inhibit_sleep,
+        unrestricted=unrestricted,
     )
 
 
