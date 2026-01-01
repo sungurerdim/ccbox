@@ -376,15 +376,26 @@ _log_verbose "npm version: $(npm --version 2>/dev/null || echo 'N/A')"
 
 _log "Starting Claude Code..."
 
+# Priority wrapper: nice (CPU) + ionice (I/O) for system responsiveness
+# These are soft limits - only activate when competing for resources
+# Skip if CCBOX_UNRESTRICTED is set (--unrestricted flag)
+if [[ -z "$CCBOX_UNRESTRICTED" ]]; then
+    PRIORITY_CMD="nice -n 10 ionice -c2 -n7"
+    _log_verbose "Resource limits active (nice -n 10, ionice -c2 -n7)"
+else
+    PRIORITY_CMD=""
+    _log_verbose "Unrestricted mode: no resource limits"
+fi
+
 # Use stdbuf for unbuffered output in non-TTY mode (--print with pipes)
 if [[ -t 1 ]]; then
     # TTY mode: Enable synchronized output (mode 2026) if terminal supports it
     # This reduces flickering by batching terminal updates atomically
     # Terminals that don't support it will silently ignore the sequence
     printf '\\e[?2026h' 2>/dev/null || true
-    exec claude --dangerously-skip-permissions "$@"
+    exec $PRIORITY_CMD claude --dangerously-skip-permissions "$@"
 else
-    exec stdbuf -oL -eL claude --dangerously-skip-permissions "$@"
+    exec $PRIORITY_CMD stdbuf -oL -eL claude --dangerously-skip-permissions "$@"
 fi
 """
 
@@ -628,6 +639,7 @@ def get_docker_run_cmd(
     append_system_prompt: str | None = None,
     project_image: str | None = None,
     deps_list: list[DepsInfo] | None = None,
+    unrestricted: bool = False,
 ) -> list[str]:
     """Generate docker run command with full cleanup on exit.
 
@@ -648,6 +660,7 @@ def get_docker_run_cmd(
         append_system_prompt: Custom instructions to append to Claude's system prompt.
         project_image: Project-specific image with deps (overrides stack image).
         deps_list: List of detected dependencies (for cache mounts).
+        unrestricted: If True, remove CPU/priority limits for full performance.
 
     Raises:
         ConfigPathError: If claude_config_dir path validation fails.
@@ -722,6 +735,17 @@ def get_docker_run_cmd(
             "--cap-drop=ALL",  # Drop all Linux capabilities
             "--security-opt=no-new-privileges",  # Prevent privilege escalation
             "--pids-limit=512",  # Fork bomb protection
+        ]
+    )
+
+    # Resource limits: soft limits that only activate under contention
+    # --cpu-shares=512 (default 1024): lower priority when competing for CPU
+    # This keeps system responsive during flickering/high CPU without limiting normal performance
+    if not unrestricted:
+        cmd.extend(["--cpu-shares=512"])
+
+    cmd.extend(
+        [
             # Environment
             "-e",
             "TERM=xterm-256color",
@@ -748,6 +772,10 @@ def get_docker_run_cmd(
     # Debug mode for entrypoint logging (0=off, 1=basic, 2=verbose)
     if debug > 0:
         cmd.extend(["-e", f"CCBOX_DEBUG={debug}"])
+
+    # Unrestricted mode: disable nice/ionice in entrypoint
+    if unrestricted:
+        cmd.extend(["-e", "CCBOX_UNRESTRICTED=1"])
 
     # Debug logs: tmpfs by default (ephemeral), persistent with --debug-logs
     if not debug_logs:
