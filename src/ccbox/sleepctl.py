@@ -16,28 +16,28 @@ import contextlib
 import os
 import select
 import signal
+import subprocess
 import sys
 import threading
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from .constants import (
+    DEFAULT_HEARTBEAT_TIMEOUT,
+    PROCESS_TERM_TIMEOUT,
+    SLEEP_CHECK_INTERVAL,
+    THREAD_JOIN_TIMEOUT,
+)
+
 if TYPE_CHECKING:
     from collections.abc import Callable
     from subprocess import Popen
     from types import FrameType
 
-# Default timeout: 15 minutes
-DEFAULT_HEARTBEAT_TIMEOUT_SECONDS = 900
-
-# Check interval for timeout detection
-CHECK_INTERVAL_SECONDS = 30.0
-
-# Thread join timeout (seconds) - longer for graceful shutdown
-THREAD_JOIN_TIMEOUT = 5.0
-
-# Process termination timeout before SIGKILL (seconds)
-PROCESS_TERM_TIMEOUT = 3.0
+# Re-export for backward compatibility
+DEFAULT_HEARTBEAT_TIMEOUT_SECONDS = DEFAULT_HEARTBEAT_TIMEOUT
+CHECK_INTERVAL_SECONDS = SLEEP_CHECK_INTERVAL
 
 
 @dataclass
@@ -231,11 +231,11 @@ def _terminate_process(proc: Popen[bytes], timeout: float = PROCESS_TERM_TIMEOUT
     proc.terminate()
     try:
         proc.wait(timeout=timeout)
-    except Exception:
+    except subprocess.TimeoutExpired:
         # Process didn't die, force kill
         with contextlib.suppress(OSError):
             proc.kill()
-        with contextlib.suppress(Exception):
+        with contextlib.suppress(OSError):
             proc.wait(timeout=1.0)
 
 
@@ -322,12 +322,6 @@ def _run_with_pty(
         if proc.returncode is not None:
             return_code = proc.returncode
 
-    except Exception:
-        # Ensure process is terminated on any error
-        if proc is not None:
-            _terminate_process(proc)
-        raise
-
     finally:
         # Cleanup in correct order
         stop_event.set()
@@ -384,7 +378,8 @@ def _run_with_pipes(
             stderr=subprocess.STDOUT,
         )
 
-        assert proc.stdout is not None
+        if proc.stdout is None:
+            raise RuntimeError("Process stdout not available")
 
         # Read output and relay with timeout checks
         while True:
@@ -407,11 +402,6 @@ def _run_with_pipes(
                 break
 
         return_code = proc.wait()
-
-    except Exception:
-        if proc is not None:
-            _terminate_process(proc)
-        raise
 
     finally:
         if proc is not None and proc.stdout:
@@ -458,8 +448,7 @@ def run_with_sleep_inhibition(
     def on_timeout() -> None:
         minutes = timeout_seconds / 60
         print(
-            f"\n[ccbox] No output activity for {minutes:.0f} minutes - "
-            "releasing sleep inhibition",
+            f"\n[ccbox] No output activity for {minutes:.0f} minutes - releasing sleep inhibition",
             file=sys.stderr,
         )
 

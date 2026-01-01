@@ -15,7 +15,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from . import __version__
+from . import __version__, sleepctl
 from .config import (
     DOCKER_COMMAND_TIMEOUT,
     STACK_DEPENDENCIES,
@@ -27,29 +27,25 @@ from .config import (
     get_image_name,
     image_exists,
 )
+from .constants import (
+    DOCKER_BUILD_TIMEOUT,
+    DOCKER_CHECK_INTERVAL,
+    DOCKER_STARTUP_TIMEOUT,
+    MAX_PROMPT_LENGTH,
+    MAX_SYSTEM_PROMPT_LENGTH,
+    PRUNE_TIMEOUT,
+    VALID_MODELS,
+)
 from .deps import DepsInfo, DepsMode, detect_dependencies
 from .detector import detect_project_type
 from .generator import generate_project_dockerfile, get_docker_run_cmd, write_build_files
 
 console = Console()
 
-# Constants
-DOCKER_STARTUP_TIMEOUT_SECONDS = 30
-DOCKER_CHECK_INTERVAL_SECONDS = 5
+# Re-export constants for backward compatibility
+DOCKER_STARTUP_TIMEOUT_SECONDS = DOCKER_STARTUP_TIMEOUT
+DOCKER_CHECK_INTERVAL_SECONDS = DOCKER_CHECK_INTERVAL
 ERR_DOCKER_NOT_RUNNING = "[red]Error: Docker is not running.[/red]"
-
-# Timeout constants (seconds)
-DOCKER_BUILD_TIMEOUT = 600  # 10 min for image builds
-# DOCKER_COMMAND_TIMEOUT imported from config
-PRUNE_TIMEOUT = 60  # 60s for prune operations
-
-# Validation constants
-MAX_PROMPT_LENGTH = 5000  # Maximum characters for --prompt parameter
-MAX_SYSTEM_PROMPT_LENGTH = 10000  # Maximum characters for --append-system-prompt
-VALID_MODELS = {"opus", "sonnet", "haiku"}  # Known Claude models
-
-# Prune settings
-PRUNE_CACHE_AGE = "168h"  # 7 days - keep recent build cache
 
 
 def _check_docker_status() -> bool:
@@ -542,12 +538,19 @@ def cli(
             sys.exit(1)
 
     # Validate append-system-prompt parameter
-    if append_system_prompt is not None and len(append_system_prompt) > MAX_SYSTEM_PROMPT_LENGTH:
-        console.print(
-            f"[red]Error: --append-system-prompt must be "
-            f"{MAX_SYSTEM_PROMPT_LENGTH} characters or less[/red]"
-        )
-        sys.exit(1)
+    if append_system_prompt is not None:
+        append_system_prompt = append_system_prompt.strip()
+        if not append_system_prompt:
+            console.print(
+                "[red]Error: --append-system-prompt cannot be empty or whitespace-only[/red]"
+            )
+            sys.exit(1)
+        if len(append_system_prompt) > MAX_SYSTEM_PROMPT_LENGTH:
+            console.print(
+                f"[red]Error: --append-system-prompt must be "
+                f"{MAX_SYSTEM_PROMPT_LENGTH} characters or less[/red]"
+            )
+            sys.exit(1)
 
     # Validate model parameter (warn if unknown, don't block)
     if model is not None:
@@ -880,11 +883,9 @@ def _execute_container(
     returncode = 0
     try:
         if inhibit_sleep:
-            from .sleepctl import run_with_sleep_inhibition
-
-            returncode = run_with_sleep_inhibition(cmd, stdin=stdin)
+            returncode = sleepctl.run_with_sleep_inhibition(cmd, stdin=stdin)
         else:
-            result = subprocess.run(cmd, check=False, stdin=stdin)
+            result = subprocess.run(cmd, check=False, stdin=stdin, text=True, timeout=1800)
             returncode = result.returncode
     except subprocess.CalledProcessError as e:
         returncode = e.returncode

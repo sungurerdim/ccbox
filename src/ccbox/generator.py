@@ -1,7 +1,14 @@
-"""Docker file generation for ccbox."""
+"""Docker file generation for ccbox.
+
+Dependency direction:
+    This module imports from: paths, config
+    It may be imported by: cli.py
+    It should NOT import from: cli, docker, sleepctl
+"""
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
@@ -253,8 +260,34 @@ def generate_dockerfile(stack: LanguageStack) -> str:
     return _minimal_dockerfile()  # pragma: no cover - fallback for unknown stacks
 
 
+def _read_entrypoint_from_file() -> str | None:
+    """Try to read entrypoint script from package resources.
+
+    Returns script content if available, None if file not found.
+    Script file is in scripts/entrypoint.sh for external editing/documentation.
+    """
+    try:
+        # Python 3.9+ with importlib.resources
+        import importlib.resources as resources
+
+        try:
+            # Python 3.11+ API
+            files = resources.files("ccbox.scripts")
+            script_path = files.joinpath("entrypoint.sh")
+            return script_path.read_text(encoding="utf-8")
+        except (AttributeError, FileNotFoundError, TypeError):
+            # Fallback for older Python or missing file
+            return None
+    except ImportError:
+        return None
+
+
 def generate_entrypoint() -> str:
     """Generate entrypoint script with comprehensive debugging support.
+
+    The script content is maintained in scripts/entrypoint.sh for easier
+    editing and documentation. Falls back to embedded version if file
+    not found in package resources.
 
     Debug output is controlled by CCBOX_DEBUG environment variable:
     - CCBOX_DEBUG=1: Basic progress messages
@@ -262,19 +295,25 @@ def generate_entrypoint() -> str:
 
     Mount strategy:
     NORMAL mode (default):
-    - Host ~/.claude → /home/node/.claude (rw, fully accessible)
+    - Host ~/.claude -> /home/node/.claude (rw, fully accessible)
     - CCO files from /opt/cco copied to ~/.claude (merges with host's)
     - CCO CLAUDE.md (if exists) copied to project .claude
-    - Project .claude → persistent (rw)
+    - Project .claude -> persistent (rw)
 
     VANILLA mode (--bare):
-    - Host ~/.claude → /home/node/.claude (rw for credentials/settings)
+    - Host ~/.claude -> /home/node/.claude (rw for credentials/settings)
     - tmpfs overlays for rules/commands/agents/skills (host's hidden)
     - CLAUDE.md hidden via /dev/null
     - No CCO injection
 
     Claude Code reads project .claude first, then falls back to global ~/.claude.
     """
+    # Try to read from package resources first
+    script_content = _read_entrypoint_from_file()
+    if script_content:
+        return script_content
+
+    # Fallback to embedded script (kept in sync with scripts/entrypoint.sh)
     return """#!/bin/bash
 
 # Debug logging function (stdout for diagnostic, stderr for errors only)
@@ -582,6 +621,67 @@ def _add_git_env(cmd: list[str], config: Config) -> None:
         cmd.extend(["-e", f"GIT_COMMITTER_EMAIL={config.git_email}"])
 
 
+def _add_terminal_env(cmd: list[str]) -> None:
+    """Passthrough terminal environment variables for clipboard/image support.
+
+    Claude Code uses these to detect terminal capabilities:
+    - TERM/COLORTERM: Basic terminal type and color support
+    - TERM_PROGRAM: Terminal emulator name (iTerm.app, Apple_Terminal, etc.)
+    - Terminal-specific vars: Enable protocol detection (OSC 52, OSC 1337, Kitty graphics)
+
+    Without these, Claude Code can't use terminal-native clipboard/image features.
+    """
+    # Terminal type with fallbacks (required for basic operation)
+    term = os.environ.get("TERM", "xterm-256color")
+    colorterm = os.environ.get("COLORTERM", "truecolor")
+    cmd.extend(["-e", f"TERM={term}"])
+    cmd.extend(["-e", f"COLORTERM={colorterm}"])
+
+    # Terminal program info (passthrough only if set)
+    term_program_vars = [
+        "TERM_PROGRAM",  # Terminal emulator (iTerm.app, Apple_Terminal, vscode, etc.)
+        "TERM_PROGRAM_VERSION",  # Terminal version
+    ]
+
+    # Terminal-specific variables for clipboard/image protocols
+    terminal_specific_vars = [
+        # iTerm2 (macOS) - OSC 1337 image protocol
+        "ITERM_SESSION_ID",
+        "ITERM_PROFILE",
+        # Kitty - OSC 5522 clipboard, Kitty graphics protocol
+        "KITTY_WINDOW_ID",
+        "KITTY_PID",
+        # WezTerm - supports both OSC 1337 and Kitty protocols
+        "WEZTERM_PANE",
+        "WEZTERM_UNIX_SOCKET",
+        # Ghostty - modern terminal with Kitty protocol support
+        "GHOSTTY_RESOURCES_DIR",
+        # Alacritty - OSC 52 clipboard
+        "ALACRITTY_SOCKET",
+        "ALACRITTY_LOG",
+        # VS Code integrated terminal
+        "VSCODE_GIT_IPC_HANDLE",
+        "VSCODE_INJECTION",
+        # Windows Terminal
+        "WT_SESSION",
+        "WT_PROFILE_ID",
+        # Konsole
+        "KONSOLE_VERSION",
+        "KONSOLE_DBUS_SESSION",
+        # Tmux/Screen (multiplexers affect protocol support)
+        "TMUX",
+        "TMUX_PANE",
+        "STY",  # Screen session
+    ]
+
+    passthrough_vars = term_program_vars + terminal_specific_vars
+
+    for var in passthrough_vars:
+        value = os.environ.get(var)
+        if value:
+            cmd.extend(["-e", f"{var}={value}"])
+
+
 def _build_claude_args(
     *,
     model: str | None,
@@ -744,13 +844,13 @@ def get_docker_run_cmd(
     if not unrestricted:
         cmd.extend(["--cpu-shares=512"])
 
+    # Passthrough terminal-specific environment variables for clipboard/image support
+    # These allow Claude Code to detect terminal capabilities (iTerm2, Kitty, etc.)
+    _add_terminal_env(cmd)
+
     cmd.extend(
         [
             # Environment
-            "-e",
-            "TERM=xterm-256color",
-            "-e",
-            "COLORTERM=truecolor",  # Modern terminal color capability hint
             "-e",
             "FORCE_COLOR=1",  # Ensure ANSI colors enabled (fallback for TTY detection)
             "-e",
