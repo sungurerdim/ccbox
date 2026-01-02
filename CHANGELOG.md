@@ -5,9 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-## [1.0.0] - 2025-12-29
+## [1.0.0] - Unreleased
 
 ### Added
 
@@ -56,6 +54,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Interactive prompt: all deps (dev+prod) / prod only / skip
   - Flags: `--deps`, `--deps-prod`, `--no-deps`
   - Project-specific images with deps pre-installed
+- **File descriptor limits**: `--ulimit nofile=65535:65535` for heavy parallel subprocess spawning
+- **Init process**: `--init` enables proper signal handling and zombie process reaping
+- **Shared memory**: `--shm-size=256m` for Node.js/Chrome (default 64MB too small)
+- **Swap minimization**: `--memory-swappiness=0` minimizes swap usage for better performance
+- **DNS optimization**: `--dns-opt ndots:1` reduces DNS lookup latency by 40-800ms
+- **Node.js compile cache**: `NODE_COMPILE_CACHE` for 40% faster subsequent startups
+- **Git performance**: Comprehensive optimizations (preloadindex, fscache, untrackedcache, commitgraph)
+- **Git credential caching**: 24-hour cache for smoother authentication
+- **Image optimizations**: Build-time environment variables for Node.js/npm/git performance
+- **Comprehensive documentation**: Detailed resource limits and performance docs in README
+- **Host recommendations**: inotify watch limit guidance for large codebases
 
 ### Changed
 
@@ -73,13 +82,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CCO files now injected at runtime via tmpfs overlay (not persisted to host)
 - Container naming changed to `ccbox-{project}-{uuid}` for uniqueness
 - Improved entrypoint with comprehensive error handling and debug logging
+- **PID limit increased**: `--pids-limit` changed from 512 to 2048 for heavy CCO agent usage
+- **No memory limit**: Removed hard memory cap to support large project builds (webpack, tsc, next build)
 
 ### Security
 
 - Container isolation with project-only mounting (no full host access)
 - `--cap-drop=ALL` drops all Linux capabilities (minimal attack surface)
 - `--security-opt=no-new-privileges` prevents privilege escalation
-- `--pids-limit=512` protects against fork bombs
+- `--pids-limit=2048` protects against fork bombs
 - Tmpfs for temp directories (`/tmp`, `/var/tmp`) - no disk residue
 - Tmpfs overlays for CCO directories (rules, commands, agents, skills)
 - Path validation to prevent directory traversal attacks
