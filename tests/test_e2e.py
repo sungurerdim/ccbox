@@ -7,11 +7,13 @@ They test the integration between components without requiring actual Docker.
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
 
 from ccbox.cli import cli
+from ccbox.config import LanguageStack
+from ccbox.detector import DetectionResult
 
 
 class TestE2EPythonProject:
@@ -55,12 +57,22 @@ class TestE2EPythonProject:
 
         runner = CliRunner()
 
+        # Create a mock DepsInfo to simulate detected dependencies
+        mock_deps = MagicMock()
+        mock_deps.name = "pip"
+        mock_deps.files = ["requirements.txt"]
+        mock_deps.install_all = "pip install -r requirements.txt"
+        mock_deps.install_prod = "pip install -r requirements.txt"
+        mock_deps.has_dev = False
+        mock_deps.priority = 10
+
         with (
             patch("ccbox.cli.check_docker", return_value=True),
             patch("ccbox.cli.get_git_config", return_value=("", "")),
             patch("ccbox.cli.image_exists", return_value=True),
             patch("ccbox.cli._project_image_exists", return_value=False),
             patch("ccbox.cli._build_project_image", return_value="ccbox-test:base") as mock_build,
+            patch("ccbox.cli.detect_dependencies", return_value=[mock_deps]),
             patch("ccbox.sleepctl.run_with_sleep_inhibition", return_value=0),
         ):
             result = runner.invoke(
@@ -84,28 +96,22 @@ class TestE2ENodeProject:
 
         runner = CliRunner()
 
+        # Mock detection result for web stack (Node.js projects use web stack)
+        mock_detection = DetectionResult(
+            recommended_stack=LanguageStack.WEB,
+            detected_languages=["node"],
+        )
+
         with (
             patch("ccbox.cli.check_docker", return_value=True),
             patch("ccbox.cli.get_git_config", return_value=("", "")),
             patch("ccbox.cli.image_exists", return_value=True),
             patch("ccbox.cli._project_image_exists", return_value=False),
             patch("ccbox.cli.build_image", return_value=True),
-            patch("ccbox.cli.detect_dependencies") as mock_detect_deps,
+            patch("ccbox.cli.detect_dependencies", return_value=[]),
+            patch("ccbox.cli.detect_project_type", return_value=mock_detection),
             patch("ccbox.sleepctl.run_with_sleep_inhibition", return_value=0),
         ):
-            from ccbox.deps import DepsInfo
-
-            mock_detect_deps.return_value = [
-                DepsInfo.create(
-                    name="npm",
-                    files=["package.json"],
-                    install_all="npm install",
-                    install_prod="npm install --production",
-                    has_dev=True,
-                    priority=5,
-                )
-            ]
-
             result = runner.invoke(
                 cli,
                 ["-s", "auto", "-p", str(tmp_path), "-y"],
@@ -148,6 +154,12 @@ class TestE2EGoProject:
 
         runner = CliRunner()
 
+        # Mock detection result for Go stack
+        mock_detection = DetectionResult(
+            recommended_stack=LanguageStack.GO,
+            detected_languages=["go"],
+        )
+
         with (
             patch("ccbox.cli.check_docker", return_value=True),
             patch("ccbox.cli.get_git_config", return_value=("", "")),
@@ -155,6 +167,7 @@ class TestE2EGoProject:
             patch("ccbox.cli._project_image_exists", return_value=False),
             patch("ccbox.cli.build_image", return_value=True),
             patch("ccbox.cli.detect_dependencies", return_value=[]),
+            patch("ccbox.cli.detect_project_type", return_value=mock_detection),
             patch("ccbox.sleepctl.run_with_sleep_inhibition", return_value=0) as mock_run,
         ):
             result = runner.invoke(
@@ -180,6 +193,12 @@ class TestE2ERustProject:
 
         runner = CliRunner()
 
+        # Mock detection result for Rust stack
+        mock_detection = DetectionResult(
+            recommended_stack=LanguageStack.RUST,
+            detected_languages=["rust"],
+        )
+
         with (
             patch("ccbox.cli.check_docker", return_value=True),
             patch("ccbox.cli.get_git_config", return_value=("", "")),
@@ -187,6 +206,7 @@ class TestE2ERustProject:
             patch("ccbox.cli._project_image_exists", return_value=False),
             patch("ccbox.cli.build_image", return_value=True),
             patch("ccbox.cli.detect_dependencies", return_value=[]),
+            patch("ccbox.cli.detect_project_type", return_value=mock_detection),
             patch("ccbox.sleepctl.run_with_sleep_inhibition", return_value=0) as mock_run,
         ):
             result = runner.invoke(
@@ -210,6 +230,12 @@ class TestE2EFullstackProject:
 
         runner = CliRunner()
 
+        # Mock detection result for web stack (fullstack projects)
+        mock_detection = DetectionResult(
+            recommended_stack=LanguageStack.WEB,
+            detected_languages=["python", "node"],
+        )
+
         with (
             patch("ccbox.cli.check_docker", return_value=True),
             patch("ccbox.cli.get_git_config", return_value=("", "")),
@@ -217,6 +243,7 @@ class TestE2EFullstackProject:
             patch("ccbox.cli._project_image_exists", return_value=False),
             patch("ccbox.cli.build_image", return_value=True),
             patch("ccbox.cli.detect_dependencies", return_value=[]),
+            patch("ccbox.cli.detect_project_type", return_value=mock_detection),
             patch("ccbox.sleepctl.run_with_sleep_inhibition", return_value=0) as mock_run,
         ):
             result = runner.invoke(
@@ -251,10 +278,13 @@ class TestE2EPromptMode:
             result = runner.invoke(
                 cli,
                 [
-                    "-s", "base",
-                    "-p", str(tmp_path),
+                    "-s",
+                    "base",
+                    "-p",
+                    str(tmp_path),
                     "-y",
-                    "--prompt", "Write a hello world function",
+                    "--prompt",
+                    "Write a hello world function",
                 ],
             )
 

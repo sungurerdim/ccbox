@@ -9,6 +9,7 @@ Dependency direction:
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
@@ -626,6 +627,7 @@ def _add_terminal_env(cmd: list[str]) -> None:
 
     Claude Code uses these to detect terminal capabilities:
     - TERM/COLORTERM: Basic terminal type and color support
+    - COLUMNS/LINES: Terminal dimensions for proper layout
     - TERM_PROGRAM: Terminal emulator name (iTerm.app, Apple_Terminal, etc.)
     - Terminal-specific vars: Enable protocol detection (OSC 52, OSC 1337, Kitty graphics)
 
@@ -636,6 +638,12 @@ def _add_terminal_env(cmd: list[str]) -> None:
     colorterm = os.environ.get("COLORTERM", "truecolor")
     cmd.extend(["-e", f"TERM={term}"])
     cmd.extend(["-e", f"COLORTERM={colorterm}"])
+
+    # Terminal dimensions: critical for Claude Code to use full terminal width
+    # Docker TTY mode doesn't propagate dimensions automatically
+    size = shutil.get_terminal_size(fallback=(120, 40))
+    cmd.extend(["-e", f"COLUMNS={size.columns}"])
+    cmd.extend(["-e", f"LINES={size.lines}"])
 
     # Terminal program info (passthrough only if set)
     term_program_vars = [
