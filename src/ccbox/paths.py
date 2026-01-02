@@ -223,5 +223,3 @@ def resolve_for_docker(path: Path) -> str:
     # Case 3: Native Linux/macOS path - use as-is
     _validate_docker_path(path, path_str)
     return path_str
-
-

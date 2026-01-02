@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -36,6 +37,11 @@ from ccbox.generator import (
     write_build_files,
 )
 from ccbox.paths import resolve_for_docker
+
+
+def strip_ansi(text: str) -> str:
+    """Remove ANSI escape codes from text."""
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
 
 
 class TestConfig:
@@ -1052,9 +1058,15 @@ class TestPruneSystemFlag:
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli._get_docker_disk_usage", return_value={
-                "containers": "0B", "images": "1GB", "volumes": "500MB", "cache": "2GB"
-            }),
+            patch(
+                "ccbox.cli._get_docker_disk_usage",
+                return_value={
+                    "containers": "0B",
+                    "images": "1GB",
+                    "volumes": "500MB",
+                    "cache": "2GB",
+                },
+            ),
         ):
             result = runner.invoke(cli, ["prune", "--system"], input="n\n")
             assert result.exit_code == 0
@@ -1065,9 +1077,15 @@ class TestPruneSystemFlag:
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli._get_docker_disk_usage", return_value={
-                "containers": "0B", "images": "1GB", "volumes": "500MB", "cache": "2GB"
-            }),
+            patch(
+                "ccbox.cli._get_docker_disk_usage",
+                return_value={
+                    "containers": "0B",
+                    "images": "1GB",
+                    "volumes": "500MB",
+                    "cache": "2GB",
+                },
+            ),
         ):
             result = runner.invoke(cli, ["prune", "--system"], input="n\n")
             assert "WARNING" in result.output
@@ -1079,9 +1097,10 @@ class TestPruneSystemFlag:
         with (
             patch("ccbox.cli.check_docker", return_value=True),
             patch("subprocess.run") as mock_run,
-            patch("ccbox.cli._get_docker_disk_usage", return_value={
-                "containers": "0B", "images": "0B", "volumes": "0B", "cache": "0B"
-            }),
+            patch(
+                "ccbox.cli._get_docker_disk_usage",
+                return_value={"containers": "0B", "images": "0B", "volumes": "0B", "cache": "0B"},
+            ),
         ):
             mock_run.return_value = MagicMock(stdout="", returncode=0)
             result = runner.invoke(cli, ["prune", "--system", "-f"])
@@ -1093,9 +1112,15 @@ class TestPruneSystemFlag:
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli._get_docker_disk_usage", return_value={
-                "containers": "0B", "images": "1.5GB", "volumes": "500MB", "cache": "3GB"
-            }),
+            patch(
+                "ccbox.cli._get_docker_disk_usage",
+                return_value={
+                    "containers": "0B",
+                    "images": "1.5GB",
+                    "volumes": "500MB",
+                    "cache": "3GB",
+                },
+            ),
         ):
             result = runner.invoke(cli, ["prune", "--system"], input="n\n")
             assert "Containers" in result.output
@@ -1485,7 +1510,7 @@ class TestBenchmarkCLIOptions:
         with patch("ccbox.cli.check_docker", return_value=True):
             result = runner.invoke(cli, ["--prompt", long_prompt])
             assert result.exit_code == 1
-            assert "5000 characters or less" in result.output
+            assert "5000 characters or less" in strip_ansi(result.output)
 
     def test_prompt_whitespace_stripped(self) -> None:
         """Test prompt as positional argument is stripped."""
@@ -1578,6 +1603,7 @@ class TestCleanupCCBoxDanglingImages:
     def test_no_dangling_images_returns_zero(self) -> None:
         """When ccbox images exist but no dangling images, nothing removed."""
         with patch("ccbox.cli.subprocess.run") as mock_run:
+
             def side_effect(*args: object, **kwargs: object) -> MagicMock:
                 cmd = args[0]
                 result = MagicMock()
@@ -1599,6 +1625,7 @@ class TestCleanupCCBoxDanglingImages:
     def test_dangling_without_ccbox_parent_not_removed(self) -> None:
         """Dangling images not from ccbox should NOT be removed."""
         with patch("ccbox.cli.subprocess.run") as mock_run:
+
             def side_effect(*args: object, **kwargs: object) -> MagicMock:
                 cmd = args[0]
                 result = MagicMock()
@@ -1627,6 +1654,7 @@ class TestCleanupCCBoxDanglingImages:
     def test_dangling_with_ccbox_parent_removed(self) -> None:
         """Dangling images from ccbox should be removed."""
         with patch("ccbox.cli.subprocess.run") as mock_run:
+
             def side_effect(*args: object, **kwargs: object) -> MagicMock:
                 cmd = args[0]
                 result = MagicMock()
@@ -1809,6 +1837,7 @@ class TestSharedCleanupHelpers:
     def test_remove_ccbox_containers_success(self) -> None:
         """Test removing ccbox containers successfully."""
         with patch("ccbox.cli.subprocess.run") as mock_run:
+
             def side_effect(*args: object, **kwargs: object) -> MagicMock:
                 cmd = args[0]
                 result = MagicMock()
@@ -1841,6 +1870,7 @@ class TestSharedCleanupHelpers:
     def test_remove_ccbox_images_success(self) -> None:
         """Test removing ccbox images successfully."""
         with patch("ccbox.cli.subprocess.run") as mock_run:
+
             def side_effect(*args: object, **kwargs: object) -> MagicMock:
                 cmd = args[0]
                 result = MagicMock()
@@ -1898,9 +1928,10 @@ class TestPruneIntegration:
 
             # Verify success
             assert result.exit_code == 0
-            assert "Deep clean complete" in result.output
-            assert "3 container(s)" in result.output
-            assert "5 image(s)" in result.output
+            output = strip_ansi(result.output)
+            assert "Deep clean complete" in output
+            assert "3 container(s)" in output
+            assert "5 image(s)" in output
 
     def test_prune_handles_empty_state(self) -> None:
         """Test prune handles case where nothing to remove."""

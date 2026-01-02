@@ -90,9 +90,7 @@ def get_image_ids(image_filter: str) -> set[str]:
         Set of image IDs, or empty set on failure.
     """
     try:
-        result = safe_docker_run(
-            ["docker", "images", "--format", "{{.ID}}", image_filter]
-        )
+        result = safe_docker_run(["docker", "images", "--format", "{{.ID}}", image_filter])
         if result.returncode != 0:
             return set()
         ids = set(result.stdout.strip().split("\n"))
@@ -108,9 +106,7 @@ def get_dangling_image_ids() -> list[str]:
         List of dangling image IDs, or empty list on failure.
     """
     try:
-        result = safe_docker_run(
-            ["docker", "images", "-f", "dangling=true", "-q"]
-        )
+        result = safe_docker_run(["docker", "images", "-f", "dangling=true", "-q"])
         if result.returncode != 0 or not result.stdout.strip():
             return []
         return [i for i in result.stdout.strip().split("\n") if i]
@@ -129,9 +125,7 @@ def image_has_parent(image_id: str, parent_ids: set[str]) -> bool:
         True if image has a parent in the set, False otherwise.
     """
     try:
-        result = safe_docker_run(
-            ["docker", "history", "--no-trunc", "-q", image_id]
-        )
+        result = safe_docker_run(["docker", "history", "--no-trunc", "-q", image_id])
         if result.returncode != 0:
             return False
         history_ids = set(result.stdout.strip().split("\n"))
@@ -224,9 +218,7 @@ def list_images(prefix: str | None = None) -> list[str]:
         List of image names (repository:tag format).
     """
     try:
-        result = safe_docker_run(
-            ["docker", "images", "--format", "{{.Repository}}:{{.Tag}}"]
-        )
+        result = safe_docker_run(["docker", "images", "--format", "{{.Repository}}:{{.Tag}}"])
         if result.returncode != 0:
             return []
 
