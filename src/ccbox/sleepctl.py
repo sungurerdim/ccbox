@@ -136,7 +136,7 @@ class SleepInhibitor:
             self._active = True
         except ImportError:
             self._log_warning("wakepy not installed - sleep inhibition disabled")
-        except Exception as e:
+        except (RuntimeError, OSError, AttributeError) as e:
             self._log_warning(f"Failed to inhibit sleep: {e}")
 
     def _stop_inhibition(self) -> None:

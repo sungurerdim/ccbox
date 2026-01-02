@@ -9,27 +9,29 @@ from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
 
-from ccbox.cli import (
-    _cleanup_ccbox_dangling_images,
+# Main CLI imports
+from ccbox.cli import cli
+from ccbox.cli.build import build_image, get_project_image_name
+from ccbox.cli.cleanup import (
     _get_ccbox_image_ids,
     _get_dangling_image_ids,
     _image_has_ccbox_parent,
-    _remove_ccbox_containers,
-    _remove_ccbox_images,
-    _start_docker_desktop,
-    build_image,
-    check_docker,
-    cli,
-    get_git_config,
-    image_exists,
+    cleanup_ccbox_dangling_images,
+    prune_stale_resources,
+    remove_ccbox_containers,
+    remove_ccbox_images,
 )
+from ccbox.cli.prompts import resolve_stack, select_stack
+from ccbox.cli.utils import _start_docker_desktop, check_docker, get_git_config
 from ccbox.config import (
     Config,
     LanguageStack,
     get_claude_config_dir,
     get_container_name,
     get_image_name,
+    image_exists,
 )
+from ccbox.detector import detect_project_type
 from ccbox.generator import (
     generate_dockerfile,
     generate_entrypoint,
@@ -283,7 +285,7 @@ class TestCLIFunctions:
     def test_build_image_success(self, tmp_path: Path) -> None:
         """Test successful image build."""
         with (
-            patch("ccbox.cli.write_build_files", return_value=tmp_path),
+            patch("ccbox.cli.build.write_build_files", return_value=tmp_path),
             patch("subprocess.run") as mock_run,
         ):
             mock_run.return_value = MagicMock(returncode=0)
@@ -295,9 +297,9 @@ class TestCLIFunctions:
         from subprocess import CalledProcessError
 
         with (
-            patch("ccbox.cli.image_exists", return_value=True),  # Skip dependency check
-            patch("ccbox.cli.write_build_files", return_value=tmp_path),
-            patch("subprocess.run") as mock_run,
+            patch("ccbox.cli.build.image_exists", return_value=True),  # Skip dependency check
+            patch("ccbox.cli.build.write_build_files", return_value=tmp_path),
+            patch("ccbox.cli.build.subprocess.run") as mock_run,
         ):
             mock_run.side_effect = CalledProcessError(1, "docker")
             result = build_image(LanguageStack.BASE)
@@ -312,9 +314,9 @@ class TestCLIFunctions:
             return tmp_path
 
         with (
-            patch("ccbox.cli.image_exists", return_value=False),
-            patch("ccbox.cli.write_build_files", side_effect=mock_write_build_files),
-            patch("subprocess.run") as mock_run,
+            patch("ccbox.cli.build.image_exists", return_value=False),
+            patch("ccbox.cli.build.write_build_files", side_effect=mock_write_build_files),
+            patch("ccbox.cli.build.subprocess.run") as mock_run,
         ):
             mock_run.return_value = MagicMock(returncode=0)
             result = build_image(LanguageStack.WEB)
@@ -327,9 +329,9 @@ class TestCLIFunctions:
         from subprocess import CalledProcessError
 
         with (
-            patch("ccbox.cli.image_exists", return_value=False),
-            patch("ccbox.cli.write_build_files", return_value=tmp_path),
-            patch("subprocess.run") as mock_run,
+            patch("ccbox.cli.build.image_exists", return_value=False),
+            patch("ccbox.cli.build.write_build_files", return_value=tmp_path),
+            patch("ccbox.cli.build.subprocess.run") as mock_run,
         ):
             mock_run.side_effect = CalledProcessError(1, "docker")
             result = build_image(LanguageStack.WEB)
@@ -344,8 +346,8 @@ class TestCLIFunctions:
             return tmp_path
 
         with (
-            patch("ccbox.cli.image_exists", return_value=True),  # Base exists
-            patch("ccbox.cli.write_build_files", side_effect=mock_write_build_files),
+            patch("ccbox.config.image_exists", return_value=True),  # Base exists
+            patch("ccbox.cli.build.write_build_files", side_effect=mock_write_build_files),
             patch("subprocess.run") as mock_run,
         ):
             mock_run.return_value = MagicMock(returncode=0)
@@ -360,7 +362,6 @@ class TestDetector:
 
     def test_detect_python_project(self, tmp_path: Path) -> None:
         """Test Python project detection."""
-        from ccbox.detector import detect_project_type
 
         (tmp_path / "pyproject.toml").touch()
         result = detect_project_type(tmp_path)
@@ -369,7 +370,6 @@ class TestDetector:
 
     def test_detect_node_project(self, tmp_path: Path) -> None:
         """Test Node.js project detection."""
-        from ccbox.detector import detect_project_type
 
         (tmp_path / "package.json").touch()
         result = detect_project_type(tmp_path)
@@ -378,7 +378,6 @@ class TestDetector:
 
     def test_detect_go_project(self, tmp_path: Path) -> None:
         """Test Go project detection."""
-        from ccbox.detector import detect_project_type
 
         (tmp_path / "go.mod").touch()
         result = detect_project_type(tmp_path)
@@ -387,7 +386,6 @@ class TestDetector:
 
     def test_detect_rust_project(self, tmp_path: Path) -> None:
         """Test Rust project detection."""
-        from ccbox.detector import detect_project_type
 
         (tmp_path / "Cargo.toml").touch()
         result = detect_project_type(tmp_path)
@@ -396,7 +394,6 @@ class TestDetector:
 
     def test_detect_java_project(self, tmp_path: Path) -> None:
         """Test Java project detection."""
-        from ccbox.detector import detect_project_type
 
         (tmp_path / "pom.xml").touch()
         result = detect_project_type(tmp_path)
@@ -405,7 +402,6 @@ class TestDetector:
 
     def test_detect_fullstack_project(self, tmp_path: Path) -> None:
         """Test fullstack (Node + Python) project detection."""
-        from ccbox.detector import detect_project_type
 
         (tmp_path / "package.json").touch()
         (tmp_path / "requirements.txt").touch()
@@ -416,7 +412,6 @@ class TestDetector:
 
     def test_detect_multi_compiled_project(self, tmp_path: Path) -> None:
         """Test multi-compiled language project detection."""
-        from ccbox.detector import detect_project_type
 
         (tmp_path / "go.mod").touch()
         (tmp_path / "Cargo.toml").touch()
@@ -425,7 +420,6 @@ class TestDetector:
 
     def test_detect_empty_project(self, tmp_path: Path) -> None:
         """Test empty project detection."""
-        from ccbox.detector import detect_project_type
 
         result = detect_project_type(tmp_path)
         assert result.detected_languages == []
@@ -503,7 +497,7 @@ class TestCLICommands:
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.image_exists", return_value=True),
+            patch("ccbox.config.image_exists", return_value=True),
             patch("ccbox.cli.build_image", return_value=True),
         ):
             result = runner.invoke(cli, ["update", "-a"])
@@ -514,7 +508,7 @@ class TestCLICommands:
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.image_exists", return_value=False),
+            patch("ccbox.config.image_exists", return_value=False),
         ):
             result = runner.invoke(cli, ["update", "-a"])
             assert result.exit_code == 0
@@ -525,7 +519,7 @@ class TestCLICommands:
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.image_exists", return_value=True),
+            patch("ccbox.config.image_exists", return_value=True),
             patch("subprocess.run") as mock_run,
         ):
             mock_run.return_value = MagicMock(stdout="", returncode=0)
@@ -544,9 +538,9 @@ class TestCLICommands:
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.get_git_config", return_value=("Test", "t@t.com")),
-            patch("ccbox.cli.image_exists", return_value=False),
-            patch("ccbox.cli.detect_project_type") as mock_detect,
+            patch("ccbox.cli.prompts.get_git_config", return_value=("Test", "t@t.com")),
+            patch("ccbox.config.image_exists", return_value=False),
+            patch("ccbox.cli.prompts.detect_project_type") as mock_detect,
         ):
             from ccbox.detector import DetectionResult
 
@@ -563,9 +557,9 @@ class TestCLICommands:
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.get_git_config", return_value=("Test", "t@t.com")),
-            patch("ccbox.cli.image_exists", return_value=True),
-            patch("ccbox.cli.detect_project_type") as mock_detect,
+            patch("ccbox.cli.prompts.get_git_config", return_value=("Test", "t@t.com")),
+            patch("ccbox.config.image_exists", return_value=True),
+            patch("ccbox.cli.prompts.detect_project_type") as mock_detect,
         ):
             from ccbox.detector import DetectionResult
 
@@ -592,16 +586,21 @@ class TestMainRunFlow:
         """Test run with stack argument."""
         runner = CliRunner()
         with (
-            patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.get_git_config", return_value=("", "")),
-            patch("ccbox.cli.detect_project_type") as mock_detect,
-            patch("ccbox.cli.detect_dependencies", return_value=[]),
-            patch("ccbox.cli.image_exists", return_value=True),
-            patch("subprocess.run"),
-            patch("ccbox.sleepctl.run_with_sleep_inhibition", return_value=0),
+            patch("ccbox.cli.run.check_docker", return_value=True),
+            patch("ccbox.cli.run.prune_stale_resources", return_value={}),
+            patch("ccbox.cli.run.setup_git_config") as mock_setup_git,
+            patch("ccbox.cli.run.detect_project_type") as mock_detect,
+            patch("ccbox.cli.run.detect_dependencies", return_value=[]),
+            patch("ccbox.cli.run.image_exists", return_value=True),
+            patch("ccbox.cli.run.project_image_exists", return_value=True),
+            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox-test:base"),
+            patch("ccbox.cli.run.get_docker_run_cmd", return_value=["echo", "test"]),
+            patch("ccbox.cli.run.sleepctl.run_with_sleep_inhibition", return_value=0),
         ):
+            from ccbox.config import Config
             from ccbox.detector import DetectionResult
 
+            mock_setup_git.return_value = Config()
             mock_detect.return_value = DetectionResult([], LanguageStack.BASE)
             result = runner.invoke(cli, ["-s", "base", "-p", str(tmp_path)])
             assert result.exit_code == 0
@@ -758,7 +757,7 @@ class TestCheckDockerAutoStart:
 
         with (
             patch("subprocess.run", side_effect=mock_run),
-            patch("ccbox.cli._start_docker_desktop", return_value=True),
+            patch("ccbox.cli.utils._start_docker_desktop", return_value=True),
             patch("time.sleep"),
         ):
             result = check_docker(auto_start=True)
@@ -770,7 +769,7 @@ class TestCheckDockerAutoStart:
         mock_result.returncode = 1
         with (
             patch("subprocess.run", return_value=mock_result),
-            patch("ccbox.cli._start_docker_desktop", return_value=True),
+            patch("ccbox.cli.utils._start_docker_desktop", return_value=True),
             patch("time.sleep"),
         ):
             result = check_docker(auto_start=True)
@@ -780,39 +779,36 @@ class TestCheckDockerAutoStart:
 class TestSelectStack:
     """Tests for stack selection menu."""
 
-    def test_select_stack_with_choice(self) -> None:
+    def testselect_stack_with_choice(self) -> None:
         """Test interactive stack selection."""
-        from ccbox.cli import _select_stack
 
         with (
-            patch("ccbox.cli.image_exists", return_value=False),
+            patch("ccbox.config.image_exists", return_value=False),
             patch("click.prompt", return_value="1"),
         ):
             # Choice "1" selects first stack (MINIMAL)
-            result = _select_stack(LanguageStack.BASE, ["python"])
+            result = select_stack(LanguageStack.BASE, ["python"])
             assert result == LanguageStack.MINIMAL
 
-    def test_select_stack_cancelled(self) -> None:
+    def testselect_stack_cancelled(self) -> None:
         """Test stack selection cancelled."""
-        from ccbox.cli import _select_stack
 
         with (
-            patch("ccbox.cli.image_exists", return_value=False),
+            patch("ccbox.config.image_exists", return_value=False),
             patch("click.prompt", return_value="0"),
         ):
-            result = _select_stack(LanguageStack.BASE, [])
+            result = select_stack(LanguageStack.BASE, [])
             assert result is None
 
-    def test_select_stack_invalid_then_valid(self) -> None:
+    def testselect_stack_invalid_then_valid(self) -> None:
         """Test invalid choice then valid choice."""
-        from ccbox.cli import _select_stack
 
         with (
-            patch("ccbox.cli.image_exists", return_value=False),
+            patch("ccbox.config.image_exists", return_value=False),
             patch("click.prompt", side_effect=["invalid", "1"]),
         ):
             # Choice "1" selects first stack (MINIMAL)
-            result = _select_stack(LanguageStack.BASE, [])
+            result = select_stack(LanguageStack.BASE, [])
             assert result == LanguageStack.MINIMAL
 
 
@@ -821,28 +817,26 @@ class TestStackAuto:
 
     def test_stack_auto_uses_detected_stack(self, tmp_path: Path) -> None:
         """Test --stack=auto uses detected stack without prompting."""
-        from ccbox.cli import _resolve_stack
         from ccbox.detector import DetectionResult
 
-        with patch("ccbox.cli.detect_project_type") as mock_detect:
+        with patch("ccbox.cli.prompts.detect_project_type") as mock_detect:
             mock_detect.return_value = DetectionResult(
                 detected_languages=["go"],
                 recommended_stack=LanguageStack.GO,
             )
-            result = _resolve_stack("auto", tmp_path)
+            result = resolve_stack("auto", tmp_path)
             assert result == LanguageStack.GO
 
     def test_stack_auto_skips_menu(self, tmp_path: Path) -> None:
-        """Test --stack=auto does not call _select_stack."""
-        from ccbox.cli import _resolve_stack
+        """Test --stack=auto does not call select_stack."""
         from ccbox.detector import DetectionResult
 
         with (
-            patch("ccbox.cli.detect_project_type") as mock_detect,
-            patch("ccbox.cli._select_stack") as mock_select,
+            patch("ccbox.cli.prompts.detect_project_type") as mock_detect,
+            patch("ccbox.cli.prompts.select_stack") as mock_select,
         ):
             mock_detect.return_value = DetectionResult([], LanguageStack.RUST)
-            _resolve_stack("auto", tmp_path)
+            resolve_stack("auto", tmp_path)
             mock_select.assert_not_called()
 
 
@@ -853,22 +847,21 @@ class TestRunFlowExtended:
         """Test run with interactive stack selection - user cancels."""
         runner = CliRunner()
 
-        # Base image exists, but detected stack (GO) doesn't - triggers selection
-        def image_exists_side_effect(stack: LanguageStack) -> bool:
-            return stack == LanguageStack.BASE
-
         with (
-            patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.get_git_config", return_value=("Test", "test@test.com")),
-            patch("ccbox.cli.detect_project_type") as mock_detect,
-            patch("ccbox.cli.detect_dependencies", return_value=[]),
-            patch("ccbox.cli.image_exists", side_effect=image_exists_side_effect),
-            patch("ccbox.cli._select_stack", return_value=None),  # User cancels
+            patch("ccbox.cli.run.check_docker", return_value=True),
+            patch("ccbox.cli.run.prune_stale_resources", return_value={}),
+            patch("ccbox.cli.run.setup_git_config") as mock_setup_git,
+            patch("ccbox.cli.run.detect_project_type") as mock_detect,
+            patch("ccbox.cli.run.detect_dependencies", return_value=[]),
+            patch("ccbox.cli.run.project_image_exists", return_value=False),
+            patch("ccbox.cli.run.resolve_stack", return_value=None),  # User cancels
         ):
+            from ccbox.config import Config
             from ccbox.detector import DetectionResult
 
+            mock_setup_git.return_value = Config()
             mock_detect.return_value = DetectionResult(
-                recommended_stack=LanguageStack.GO,  # Not BASE
+                recommended_stack=LanguageStack.GO,
                 detected_languages=["go"],
             )
             result = runner.invoke(cli, ["-p", str(tmp_path)])
@@ -879,42 +872,46 @@ class TestRunFlowExtended:
         """Test successful build and run."""
         runner = CliRunner()
 
-        # Base exists, but selected stack (go) needs build
-        def image_exists_side_effect(stack: LanguageStack) -> bool:
-            return stack == LanguageStack.BASE
-
         with (
-            patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.get_git_config", return_value=("", "")),
-            patch("ccbox.cli.detect_project_type") as mock_detect,
-            patch("ccbox.cli.detect_dependencies", return_value=[]),
-            patch("ccbox.cli.image_exists", side_effect=image_exists_side_effect),
-            patch("ccbox.cli.build_image", return_value=True),
-            patch("subprocess.run"),
-            patch("ccbox.sleepctl.run_with_sleep_inhibition", return_value=0),
+            patch("ccbox.cli.run.check_docker", return_value=True),
+            patch("ccbox.cli.run.prune_stale_resources", return_value={}),
+            patch("ccbox.cli.run.setup_git_config") as mock_setup_git,
+            patch("ccbox.cli.run.detect_project_type") as mock_detect,
+            patch("ccbox.cli.run.detect_dependencies", return_value=[]),
+            patch("ccbox.cli.run.project_image_exists", return_value=False),
+            patch("ccbox.cli.run.image_exists", return_value=True),
+            patch("ccbox.cli.run.ensure_image_ready", return_value=True),
+            patch("ccbox.cli.run.build_project_image", return_value=None),
+            patch("ccbox.cli.run.get_docker_run_cmd", return_value=["echo", "test"]),
+            patch("ccbox.cli.run.sleepctl.run_with_sleep_inhibition", return_value=0),
         ):
+            from ccbox.config import Config
             from ccbox.detector import DetectionResult
 
+            mock_setup_git.return_value = Config()
             mock_detect.return_value = DetectionResult([], LanguageStack.GO)
-            result = runner.invoke(cli, ["-s", "go", "-p", str(tmp_path)], input="y\n")
+            result = runner.invoke(cli, ["-s", "go", "-p", str(tmp_path)])
             assert result.exit_code == 0
 
     def test_run_build_failure(self, tmp_path: Path) -> None:
         """Test build failure."""
         runner = CliRunner()
         with (
-            patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.get_git_config", return_value=("", "")),
-            patch("ccbox.cli.detect_project_type") as mock_detect,
-            patch("ccbox.cli.detect_dependencies", return_value=[]),
-            patch("ccbox.cli.image_exists", return_value=False),
-            patch("ccbox.cli.build_image", return_value=False),
-            patch("ccbox.cli._project_image_exists", return_value=False),
+            patch("ccbox.cli.run.check_docker", return_value=True),
+            patch("ccbox.cli.run.prune_stale_resources", return_value={}),
+            patch("ccbox.cli.run.setup_git_config") as mock_setup_git,
+            patch("ccbox.cli.run.detect_project_type") as mock_detect,
+            patch("ccbox.cli.run.detect_dependencies", return_value=[]),
+            patch("ccbox.cli.run.project_image_exists", return_value=False),
+            patch("ccbox.cli.run.image_exists", return_value=False),
+            patch("ccbox.cli.run.build_image", return_value=False),
         ):
+            from ccbox.config import Config
             from ccbox.detector import DetectionResult
 
+            mock_setup_git.return_value = Config()
             mock_detect.return_value = DetectionResult([], LanguageStack.BASE)
-            result = runner.invoke(cli, ["-s", "base", "-p", str(tmp_path)], input="y\n")
+            result = runner.invoke(cli, ["-s", "base", "-p", str(tmp_path)])
             assert result.exit_code == 1
 
     def test_run_subprocess_error(self, tmp_path: Path) -> None:
@@ -923,15 +920,23 @@ class TestRunFlowExtended:
 
         runner = CliRunner()
         with (
-            patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.get_git_config", return_value=("", "")),
-            patch("ccbox.cli.detect_project_type") as mock_detect,
-            patch("ccbox.cli.detect_dependencies", return_value=[]),
-            patch("ccbox.cli.image_exists", return_value=True),
-            patch("subprocess.run", side_effect=CalledProcessError(1, "docker")),
+            patch("ccbox.cli.run.check_docker", return_value=True),
+            patch("ccbox.cli.run.prune_stale_resources", return_value={}),
+            patch("ccbox.cli.run.setup_git_config") as mock_setup_git,
+            patch("ccbox.cli.run.detect_project_type") as mock_detect,
+            patch("ccbox.cli.run.detect_dependencies", return_value=[]),
+            patch("ccbox.cli.run.project_image_exists", return_value=True),
+            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox-test:base"),
+            patch("ccbox.cli.run.get_docker_run_cmd", return_value=["docker", "run"]),
+            patch(
+                "ccbox.cli.run.sleepctl.run_with_sleep_inhibition",
+                side_effect=CalledProcessError(1, "docker"),
+            ),
         ):
+            from ccbox.config import Config
             from ccbox.detector import DetectionResult
 
+            mock_setup_git.return_value = Config()
             mock_detect.return_value = DetectionResult([], LanguageStack.BASE)
             result = runner.invoke(cli, ["-s", "base", "-p", str(tmp_path)])
             assert result.exit_code == 1
@@ -945,21 +950,23 @@ class TestRunFlowExtended:
             raise KeyboardInterrupt
 
         with (
-            patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.get_git_config", return_value=("", "")),
-            patch("ccbox.cli.detect_project_type") as mock_detect,
-            patch("ccbox.cli.detect_dependencies", return_value=[]),
-            patch("ccbox.cli.image_exists", return_value=True),
-            patch("ccbox.cli._project_image_exists", return_value=False),
-            patch("ccbox.cli.build_image", return_value=True),
-            patch("subprocess.run"),
+            patch("ccbox.cli.run.check_docker", return_value=True),
+            patch("ccbox.cli.run.prune_stale_resources", return_value={}),
+            patch("ccbox.cli.run.setup_git_config") as mock_setup_git,
+            patch("ccbox.cli.run.detect_project_type") as mock_detect,
+            patch("ccbox.cli.run.detect_dependencies", return_value=[]),
+            patch("ccbox.cli.run.project_image_exists", return_value=True),
+            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox-test:base"),
+            patch("ccbox.cli.run.get_docker_run_cmd", return_value=["docker", "run"]),
             patch(
-                "ccbox.sleepctl.run_with_sleep_inhibition",
+                "ccbox.cli.run.sleepctl.run_with_sleep_inhibition",
                 side_effect=sleep_inhibit_side_effect,
             ),
         ):
+            from ccbox.config import Config
             from ccbox.detector import DetectionResult
 
+            mock_setup_git.return_value = Config()
             mock_detect.return_value = DetectionResult([], LanguageStack.BASE)
             result = runner.invoke(cli, ["-s", "base", "-p", str(tmp_path)])
             assert result.exit_code == 0
@@ -993,7 +1000,7 @@ class TestCleanCommand:
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.image_exists", return_value=True),
+            patch("ccbox.config.image_exists", return_value=True),
             patch("subprocess.run") as mock_run,
         ):
             mock_run.return_value = MagicMock(stdout="container1\n", returncode=0)
@@ -1059,7 +1066,7 @@ class TestPruneSystemFlag:
         with (
             patch("ccbox.cli.check_docker", return_value=True),
             patch(
-                "ccbox.cli._get_docker_disk_usage",
+                "ccbox.cli.cleanup.get_docker_disk_usage",
                 return_value={
                     "containers": "0B",
                     "images": "1GB",
@@ -1078,7 +1085,7 @@ class TestPruneSystemFlag:
         with (
             patch("ccbox.cli.check_docker", return_value=True),
             patch(
-                "ccbox.cli._get_docker_disk_usage",
+                "ccbox.cli.cleanup.get_docker_disk_usage",
                 return_value={
                     "containers": "0B",
                     "images": "1GB",
@@ -1096,9 +1103,9 @@ class TestPruneSystemFlag:
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("subprocess.run") as mock_run,
+            patch("ccbox.cli.cleanup.subprocess.run") as mock_run,
             patch(
-                "ccbox.cli._get_docker_disk_usage",
+                "ccbox.cli.cleanup.get_docker_disk_usage",
                 return_value={"containers": "0B", "images": "0B", "volumes": "0B", "cache": "0B"},
             ),
         ):
@@ -1113,7 +1120,7 @@ class TestPruneSystemFlag:
         with (
             patch("ccbox.cli.check_docker", return_value=True),
             patch(
-                "ccbox.cli._get_docker_disk_usage",
+                "ccbox.cli.cleanup.get_docker_disk_usage",
                 return_value={
                     "containers": "0B",
                     "images": "1.5GB",
@@ -1139,32 +1146,29 @@ class TestPruneSystemFlag:
 class TestPruneStaleResources:
     """Tests for pre-run stale resource cleanup."""
 
-    def test_prune_stale_resources_removes_exited_containers(self) -> None:
-        """Test _prune_stale_resources removes exited ccbox containers."""
-        from ccbox.cli import _prune_stale_resources
+    def testprune_stale_resources_removes_exited_containers(self) -> None:
+        """Test prune_stale_resources removes exited ccbox containers."""
 
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(stdout="abc123\ndef456\n", returncode=0)
-            results = _prune_stale_resources(verbose=False)
+            results = prune_stale_resources(verbose=False)
             assert results["containers"] == 2
 
-    def test_prune_stale_resources_no_containers(self) -> None:
-        """Test _prune_stale_resources when no stale containers exist."""
-        from ccbox.cli import _prune_stale_resources
+    def testprune_stale_resources_no_containers(self) -> None:
+        """Test prune_stale_resources when no stale containers exist."""
 
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(stdout="", returncode=0)
-            results = _prune_stale_resources(verbose=False)
+            results = prune_stale_resources(verbose=False)
             assert results["containers"] == 0
 
-    def test_prune_stale_resources_timeout_handling(self) -> None:
-        """Test _prune_stale_resources handles timeout gracefully."""
+    def testprune_stale_resources_timeout_handling(self) -> None:
+        """Test prune_stale_resources handles timeout gracefully."""
         from subprocess import TimeoutExpired
 
-        from ccbox.cli import _prune_stale_resources
 
         with patch("subprocess.run", side_effect=TimeoutExpired(cmd="docker", timeout=30)):
-            results = _prune_stale_resources(verbose=False)
+            results = prune_stale_resources(verbose=False)
             assert results["containers"] == 0
 
 
@@ -1187,9 +1191,9 @@ class TestDoctorDiskCheck:
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.get_git_config", return_value=("T", "t@t")),
-            patch("ccbox.cli.image_exists", return_value=False),
-            patch("ccbox.cli.detect_project_type") as mock_detect,
+            patch("ccbox.cli.prompts.get_git_config", return_value=("T", "t@t")),
+            patch("ccbox.config.image_exists", return_value=False),
+            patch("ccbox.cli.prompts.detect_project_type") as mock_detect,
             patch("shutil.disk_usage", side_effect=OSError("Cannot check")),
         ):
             from ccbox.detector import DetectionResult
@@ -1240,15 +1244,19 @@ class TestChdirOption:
 
         captured_cwd = []
 
-        def capture_cwd(*args: object, **kwargs: object) -> tuple[str, str]:
+        def capture_cwd() -> object:
             captured_cwd.append(Path.cwd())
-            return ("", "")
+            from ccbox.config import Config
+
+            return Config()
 
         with (
-            patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.get_git_config", side_effect=capture_cwd),
-            patch("ccbox.cli.detect_project_type") as mock_detect,
-            patch("ccbox.cli._select_stack", return_value=None),  # User cancels
+            patch("ccbox.cli.run.check_docker", return_value=True),
+            patch("ccbox.cli.run.prune_stale_resources", return_value={}),
+            patch("ccbox.cli.run.setup_git_config", side_effect=capture_cwd),
+            patch("ccbox.cli.run.detect_project_type") as mock_detect,
+            patch("ccbox.cli.run.project_image_exists", return_value=False),
+            patch("ccbox.cli.run.resolve_stack", return_value=None),  # User cancels
             runner.isolated_filesystem(),
         ):
             from ccbox.detector import DetectionResult
@@ -1281,15 +1289,20 @@ class TestChdirOption:
         runner = CliRunner()
 
         with (
-            patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.get_git_config", return_value=("", "")),
-            patch("ccbox.cli.detect_project_type") as mock_detect,
-            patch("ccbox.cli.image_exists", return_value=True),
-            patch("subprocess.run"),  # Mock docker run
-            patch("ccbox.sleepctl.run_with_sleep_inhibition", return_value=0),
+            patch("ccbox.cli.run.check_docker", return_value=True),
+            patch("ccbox.cli.run.prune_stale_resources", return_value={}),
+            patch("ccbox.cli.run.setup_git_config") as mock_setup_git,
+            patch("ccbox.cli.run.detect_project_type") as mock_detect,
+            patch("ccbox.cli.run.detect_dependencies", return_value=[]),
+            patch("ccbox.cli.run.project_image_exists", return_value=True),
+            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox-test:base"),
+            patch("ccbox.cli.run.get_docker_run_cmd", return_value=["echo", "test"]),
+            patch("ccbox.cli.run.sleepctl.run_with_sleep_inhibition", return_value=0),
         ):
+            from ccbox.config import Config
             from ccbox.detector import DetectionResult
 
+            mock_setup_git.return_value = Config()
             mock_detect.return_value = DetectionResult(
                 detected_languages=[],
                 recommended_stack=LanguageStack.BASE,
@@ -1313,21 +1326,25 @@ class TestInteractiveStackSelection:
         """Test full interactive run with stack selection."""
         runner = CliRunner()
         with (
-            patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.get_git_config", return_value=("", "")),
-            patch("ccbox.cli.detect_project_type") as mock_detect,
-            patch("ccbox.cli.image_exists", return_value=True),
-            patch("subprocess.run"),
-            patch("ccbox.sleepctl.run_with_sleep_inhibition", return_value=0),
+            patch("ccbox.cli.run.check_docker", return_value=True),
+            patch("ccbox.cli.run.prune_stale_resources", return_value={}),
+            patch("ccbox.cli.run.setup_git_config") as mock_setup_git,
+            patch("ccbox.cli.run.detect_project_type") as mock_detect,
+            patch("ccbox.cli.run.detect_dependencies", return_value=[]),
+            patch("ccbox.cli.run.project_image_exists", return_value=True),
+            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox-test:base"),
+            patch("ccbox.cli.run.get_docker_run_cmd", return_value=["echo", "test"]),
+            patch("ccbox.cli.run.sleepctl.run_with_sleep_inhibition", return_value=0),
         ):
+            from ccbox.config import Config
             from ccbox.detector import DetectionResult
 
+            mock_setup_git.return_value = Config()
             mock_detect.return_value = DetectionResult(
                 recommended_stack=LanguageStack.BASE,
                 detected_languages=["python"],
             )
-            # Input "1" to select first stack, then no build confirmation
-            result = runner.invoke(cli, ["--path", str(tmp_path)], input="1\n")
+            result = runner.invoke(cli, ["--path", str(tmp_path)])
             assert result.exit_code == 0
 
 
@@ -1579,7 +1596,7 @@ class TestBenchmarkCLIOptions:
 
 
 class TestCleanupCCBoxDanglingImages:
-    """Tests for _cleanup_ccbox_dangling_images() function.
+    """Tests for cleanup_ccbox_dangling_images() function.
 
     This function is called after each build to prevent disk accumulation
     from intermediate build layers. It ONLY removes dangling images whose
@@ -1588,21 +1605,21 @@ class TestCleanupCCBoxDanglingImages:
 
     def test_no_ccbox_images_returns_zero(self) -> None:
         """When no ccbox images exist, nothing should be removed."""
-        with patch("ccbox.cli.subprocess.run") as mock_run:
+        with patch("ccbox.cli.cleanup.subprocess.run") as mock_run:
             # Mock: no ccbox images found
             ccbox_result = MagicMock()
             ccbox_result.returncode = 0
             ccbox_result.stdout = ""
             mock_run.return_value = ccbox_result
 
-            result = _cleanup_ccbox_dangling_images()
+            result = cleanup_ccbox_dangling_images()
             assert result == 0
             # Only one call made (to get ccbox images)
             assert mock_run.call_count == 1
 
     def test_no_dangling_images_returns_zero(self) -> None:
         """When ccbox images exist but no dangling images, nothing removed."""
-        with patch("ccbox.cli.subprocess.run") as mock_run:
+        with patch("ccbox.cli.cleanup.subprocess.run") as mock_run:
 
             def side_effect(*args: object, **kwargs: object) -> MagicMock:
                 cmd = args[0]
@@ -1619,12 +1636,12 @@ class TestCleanupCCBoxDanglingImages:
 
             mock_run.side_effect = side_effect
 
-            result = _cleanup_ccbox_dangling_images()
+            result = cleanup_ccbox_dangling_images()
             assert result == 0
 
     def test_dangling_without_ccbox_parent_not_removed(self) -> None:
         """Dangling images not from ccbox should NOT be removed."""
-        with patch("ccbox.cli.subprocess.run") as mock_run:
+        with patch("ccbox.cli.cleanup.subprocess.run") as mock_run:
 
             def side_effect(*args: object, **kwargs: object) -> MagicMock:
                 cmd = args[0]
@@ -1644,7 +1661,7 @@ class TestCleanupCCBoxDanglingImages:
 
             mock_run.side_effect = side_effect
 
-            result = _cleanup_ccbox_dangling_images()
+            result = cleanup_ccbox_dangling_images()
             # Nothing removed because dangling has no ccbox parent
             assert result == 0
             # No docker rmi calls made
@@ -1653,7 +1670,7 @@ class TestCleanupCCBoxDanglingImages:
 
     def test_dangling_with_ccbox_parent_removed(self) -> None:
         """Dangling images from ccbox should be removed."""
-        with patch("ccbox.cli.subprocess.run") as mock_run:
+        with patch("ccbox.cli.cleanup.subprocess.run") as mock_run:
 
             def side_effect(*args: object, **kwargs: object) -> MagicMock:
                 cmd = args[0]
@@ -1676,7 +1693,7 @@ class TestCleanupCCBoxDanglingImages:
 
             mock_run.side_effect = side_effect
 
-            result = _cleanup_ccbox_dangling_images()
+            result = cleanup_ccbox_dangling_images()
             # One dangling image removed
             assert result == 1
             # Verify rmi was called
@@ -1687,18 +1704,18 @@ class TestCleanupCCBoxDanglingImages:
         """Timeout should be handled gracefully, returning 0."""
         import subprocess
 
-        with patch("ccbox.cli.subprocess.run") as mock_run:
+        with patch("ccbox.cli.cleanup.subprocess.run") as mock_run:
             mock_run.side_effect = subprocess.TimeoutExpired(cmd="docker", timeout=30)
 
-            result = _cleanup_ccbox_dangling_images()
+            result = cleanup_ccbox_dangling_images()
             assert result == 0
 
     def test_docker_not_found_returns_zero(self) -> None:
         """FileNotFoundError (docker not installed) handled gracefully."""
-        with patch("ccbox.cli.subprocess.run") as mock_run:
+        with patch("ccbox.cli.cleanup.subprocess.run") as mock_run:
             mock_run.side_effect = FileNotFoundError("docker not found")
 
-            result = _cleanup_ccbox_dangling_images()
+            result = cleanup_ccbox_dangling_images()
             assert result == 0
 
 
@@ -1727,12 +1744,11 @@ class TestProjectImageNameValidation:
 
     def test_long_project_name_truncated(self) -> None:
         """Very long project names should be truncated to fit Docker limits."""
-        from ccbox.cli import _get_project_image_name
         from ccbox.config import LanguageStack
 
         # 200-char project name
         long_name = "a" * 200
-        result = _get_project_image_name(long_name, LanguageStack.BASE)
+        result = get_project_image_name(long_name, LanguageStack.BASE)
 
         # Result should be under 128 chars total
         assert len(result) <= 128
@@ -1741,29 +1757,22 @@ class TestProjectImageNameValidation:
 
 
 class TestExtractedHelperFunctions:
-    """Tests for extracted helper functions (refactored from _cleanup_ccbox_dangling_images)."""
+    """Tests for extracted helper functions (refactored from cleanup_ccbox_dangling_images)."""
 
     def test_get_ccbox_image_ids_success(self) -> None:
         """Test getting ccbox image IDs successfully."""
-        with patch("ccbox.cli.subprocess.run") as mock_run:
-            mock_result = MagicMock()
-            mock_result.returncode = 0
-            mock_result.stdout = "abc123\ndef456\nghi789"
-            mock_run.return_value = mock_result
+        with patch("ccbox.cli.cleanup.docker.get_image_ids") as mock_get:
+            mock_get.return_value = {"abc123", "def456", "ghi789"}
 
             result = _get_ccbox_image_ids()
 
             assert result == {"abc123", "def456", "ghi789"}
-            mock_run.assert_called_once()
-            assert "ccbox" in mock_run.call_args[0][0]
+            mock_get.assert_called_once_with("ccbox")
 
     def test_get_ccbox_image_ids_empty(self) -> None:
         """Test empty result when no ccbox images."""
-        with patch("ccbox.cli.subprocess.run") as mock_run:
-            mock_result = MagicMock()
-            mock_result.returncode = 0
-            mock_result.stdout = ""
-            mock_run.return_value = mock_result
+        with patch("ccbox.cli.cleanup.docker.get_image_ids") as mock_get:
+            mock_get.return_value = set()
 
             result = _get_ccbox_image_ids()
 
@@ -1771,10 +1780,8 @@ class TestExtractedHelperFunctions:
 
     def test_get_ccbox_image_ids_failure(self) -> None:
         """Test graceful handling of docker command failure."""
-        with patch("ccbox.cli.subprocess.run") as mock_run:
-            mock_result = MagicMock()
-            mock_result.returncode = 1
-            mock_run.return_value = mock_result
+        with patch("ccbox.cli.cleanup.docker.get_image_ids") as mock_get:
+            mock_get.return_value = set()
 
             result = _get_ccbox_image_ids()
 
@@ -1782,24 +1789,18 @@ class TestExtractedHelperFunctions:
 
     def test_get_dangling_image_ids_success(self) -> None:
         """Test getting dangling image IDs successfully."""
-        with patch("ccbox.cli.subprocess.run") as mock_run:
-            mock_result = MagicMock()
-            mock_result.returncode = 0
-            mock_result.stdout = "dangle1\ndangle2"
-            mock_run.return_value = mock_result
+        with patch("ccbox.cli.cleanup.docker.get_dangling_image_ids") as mock_get:
+            mock_get.return_value = ["dangle1", "dangle2"]
 
             result = _get_dangling_image_ids()
 
             assert result == ["dangle1", "dangle2"]
-            assert "dangling=true" in str(mock_run.call_args)
+            mock_get.assert_called_once()
 
     def test_get_dangling_image_ids_empty(self) -> None:
         """Test empty result when no dangling images."""
-        with patch("ccbox.cli.subprocess.run") as mock_run:
-            mock_result = MagicMock()
-            mock_result.returncode = 0
-            mock_result.stdout = ""
-            mock_run.return_value = mock_result
+        with patch("ccbox.cli.cleanup.docker.get_dangling_image_ids") as mock_get:
+            mock_get.return_value = []
 
             result = _get_dangling_image_ids()
 
@@ -1807,24 +1808,18 @@ class TestExtractedHelperFunctions:
 
     def test_image_has_ccbox_parent_true(self) -> None:
         """Test detecting ccbox parent in image history."""
-        with patch("ccbox.cli.subprocess.run") as mock_run:
-            mock_result = MagicMock()
-            mock_result.returncode = 0
-            mock_result.stdout = "layer1\nccbox123\nlayer2"
-            mock_run.return_value = mock_result
+        with patch("ccbox.cli.cleanup.docker.image_has_parent") as mock_has:
+            mock_has.return_value = True
 
             result = _image_has_ccbox_parent("test-image", {"ccbox123", "ccbox456"})
 
             assert result is True
-            assert "history" in str(mock_run.call_args)
+            mock_has.assert_called_once_with("test-image", {"ccbox123", "ccbox456"})
 
     def test_image_has_ccbox_parent_false(self) -> None:
         """Test no ccbox parent detected when history has no match."""
-        with patch("ccbox.cli.subprocess.run") as mock_run:
-            mock_result = MagicMock()
-            mock_result.returncode = 0
-            mock_result.stdout = "layer1\nlayer2\nlayer3"
-            mock_run.return_value = mock_result
+        with patch("ccbox.cli.cleanup.docker.image_has_parent") as mock_has:
+            mock_has.return_value = False
 
             result = _image_has_ccbox_parent("test-image", {"ccbox123", "ccbox456"})
 
@@ -1834,9 +1829,9 @@ class TestExtractedHelperFunctions:
 class TestSharedCleanupHelpers:
     """Tests for shared cleanup helper functions."""
 
-    def test_remove_ccbox_containers_success(self) -> None:
+    def testremove_ccbox_containers_success(self) -> None:
         """Test removing ccbox containers successfully."""
-        with patch("ccbox.cli.subprocess.run") as mock_run:
+        with patch("ccbox.cli.cleanup.subprocess.run") as mock_run:
 
             def side_effect(*args: object, **kwargs: object) -> MagicMock:
                 cmd = args[0]
@@ -1848,28 +1843,28 @@ class TestSharedCleanupHelpers:
 
             mock_run.side_effect = side_effect
 
-            removed = _remove_ccbox_containers()
+            removed = remove_ccbox_containers()
 
             assert removed == 2
             # Verify docker rm was called for each container
             rm_calls = [c for c in mock_run.call_args_list if "rm" in c[0][0]]
             assert len(rm_calls) == 2
 
-    def test_remove_ccbox_containers_none(self) -> None:
+    def testremove_ccbox_containers_none(self) -> None:
         """Test when no containers to remove."""
-        with patch("ccbox.cli.subprocess.run") as mock_run:
+        with patch("ccbox.cli.cleanup.subprocess.run") as mock_run:
             mock_result = MagicMock()
             mock_result.returncode = 0
             mock_result.stdout = ""
             mock_run.return_value = mock_result
 
-            removed = _remove_ccbox_containers()
+            removed = remove_ccbox_containers()
 
             assert removed == 0
 
-    def test_remove_ccbox_images_success(self) -> None:
+    def testremove_ccbox_images_success(self) -> None:
         """Test removing ccbox images successfully."""
-        with patch("ccbox.cli.subprocess.run") as mock_run:
+        with patch("ccbox.cli.cleanup.subprocess.run") as mock_run:
 
             def side_effect(*args: object, **kwargs: object) -> MagicMock:
                 cmd = args[0]
@@ -1889,19 +1884,19 @@ class TestSharedCleanupHelpers:
 
             mock_run.side_effect = side_effect
 
-            removed = _remove_ccbox_images()
+            removed = remove_ccbox_images()
 
             # Should have removed stack images + project images
             assert removed >= 2  # At least 2 project images
 
-    def test_remove_ccbox_images_timeout_handled(self) -> None:
+    def testremove_ccbox_images_timeout_handled(self) -> None:
         """Test timeout handling in image removal."""
         import subprocess
 
-        with patch("ccbox.cli.subprocess.run") as mock_run:
+        with patch("ccbox.cli.cleanup.subprocess.run") as mock_run:
             mock_run.side_effect = subprocess.TimeoutExpired(cmd="docker", timeout=30)
 
-            removed = _remove_ccbox_images()
+            removed = remove_ccbox_images()
 
             assert removed == 0
 
@@ -1914,17 +1909,16 @@ class TestPruneIntegration:
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli._remove_ccbox_containers", return_value=3) as mock_containers,
-            patch("ccbox.cli._remove_ccbox_images", return_value=5) as mock_images,
-            patch("ccbox.cli.shutil.rmtree") as mock_rmtree,
-            patch("ccbox.cli.Path.exists", return_value=True),
+            patch("ccbox.cli.remove_ccbox_containers", return_value=3) as mock_containers,
+            patch("ccbox.cli.remove_ccbox_images", return_value=5) as mock_images,
+            patch("ccbox.cli.clean_temp_files", return_value=1) as mock_temp,
         ):
             result = runner.invoke(cli, ["prune", "-f"])
 
             # Verify order: containers first, then images
             assert mock_containers.called
             assert mock_images.called
-            assert mock_rmtree.called
+            assert mock_temp.called
 
             # Verify success
             assert result.exit_code == 0
@@ -1938,9 +1932,9 @@ class TestPruneIntegration:
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli._remove_ccbox_containers", return_value=0),
-            patch("ccbox.cli._remove_ccbox_images", return_value=0),
-            patch("ccbox.cli.Path.exists", return_value=False),
+            patch("ccbox.cli.remove_ccbox_containers", return_value=0),
+            patch("ccbox.cli.remove_ccbox_images", return_value=0),
+            patch("ccbox.cli.clean_temp_files", return_value=0),
         ):
             result = runner.invoke(cli, ["prune", "-f"])
 
@@ -1952,8 +1946,8 @@ class TestPruneIntegration:
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli._remove_ccbox_containers", return_value=2) as mock_containers,
-            patch("ccbox.cli._remove_ccbox_images", return_value=3) as mock_images,
+            patch("ccbox.cli.remove_ccbox_containers", return_value=2) as mock_containers,
+            patch("ccbox.cli.remove_ccbox_images", return_value=3) as mock_images,
         ):
             result = runner.invoke(cli, ["clean", "-f"])
 
