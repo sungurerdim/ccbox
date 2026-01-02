@@ -709,6 +709,81 @@ def _add_terminal_env(cmd: list[str]) -> None:
             cmd.extend(["-e", f"{var}={value}"])
 
 
+def _add_security_options(cmd: list[str]) -> None:
+    """Add security hardening options to Docker command.
+
+    Includes capability drops, privilege escalation prevention,
+    and resource limits for protection against abuse.
+    """
+    cmd.extend(
+        [
+            "--cap-drop=ALL",  # Drop all Linux capabilities
+            "--security-opt=no-new-privileges",  # Prevent privilege escalation
+            "--pids-limit=2048",  # Fork bomb protection (512 too low for heavy agent use)
+            "--init",  # Proper signal handling, zombie reaping (tini)
+            "--shm-size=256m",  # Shared memory for Node.js/Chrome (default 64MB too small)
+            "--ulimit",
+            "nofile=65535:65535",  # File descriptor limit for parallel subprocess spawning
+            "--memory-swappiness=0",  # Minimize swap usage for better performance
+        ]
+    )
+
+
+def _add_tmpfs_mounts(cmd: list[str], dirname: str) -> None:
+    """Add tmpfs mounts for workdir and temp directories."""
+    cmd.extend(
+        [
+            "-w",
+            f"/home/node/{dirname}",  # Workdir: dynamic based on directory name
+            "--tmpfs",
+            "/tmp:rw,noexec,nosuid,size=512m",  # Temp directory in memory
+            "--tmpfs",
+            "/var/tmp:rw,noexec,nosuid,size=256m",  # Var temp in memory
+        ]
+    )
+
+
+def _add_dns_options(cmd: list[str]) -> None:
+    """Add DNS optimization options to reduce lookup latency."""
+    cmd.extend(
+        [
+            "--dns-opt",
+            "ndots:1",  # Reduce lookup attempts (default ndots:5 causes 5+ queries)
+            "--dns-opt",
+            "timeout:1",
+            "--dns-opt",
+            "attempts:1",
+        ]
+    )
+
+
+def _add_claude_env(cmd: list[str]) -> None:
+    """Add Claude Code environment variables."""
+    cmd.extend(
+        [
+            "-e",
+            "FORCE_COLOR=1",  # Ensure ANSI colors enabled (fallback for TTY detection)
+            "-e",
+            "CLAUDE_CONFIG_DIR=/home/node/.claude",  # Override default ~/.config/claude
+            "-e",
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",  # Disable telemetry
+            "-e",
+            "DISABLE_AUTOUPDATER=1",  # Disable auto-updates (use image rebuild)
+            "-e",
+            "PYTHONUNBUFFERED=1",  # Force unbuffered output for streaming
+            "-e",
+            # Node.js optimizations: suppress warnings, reduce GC pauses
+            "NODE_OPTIONS=--no-warnings --disable-warning=ExperimentalWarning "
+            "--disable-warning=DeprecationWarning",
+            "-e",
+            "NODE_NO_READLINE=1",  # Reduce readline interference for cleaner output
+            "-e",
+            # Node.js 22+: compile cache for 40% faster subsequent startups
+            "NODE_COMPILE_CACHE=/home/node/.cache/node-compile",
+        ]
+    )
+
+
 def _build_claude_args(
     *,
     model: str | None,
@@ -848,74 +923,20 @@ def get_docker_run_cmd(
     if bare:
         _add_bare_mode_mounts(cmd)
 
-    cmd.extend(
-        [
-            # Workdir: dynamic based on directory name
-            "-w",
-            f"/home/node/{dirname}",
-            # Temp directories in memory (no disk residue)
-            "--tmpfs",
-            "/tmp:rw,noexec,nosuid,size=512m",
-            "--tmpfs",
-            "/var/tmp:rw,noexec,nosuid,size=256m",
-            # Security hardening
-            "--cap-drop=ALL",  # Drop all Linux capabilities
-            "--security-opt=no-new-privileges",  # Prevent privilege escalation
-            "--pids-limit=2048",  # Fork bomb protection (512 too low for heavy agent use)
-            # Process management
-            "--init",  # Proper signal handling, zombie reaping (tini)
-            # Shared memory for Node.js/Chrome (default 64MB too small)
-            "--shm-size=256m",
-            # File descriptor limit for parallel subprocess spawning
-            "--ulimit",
-            "nofile=65535:65535",
-            # Memory optimization: minimize swap usage for better performance
-            "--memory-swappiness=0",
-            # DNS optimization: reduce lookup attempts (default ndots:5 causes 5+ queries)
-            "--dns-opt",
-            "ndots:1",
-            "--dns-opt",
-            "timeout:1",
-            "--dns-opt",
-            "attempts:1",
-        ]
-    )
+    # Add container configuration
+    _add_tmpfs_mounts(cmd, dirname)
+    _add_security_options(cmd)
+    _add_dns_options(cmd)
 
     # Resource limits: soft limits that only activate under contention
     # --cpu-shares=512 (default 1024): lower priority when competing for CPU
-    # This keeps system responsive during flickering/high CPU without limiting normal performance
     # Note: No memory limit - allows large project builds (webpack, tsc, next build)
-    # Security is via capability drops, not resource limits
     if not unrestricted:
         cmd.extend(["--cpu-shares=512"])
 
-    # Passthrough terminal-specific environment variables for clipboard/image support
-    # These allow Claude Code to detect terminal capabilities (iTerm2, Kitty, etc.)
+    # Environment variables
     _add_terminal_env(cmd)
-
-    cmd.extend(
-        [
-            # Environment
-            "-e",
-            "FORCE_COLOR=1",  # Ensure ANSI colors enabled (fallback for TTY detection)
-            "-e",
-            "CLAUDE_CONFIG_DIR=/home/node/.claude",  # Override default ~/.config/claude
-            "-e",
-            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",  # Disable telemetry, error reporting
-            "-e",
-            "DISABLE_AUTOUPDATER=1",  # Disable auto-updates (use image rebuild)
-            "-e",
-            "PYTHONUNBUFFERED=1",  # Force unbuffered output for streaming
-            "-e",
-            # Node.js optimizations: suppress warnings, reduce GC pauses
-            "NODE_OPTIONS=--no-warnings --disable-warning=ExperimentalWarning --disable-warning=DeprecationWarning",
-            "-e",
-            "NODE_NO_READLINE=1",  # Reduce readline interference for cleaner output
-            "-e",
-            # Node.js 22+: compile cache for 40% faster subsequent startups
-            "NODE_COMPILE_CACHE=/home/node/.cache/node-compile",
-        ]
-    )
+    _add_claude_env(cmd)
 
     # Debug mode for entrypoint logging (0=off, 1=basic, 2=verbose)
     if debug > 0:

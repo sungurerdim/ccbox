@@ -10,6 +10,7 @@ import subprocess
 from typing import TYPE_CHECKING
 
 from .constants import DOCKER_COMMAND_TIMEOUT
+from .errors import DockerError, DockerNotFoundError, DockerTimeoutError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -17,17 +18,21 @@ if TYPE_CHECKING:
 # Error messages
 ERR_DOCKER_NOT_RUNNING = "[red]Error: Docker is not running.[/red]"
 
-
-class DockerError(Exception):
-    """Base exception for Docker operations."""
-
-
-class DockerTimeoutError(DockerError):
-    """Raised when a Docker operation times out."""
-
-
-class DockerNotFoundError(DockerError):
-    """Raised when Docker is not installed or not in PATH."""
+# Re-export for backward compatibility
+__all__ = [
+    "DockerError",
+    "DockerNotFoundError",
+    "DockerTimeoutError",
+    "safe_docker_run",
+    "check_docker_status",
+    "get_image_ids",
+    "get_dangling_image_ids",
+    "image_has_parent",
+    "remove_image",
+    "remove_container",
+    "list_containers",
+    "list_images",
+]
 
 
 def safe_docker_run(

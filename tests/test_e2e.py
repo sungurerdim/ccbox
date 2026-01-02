@@ -28,15 +28,24 @@ class TestE2EPythonProject:
 
         runner = CliRunner()
 
+        docker_cmd = ["docker", "run", str(tmp_path.name)]
         with (
-            patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.get_git_config", return_value=("Test User", "test@test.com")),
-            patch("ccbox.cli.image_exists", return_value=True),
-            patch("ccbox.cli._project_image_exists", return_value=False),
-            patch("ccbox.cli.build_image", return_value=True),
-            patch("ccbox.cli.detect_dependencies", return_value=[]),
-            patch("ccbox.sleepctl.run_with_sleep_inhibition", return_value=0) as mock_run,
+            patch("ccbox.cli.run.check_docker", return_value=True),
+            patch("ccbox.cli.run.prune_stale_resources", return_value={}),
+            patch("ccbox.cli.run.setup_git_config") as mock_setup_git,
+            patch("ccbox.cli.run.detect_project_type") as mock_detect,
+            patch("ccbox.cli.run.detect_dependencies", return_value=[]),
+            patch("ccbox.cli.run.project_image_exists", return_value=True),
+            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox-test:base"),
+            patch("ccbox.cli.run.get_docker_run_cmd", return_value=docker_cmd),
+            patch(
+                "ccbox.cli.run.sleepctl.run_with_sleep_inhibition", return_value=0
+            ) as mock_run,
         ):
+            from ccbox.config import Config
+
+            mock_setup_git.return_value = Config()
+            mock_detect.return_value = DetectionResult([], LanguageStack.BASE)
             result = runner.invoke(
                 cli,
                 ["-s", "base", "-p", str(tmp_path), "-y"],
@@ -67,14 +76,24 @@ class TestE2EPythonProject:
         mock_deps.priority = 10
 
         with (
-            patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.get_git_config", return_value=("", "")),
-            patch("ccbox.cli.image_exists", return_value=True),
-            patch("ccbox.cli._project_image_exists", return_value=False),
-            patch("ccbox.cli._build_project_image", return_value="ccbox-test:base") as mock_build,
-            patch("ccbox.cli.detect_dependencies", return_value=[mock_deps]),
-            patch("ccbox.sleepctl.run_with_sleep_inhibition", return_value=0),
+            patch("ccbox.cli.run.check_docker", return_value=True),
+            patch("ccbox.cli.run.prune_stale_resources", return_value={}),
+            patch("ccbox.cli.run.setup_git_config") as mock_setup_git,
+            patch("ccbox.cli.run.detect_project_type") as mock_detect,
+            patch("ccbox.cli.run.detect_dependencies", return_value=[mock_deps]),
+            patch("ccbox.cli.run.project_image_exists", return_value=False),
+            patch("ccbox.cli.run.image_exists", return_value=True),
+            patch("ccbox.cli.run.ensure_image_ready", return_value=True),
+            patch(
+                "ccbox.cli.run.build_project_image", return_value="ccbox-test:base"
+            ) as mock_build,
+            patch("ccbox.cli.run.get_docker_run_cmd", return_value=["echo", "test"]),
+            patch("ccbox.cli.run.sleepctl.run_with_sleep_inhibition", return_value=0),
         ):
+            from ccbox.config import Config
+
+            mock_setup_git.return_value = Config()
+            mock_detect.return_value = DetectionResult([], LanguageStack.BASE)
             result = runner.invoke(
                 cli,
                 ["-s", "base", "-p", str(tmp_path), "-y", "--deps"],
@@ -103,15 +122,19 @@ class TestE2ENodeProject:
         )
 
         with (
-            patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.get_git_config", return_value=("", "")),
-            patch("ccbox.cli.image_exists", return_value=True),
-            patch("ccbox.cli._project_image_exists", return_value=False),
-            patch("ccbox.cli.build_image", return_value=True),
-            patch("ccbox.cli.detect_dependencies", return_value=[]),
-            patch("ccbox.cli.detect_project_type", return_value=mock_detection),
-            patch("ccbox.sleepctl.run_with_sleep_inhibition", return_value=0),
+            patch("ccbox.cli.run.check_docker", return_value=True),
+            patch("ccbox.cli.run.prune_stale_resources", return_value={}),
+            patch("ccbox.cli.run.setup_git_config") as mock_setup_git,
+            patch("ccbox.cli.run.detect_project_type", return_value=mock_detection),
+            patch("ccbox.cli.run.detect_dependencies", return_value=[]),
+            patch("ccbox.cli.run.project_image_exists", return_value=True),
+            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox-test:web"),
+            patch("ccbox.cli.run.get_docker_run_cmd", return_value=["echo", "test"]),
+            patch("ccbox.cli.run.sleepctl.run_with_sleep_inhibition", return_value=0),
         ):
+            from ccbox.config import Config
+
+            mock_setup_git.return_value = Config()
             result = runner.invoke(
                 cli,
                 ["-s", "auto", "-p", str(tmp_path), "-y"],
@@ -128,13 +151,20 @@ class TestE2ENodeProject:
         runner = CliRunner()
 
         with (
-            patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.get_git_config", return_value=("", "")),
-            patch("ccbox.cli.image_exists", return_value=True),
-            patch("ccbox.cli._project_image_exists", return_value=False),
-            patch("ccbox.cli.build_image", return_value=True),
-            patch("ccbox.sleepctl.run_with_sleep_inhibition", return_value=0),
+            patch("ccbox.cli.run.check_docker", return_value=True),
+            patch("ccbox.cli.run.prune_stale_resources", return_value={}),
+            patch("ccbox.cli.run.setup_git_config") as mock_setup_git,
+            patch("ccbox.cli.run.detect_project_type") as mock_detect,
+            patch("ccbox.cli.run.detect_dependencies", return_value=[]),
+            patch("ccbox.cli.run.project_image_exists", return_value=True),
+            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox-test:base"),
+            patch("ccbox.cli.run.get_docker_run_cmd", return_value=["echo", "test"]),
+            patch("ccbox.cli.run.sleepctl.run_with_sleep_inhibition", return_value=0),
         ):
+            from ccbox.config import Config
+
+            mock_setup_git.return_value = Config()
+            mock_detect.return_value = DetectionResult([], LanguageStack.BASE)
             result = runner.invoke(
                 cli,
                 ["-s", "base", "-p", str(tmp_path), "-y", "--no-deps"],
@@ -161,15 +191,19 @@ class TestE2EGoProject:
         )
 
         with (
-            patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.get_git_config", return_value=("", "")),
-            patch("ccbox.cli.image_exists", return_value=True),
-            patch("ccbox.cli._project_image_exists", return_value=False),
-            patch("ccbox.cli.build_image", return_value=True),
-            patch("ccbox.cli.detect_dependencies", return_value=[]),
-            patch("ccbox.cli.detect_project_type", return_value=mock_detection),
-            patch("ccbox.sleepctl.run_with_sleep_inhibition", return_value=0) as mock_run,
+            patch("ccbox.cli.run.check_docker", return_value=True),
+            patch("ccbox.cli.run.prune_stale_resources", return_value={}),
+            patch("ccbox.cli.run.setup_git_config") as mock_setup_git,
+            patch("ccbox.cli.run.detect_project_type", return_value=mock_detection),
+            patch("ccbox.cli.run.detect_dependencies", return_value=[]),
+            patch("ccbox.cli.run.project_image_exists", return_value=True),
+            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox-test:go"),
+            patch("ccbox.cli.run.get_docker_run_cmd", return_value=["docker", "run", "ccbox:go"]),
+            patch("ccbox.cli.run.sleepctl.run_with_sleep_inhibition", return_value=0) as mock_run,
         ):
+            from ccbox.config import Config
+
+            mock_setup_git.return_value = Config()
             result = runner.invoke(
                 cli,
                 ["-s", "auto", "-p", str(tmp_path), "-y"],
@@ -200,15 +234,19 @@ class TestE2ERustProject:
         )
 
         with (
-            patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.get_git_config", return_value=("", "")),
-            patch("ccbox.cli.image_exists", return_value=True),
-            patch("ccbox.cli._project_image_exists", return_value=False),
-            patch("ccbox.cli.build_image", return_value=True),
-            patch("ccbox.cli.detect_dependencies", return_value=[]),
-            patch("ccbox.cli.detect_project_type", return_value=mock_detection),
-            patch("ccbox.sleepctl.run_with_sleep_inhibition", return_value=0) as mock_run,
+            patch("ccbox.cli.run.check_docker", return_value=True),
+            patch("ccbox.cli.run.prune_stale_resources", return_value={}),
+            patch("ccbox.cli.run.setup_git_config") as mock_setup_git,
+            patch("ccbox.cli.run.detect_project_type", return_value=mock_detection),
+            patch("ccbox.cli.run.detect_dependencies", return_value=[]),
+            patch("ccbox.cli.run.project_image_exists", return_value=True),
+            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox-test:rust"),
+            patch("ccbox.cli.run.get_docker_run_cmd", return_value=["docker", "run", "ccbox:rust"]),
+            patch("ccbox.cli.run.sleepctl.run_with_sleep_inhibition", return_value=0) as mock_run,
         ):
+            from ccbox.config import Config
+
+            mock_setup_git.return_value = Config()
             result = runner.invoke(
                 cli,
                 ["-s", "auto", "-p", str(tmp_path), "-y"],
@@ -237,15 +275,19 @@ class TestE2EFullstackProject:
         )
 
         with (
-            patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.get_git_config", return_value=("", "")),
-            patch("ccbox.cli.image_exists", return_value=True),
-            patch("ccbox.cli._project_image_exists", return_value=False),
-            patch("ccbox.cli.build_image", return_value=True),
-            patch("ccbox.cli.detect_dependencies", return_value=[]),
-            patch("ccbox.cli.detect_project_type", return_value=mock_detection),
-            patch("ccbox.sleepctl.run_with_sleep_inhibition", return_value=0) as mock_run,
+            patch("ccbox.cli.run.check_docker", return_value=True),
+            patch("ccbox.cli.run.prune_stale_resources", return_value={}),
+            patch("ccbox.cli.run.setup_git_config") as mock_setup_git,
+            patch("ccbox.cli.run.detect_project_type", return_value=mock_detection),
+            patch("ccbox.cli.run.detect_dependencies", return_value=[]),
+            patch("ccbox.cli.run.project_image_exists", return_value=True),
+            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox-test:web"),
+            patch("ccbox.cli.run.get_docker_run_cmd", return_value=["docker", "run", "ccbox:web"]),
+            patch("ccbox.cli.run.sleepctl.run_with_sleep_inhibition", return_value=0) as mock_run,
         ):
+            from ccbox.config import Config
+
+            mock_setup_git.return_value = Config()
             result = runner.invoke(
                 cli,
                 ["-s", "auto", "-p", str(tmp_path), "-y"],
@@ -265,16 +307,26 @@ class TestE2EPromptMode:
         (tmp_path / "README.md").write_text("# Test")
 
         runner = CliRunner()
+        prompt_text = "Write a hello world function"
 
+        docker_cmd = ["docker", "--print", prompt_text]
         with (
-            patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.get_git_config", return_value=("", "")),
-            patch("ccbox.cli.image_exists", return_value=True),
-            patch("ccbox.cli._project_image_exists", return_value=False),
-            patch("ccbox.cli.build_image", return_value=True),
-            patch("ccbox.cli.detect_dependencies", return_value=[]),
-            patch("ccbox.sleepctl.run_with_sleep_inhibition", return_value=0) as mock_run,
+            patch("ccbox.cli.run.check_docker", return_value=True),
+            patch("ccbox.cli.run.prune_stale_resources", return_value={}),
+            patch("ccbox.cli.run.setup_git_config") as mock_setup_git,
+            patch("ccbox.cli.run.detect_project_type") as mock_detect,
+            patch("ccbox.cli.run.detect_dependencies", return_value=[]),
+            patch("ccbox.cli.run.project_image_exists", return_value=True),
+            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox-test:base"),
+            patch("ccbox.cli.run.get_docker_run_cmd", return_value=docker_cmd),
+            patch(
+                "ccbox.cli.run.sleepctl.run_with_sleep_inhibition", return_value=0
+            ) as mock_run,
         ):
+            from ccbox.config import Config
+
+            mock_setup_git.return_value = Config()
+            mock_detect.return_value = DetectionResult([], LanguageStack.BASE)
             result = runner.invoke(
                 cli,
                 [
@@ -284,14 +336,14 @@ class TestE2EPromptMode:
                     str(tmp_path),
                     "-y",
                     "--prompt",
-                    "Write a hello world function",
+                    prompt_text,
                 ],
             )
 
             assert result.exit_code == 0
             cmd = mock_run.call_args[0][0]
             # Verify prompt is in command
-            assert "Write a hello world function" in cmd
+            assert prompt_text in cmd
             # Verify --print flag is present
             assert "--print" in cmd
 
@@ -305,15 +357,24 @@ class TestE2EBareMode:
 
         runner = CliRunner()
 
+        bare_cmd = ["docker", "-e", "CCBOX_BARE_MODE=1"]
         with (
-            patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.get_git_config", return_value=("", "")),
-            patch("ccbox.cli.image_exists", return_value=True),
-            patch("ccbox.cli._project_image_exists", return_value=False),
-            patch("ccbox.cli.build_image", return_value=True),
-            patch("ccbox.cli.detect_dependencies", return_value=[]),
-            patch("ccbox.sleepctl.run_with_sleep_inhibition", return_value=0) as mock_run,
+            patch("ccbox.cli.run.check_docker", return_value=True),
+            patch("ccbox.cli.run.prune_stale_resources", return_value={}),
+            patch("ccbox.cli.run.setup_git_config") as mock_setup_git,
+            patch("ccbox.cli.run.detect_project_type") as mock_detect,
+            patch("ccbox.cli.run.detect_dependencies", return_value=[]),
+            patch("ccbox.cli.run.project_image_exists", return_value=True),
+            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox-test:base"),
+            patch("ccbox.cli.run.get_docker_run_cmd", return_value=bare_cmd),
+            patch(
+                "ccbox.cli.run.sleepctl.run_with_sleep_inhibition", return_value=0
+            ) as mock_run,
         ):
+            from ccbox.config import Config
+
+            mock_setup_git.return_value = Config()
+            mock_detect.return_value = DetectionResult([], LanguageStack.BASE)
             result = runner.invoke(
                 cli,
                 ["-s", "base", "-p", str(tmp_path), "-y", "--bare"],
@@ -335,14 +396,20 @@ class TestE2EBuildOnly:
         runner = CliRunner()
 
         with (
-            patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.get_git_config", return_value=("", "")),
-            patch("ccbox.cli.image_exists", return_value=False),
-            patch("ccbox.cli._project_image_exists", return_value=False),
-            patch("ccbox.cli.build_image", return_value=True) as mock_build,
-            patch("ccbox.cli.detect_dependencies", return_value=[]),
-            patch("ccbox.sleepctl.run_with_sleep_inhibition") as mock_run,
+            patch("ccbox.cli.run.check_docker", return_value=True),
+            patch("ccbox.cli.run.prune_stale_resources", return_value={}),
+            patch("ccbox.cli.run.setup_git_config") as mock_setup_git,
+            patch("ccbox.cli.run.detect_project_type") as mock_detect,
+            patch("ccbox.cli.run.detect_dependencies", return_value=[]),
+            patch("ccbox.cli.run.project_image_exists", return_value=False),
+            patch("ccbox.cli.run.image_exists", return_value=True),
+            patch("ccbox.cli.run.ensure_image_ready", return_value=True) as mock_build,
+            patch("ccbox.cli.run.sleepctl.run_with_sleep_inhibition") as mock_run,
         ):
+            from ccbox.config import Config
+
+            mock_setup_git.return_value = Config()
+            mock_detect.return_value = DetectionResult([], LanguageStack.BASE)
             result = runner.invoke(
                 cli,
                 ["-s", "base", "-p", str(tmp_path), "-y", "-b"],
@@ -364,7 +431,7 @@ class TestE2EErrorHandling:
         """Test graceful handling when Docker is not available."""
         runner = CliRunner()
 
-        with patch("ccbox.cli.check_docker", return_value=False):
+        with patch("ccbox.cli.run.check_docker", return_value=False):
             result = runner.invoke(cli, ["-p", str(tmp_path)])
 
             assert result.exit_code == 1
@@ -377,13 +444,19 @@ class TestE2EErrorHandling:
         runner = CliRunner()
 
         with (
-            patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.get_git_config", return_value=("", "")),
-            patch("ccbox.cli.image_exists", return_value=False),
-            patch("ccbox.cli._project_image_exists", return_value=False),
-            patch("ccbox.cli.build_image", return_value=False),
-            patch("ccbox.cli.detect_dependencies", return_value=[]),
+            patch("ccbox.cli.run.check_docker", return_value=True),
+            patch("ccbox.cli.run.prune_stale_resources", return_value={}),
+            patch("ccbox.cli.run.setup_git_config") as mock_setup_git,
+            patch("ccbox.cli.run.detect_project_type") as mock_detect,
+            patch("ccbox.cli.run.detect_dependencies", return_value=[]),
+            patch("ccbox.cli.run.project_image_exists", return_value=False),
+            patch("ccbox.cli.run.image_exists", return_value=False),
+            patch("ccbox.cli.run.ensure_image_ready", return_value=False),
         ):
+            from ccbox.config import Config
+
+            mock_setup_git.return_value = Config()
+            mock_detect.return_value = DetectionResult([], LanguageStack.BASE)
             result = runner.invoke(
                 cli,
                 ["-s", "base", "-p", str(tmp_path), "-y"],

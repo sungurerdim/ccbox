@@ -223,3 +223,44 @@ def resolve_for_docker(path: Path) -> str:
     # Case 3: Native Linux/macOS path - use as-is
     _validate_docker_path(path, path_str)
     return path_str
+
+
+def validate_project_path(path: str | Path) -> Path:
+    """Validate and resolve a project path.
+
+    Args:
+        path: Path to validate (can be string or Path).
+
+    Returns:
+        Resolved Path object.
+
+    Raises:
+        ConfigPathError: If path doesn't exist or is not a directory.
+    """
+    project_path = Path(path).resolve()
+    if not project_path.exists():
+        raise ConfigPathError(f"Project path does not exist: {project_path}")
+    if not project_path.is_dir():
+        raise ConfigPathError(f"Project path must be a directory: {project_path}")
+    return project_path
+
+
+def validate_file_path(path: str | Path, must_exist: bool = True) -> Path:
+    """Validate and resolve a file path.
+
+    Args:
+        path: Path to validate (can be string or Path).
+        must_exist: If True, path must exist.
+
+    Returns:
+        Resolved Path object.
+
+    Raises:
+        ConfigPathError: If path validation fails.
+    """
+    file_path = Path(path).resolve()
+    if must_exist and not file_path.exists():
+        raise ConfigPathError(f"File does not exist: {file_path}")
+    if file_path.exists() and not file_path.is_file():
+        raise ConfigPathError(f"Path is not a file: {file_path}")
+    return file_path
