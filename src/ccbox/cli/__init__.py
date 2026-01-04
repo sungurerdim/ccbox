@@ -253,7 +253,12 @@ def cli(
 @click.option("--stack", "-s", type=click.Choice([s.value for s in LanguageStack]), help="Stack")
 @click.option("--all", "-a", "build_all", is_flag=True, help="Rebuild all installed images")
 def update(stack: str | None, build_all: bool) -> None:
-    """Rebuild Docker image(s) with latest Claude Code."""
+    """Rebuild Docker image(s) with latest Claude Code.
+
+    By default, rebuilds minimal + base images from scratch.
+    Use --stack to rebuild a specific stack only.
+    Use --all to rebuild all currently installed images.
+    """
     if not check_docker():
         console.print(ERR_DOCKER_NOT_RUNNING)
         sys.exit(1)
@@ -267,7 +272,8 @@ def update(stack: str | None, build_all: bool) -> None:
             if image_exists(s):
                 stacks_to_build.append(s)
     else:
-        stacks_to_build.append(LanguageStack.BASE)
+        # Default: rebuild minimal + base (full refresh)
+        stacks_to_build = [LanguageStack.MINIMAL, LanguageStack.BASE]
 
     if not stacks_to_build:
         console.print("[yellow]No images to update.[/yellow]")

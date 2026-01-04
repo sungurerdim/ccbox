@@ -58,6 +58,18 @@ STACK_DEPENDENCIES: dict[LanguageStack, LanguageStack | None] = {
     LanguageStack.FULL: LanguageStack.BASE,
 }
 
+# Stacks that include CCO (all except MINIMAL) - SSOT for cco-install logic
+CCO_ENABLED_STACKS: frozenset[LanguageStack] = frozenset(
+    {
+        LanguageStack.BASE,
+        LanguageStack.GO,
+        LanguageStack.RUST,
+        LanguageStack.JAVA,
+        LanguageStack.WEB,
+        LanguageStack.FULL,
+    }
+)
+
 
 @dataclass
 class Config:
