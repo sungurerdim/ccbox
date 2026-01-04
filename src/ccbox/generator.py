@@ -27,6 +27,9 @@ from .paths import resolve_for_docker
 if TYPE_CHECKING:
     from .deps import DepsInfo, DepsMode
 
+# Container user home directory (SSOT - used throughout Dockerfile templates)
+CONTAINER_HOME = "/home/node"
+
 # Common system packages (minimal - matches original)
 COMMON_TOOLS = """
 # System packages (minimal but complete)
@@ -84,13 +87,15 @@ ENV PATH="/root/.local/bin:$PATH"
 # CCO installation (cco package includes cco-install command)
 # ARG CCO_CACHE_BUST forces Docker layer cache invalidation
 # Post-build: build.py runs `cco-install` to copy rules/agents to host ~/.claude
-CCO_INSTALL = """
+CCO_INSTALL = f"""
 # Claude Code Optimizer (CCO) - fresh install every build (using uv for speed)
 # Using 'uv tool' avoids PEP 668 externally-managed-environment errors
+# PATH includes both user and root locations (uv uses HOME which varies)
 ARG CCO_CACHE_BUST=1
 RUN uv tool install --reinstall \\
     git+https://github.com/sungurerdim/ClaudeCodeOptimizer.git \\
     && echo "CCO installed: $(date) [cache_bust=$CCO_CACHE_BUST]"
+ENV PATH="{CONTAINER_HOME}/.local/bin:/root/.local/bin:$PATH"
 """
 
 # Claude Code + Node.js dev tools

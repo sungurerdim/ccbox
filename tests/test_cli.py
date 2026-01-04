@@ -346,7 +346,7 @@ class TestCLIFunctions:
             return tmp_path
 
         with (
-            patch("ccbox.config.image_exists", return_value=True),  # Base exists
+            patch("ccbox.cli.image_exists", return_value=True),  # Base exists
             patch("ccbox.cli.build.write_build_files", side_effect=mock_write_build_files),
             patch("subprocess.run") as mock_run,
         ):
@@ -497,7 +497,7 @@ class TestCLICommands:
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.config.image_exists", return_value=True),
+            patch("ccbox.cli.image_exists", return_value=True),
             patch("ccbox.cli.build_image", return_value=True),
         ):
             result = runner.invoke(cli, ["update", "-a"])
@@ -519,7 +519,7 @@ class TestCLICommands:
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.config.image_exists", return_value=True),
+            patch("ccbox.cli.image_exists", return_value=True),
             patch("subprocess.run") as mock_run,
         ):
             mock_run.return_value = MagicMock(stdout="", returncode=0)
@@ -539,7 +539,7 @@ class TestCLICommands:
         with (
             patch("ccbox.cli.check_docker", return_value=True),
             patch("ccbox.cli.prompts.get_git_config", return_value=("Test", "t@t.com")),
-            patch("ccbox.config.image_exists", return_value=False),
+            patch("ccbox.cli.image_exists", return_value=False),
             patch("ccbox.cli.prompts.detect_project_type") as mock_detect,
         ):
             from ccbox.detector import DetectionResult
@@ -558,7 +558,7 @@ class TestCLICommands:
         with (
             patch("ccbox.cli.check_docker", return_value=True),
             patch("ccbox.cli.prompts.get_git_config", return_value=("Test", "t@t.com")),
-            patch("ccbox.config.image_exists", return_value=True),
+            patch("ccbox.cli.image_exists", return_value=True),
             patch("ccbox.cli.prompts.detect_project_type") as mock_detect,
         ):
             from ccbox.detector import DetectionResult
@@ -783,7 +783,7 @@ class TestSelectStack:
         """Test interactive stack selection."""
 
         with (
-            patch("ccbox.config.image_exists", return_value=False),
+            patch("ccbox.cli.prompts.get_installed_ccbox_images", return_value=set()),
             patch("click.prompt", return_value="1"),
         ):
             # Choice "1" selects first stack (MINIMAL)
@@ -794,7 +794,7 @@ class TestSelectStack:
         """Test stack selection cancelled."""
 
         with (
-            patch("ccbox.config.image_exists", return_value=False),
+            patch("ccbox.cli.prompts.get_installed_ccbox_images", return_value=set()),
             patch("click.prompt", return_value="0"),
         ):
             result = select_stack(LanguageStack.BASE, [])
@@ -804,7 +804,7 @@ class TestSelectStack:
         """Test invalid choice then valid choice."""
 
         with (
-            patch("ccbox.config.image_exists", return_value=False),
+            patch("ccbox.cli.prompts.get_installed_ccbox_images", return_value=set()),
             patch("click.prompt", side_effect=["invalid", "1"]),
         ):
             # Choice "1" selects first stack (MINIMAL)
@@ -1000,7 +1000,7 @@ class TestCleanCommand:
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.config.image_exists", return_value=True),
+            patch("ccbox.cli.image_exists", return_value=True),
             patch("subprocess.run") as mock_run,
         ):
             mock_run.return_value = MagicMock(stdout="container1\n", returncode=0)
@@ -1192,7 +1192,7 @@ class TestDoctorDiskCheck:
         with (
             patch("ccbox.cli.check_docker", return_value=True),
             patch("ccbox.cli.prompts.get_git_config", return_value=("T", "t@t")),
-            patch("ccbox.config.image_exists", return_value=False),
+            patch("ccbox.cli.image_exists", return_value=False),
             patch("ccbox.cli.prompts.detect_project_type") as mock_detect,
             patch("shutil.disk_usage", side_effect=OSError("Cannot check")),
         ):
