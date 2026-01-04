@@ -16,12 +16,15 @@ from ..config import (
     DOCKER_COMMAND_TIMEOUT,
     STACK_DEPENDENCIES,
     LanguageStack,
+    create_config,
+    get_claude_config_dir,
     get_image_name,
     image_exists,
 )
 from ..constants import DOCKER_BUILD_TIMEOUT
 from ..deps import DepsInfo, DepsMode
 from ..generator import generate_project_dockerfile, write_build_files
+from ..paths import resolve_for_docker
 from .cleanup import cleanup_ccbox_dangling_images
 
 if TYPE_CHECKING:
@@ -29,12 +32,82 @@ if TYPE_CHECKING:
 
 console = Console()
 
+# Stacks that include CCO (all except MINIMAL)
+CCO_STACKS = {
+    LanguageStack.BASE,
+    LanguageStack.GO,
+    LanguageStack.RUST,
+    LanguageStack.JAVA,
+    LanguageStack.WEB,
+    LanguageStack.FULL,
+}
+
+
+def _run_cco_install(image_name: str) -> bool:
+    """Run cco-install in a temporary container to update host ~/.claude.
+
+    This installs CCO commands/agents/rules from the Docker image to the host's
+    ~/.claude directory. Runs once during build, not at every container start.
+
+    Args:
+        image_name: Docker image to use for running cco-install.
+
+    Returns:
+        True if successful, False otherwise.
+    """
+    config = create_config()
+    try:
+        claude_dir = get_claude_config_dir(config)
+    except Exception as e:
+        console.print(f"[yellow]⚠ Could not get Claude config dir: {e}[/yellow]")
+        return False
+
+    docker_claude_dir = resolve_for_docker(claude_dir)
+
+    console.print("[dim]Installing CCO to host ~/.claude...[/dim]")
+
+    try:
+        result = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--network=none",  # No network needed
+                "--memory=64m",  # Minimal RAM
+                "--read-only",  # Root fs read-only (mount is rw)
+                "--security-opt=no-new-privileges",
+                "-v",
+                f"{docker_claude_dir}:/home/node/.claude:rw",
+                image_name,
+                "cco-install",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+
+        if result.returncode == 0:
+            console.print("[green]✓ CCO installed to host ~/.claude[/green]")
+            return True
+        else:
+            # Show error but don't fail build
+            console.print(f"[yellow]⚠ CCO install warning: {result.stderr.strip()}[/yellow]")
+            return True  # Non-fatal - CCO might already be installed
+
+    except subprocess.TimeoutExpired:
+        console.print("[yellow]⚠ CCO install timed out[/yellow]")
+        return True  # Non-fatal
+    except Exception as e:
+        console.print(f"[yellow]⚠ CCO install failed: {e}[/yellow]")
+        return True  # Non-fatal
+
 
 def build_image(stack: LanguageStack) -> bool:
     """Build Docker image for stack with BuildKit optimization.
 
     Automatically builds base image first if the stack depends on it.
-    CCO files are installed inside the image at /opt/cco/ during build.
+    For CCO-enabled stacks, runs cco-install to update host ~/.claude.
     """
     # Check if this stack depends on base image
     dependency = STACK_DEPENDENCIES.get(stack)
@@ -73,6 +146,10 @@ def build_image(stack: LanguageStack) -> bool:
             stderr=subprocess.STDOUT,
         )
         console.print(f"[green]✓ Built {image_name}[/green]")
+
+        # Run cco-install for CCO-enabled stacks (updates host ~/.claude)
+        if stack in CCO_STACKS:
+            _run_cco_install(image_name)
 
         # Post-build cleanup: remove ccbox-originated dangling images only
         # Essential for preventing disk accumulation from repeated rebuilds

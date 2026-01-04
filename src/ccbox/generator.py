@@ -69,16 +69,17 @@ PYTHON_TOOLS_BASE = """
 RUN pip install --break-system-packages --no-cache-dir ruff==0.14.10 mypy==1.19.1 pytest==9.0.2
 """
 
-# CCO installation (pip + install to /opt/cco/)
+# CCO installation (pip package only - cco-install runs at container start)
+# ARG CCO_VERSION forces cache invalidation when version changes
 CCO_INSTALL = """
-# Claude Code Optimizer (CCO) - install package and files to /opt/cco/
-# Files are copied to tmpfs at runtime (no host writes)
-USER root
-RUN pip install --break-system-packages --no-cache-dir \\
-    git+https://github.com/sungurerdim/ClaudeCodeOptimizer.git \\
-    && cco-install --dir /opt/cco \\
-    && chown -R node:node /opt/cco
-USER node
+# Claude Code Optimizer (CCO) - pip package installed, runs at container start
+# entrypoint.sh runs cco-install which:
+# 1. Cleans old cco-*.md files (handles version upgrades)
+# 2. Installs commands/agents/rules from pip package to ~/.claude
+# --upgrade --force-reinstall ensures fresh install even with cached layers
+ARG CCO_VERSION=latest
+RUN pip install --break-system-packages --no-cache-dir --upgrade --force-reinstall \\
+    git+https://github.com/sungurerdim/ClaudeCodeOptimizer.git
 """
 
 # Claude Code + Node.js dev tools
@@ -373,25 +374,9 @@ fi
 
 _log "Running as node user (UID: $(id -u))"
 
-# Inject CCO files from image (unless bare mode)
-# Host .claude is mounted rw, but rules/commands/agents/skills are tmpfs overlays
-if [[ -z "$CCBOX_BARE_MODE" && -d "/opt/cco" ]]; then
-    _log "Injecting CCO from image..."
-    # Copy all CCO directories to global .claude (tmpfs overlays)
-    for dir in rules commands agents skills; do
-        if [[ -d "/opt/cco/$dir" ]]; then
-            cp -r "/opt/cco/$dir/." "/home/node/.claude/$dir/" 2>/dev/null || true
-            _log_verbose "Copied $dir/ to global .claude"
-        fi
-    done
-    # Copy CLAUDE.md template to project .claude (takes precedence over global)
-    # Global CLAUDE.md is hidden via /dev/null mount
-    if [[ -f "/opt/cco/CLAUDE.md" ]]; then
-        mkdir -p "$PWD/.claude" 2>/dev/null || true
-        cp "/opt/cco/CLAUDE.md" "$PWD/.claude/CLAUDE.md" 2>/dev/null || true
-        _log_verbose "Copied CLAUDE.md to project .claude"
-    fi
-else
+# CCO files are installed during 'ccbox build' (not at runtime)
+# This keeps container startup fast and predictable
+if [[ -n "$CCBOX_BARE_MODE" ]]; then
     _log "Bare mode: vanilla Claude Code (no CCO)"
 fi
 

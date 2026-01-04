@@ -68,25 +68,9 @@ fi
 
 _log "Running as node user (UID: $(id -u))"
 
-# Inject CCO files from image (unless bare mode)
-# Host .claude is mounted rw, but rules/commands/agents/skills are tmpfs overlays
-if [[ -z "$CCBOX_BARE_MODE" && -d "/opt/cco" ]]; then
-    _log "Injecting CCO from image..."
-    # Copy all CCO directories to global .claude (tmpfs overlays)
-    for dir in rules commands agents skills; do
-        if [[ -d "/opt/cco/$dir" ]]; then
-            cp -r "/opt/cco/$dir/." "/home/node/.claude/$dir/" 2>/dev/null || true
-            _log_verbose "Copied $dir/ to global .claude"
-        fi
-    done
-    # Copy CLAUDE.md template to project .claude (takes precedence over global)
-    # Global CLAUDE.md is hidden via /dev/null mount
-    if [[ -f "/opt/cco/CLAUDE.md" ]]; then
-        mkdir -p "$PWD/.claude" 2>/dev/null || true
-        cp "/opt/cco/CLAUDE.md" "$PWD/.claude/CLAUDE.md" 2>/dev/null || true
-        _log_verbose "Copied CLAUDE.md to project .claude"
-    fi
-else
+# CCO files are installed during 'ccbox build' (not at runtime)
+# This keeps container startup fast and predictable
+if [[ -n "$CCBOX_BARE_MODE" ]]; then
     _log "Bare mode: vanilla Claude Code (no CCO)"
 fi
 
