@@ -508,7 +508,7 @@ class TestCLICommands:
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.config.image_exists", return_value=False),
+            patch("ccbox.cli.image_exists", return_value=False),
         ):
             result = runner.invoke(cli, ["update", "-a"])
             assert result.exit_code == 0
@@ -577,7 +577,7 @@ class TestMainRunFlow:
     def test_run_no_docker(self) -> None:
         """Test run when Docker not available."""
         runner = CliRunner()
-        with patch("ccbox.cli.check_docker", return_value=False):
+        with patch("ccbox.cli.run.check_docker", return_value=False):
             result = runner.invoke(cli, [])
             assert result.exit_code == 1
             assert "Docker" in result.output

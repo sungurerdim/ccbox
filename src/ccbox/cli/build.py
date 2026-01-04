@@ -65,33 +65,40 @@ def _run_cco_install(image_name: str) -> bool:
 
     docker_claude_dir = resolve_for_docker(claude_dir)
 
-    # Get host UID/GID for correct file ownership
-    host_uid = os.getuid()
-    host_gid = os.getgid()
-
     console.print("[dim]Installing CCO to host ~/.claude...[/dim]")
+
+    # Build docker command
+    docker_cmd = [
+        "docker",
+        "run",
+        "--rm",
+        "--network=none",  # No network needed
+        "--memory=64m",  # Minimal RAM
+        "--security-opt=no-new-privileges",
+    ]
+
+    # Add --user flag only on Unix (Windows Docker Desktop handles ownership automatically)
+    # getuid/getgid only exist on Unix systems
+    getuid = getattr(os, "getuid", None)
+    getgid = getattr(os, "getgid", None)
+    if getuid is not None and getgid is not None:
+        docker_cmd.extend(["--user", f"{getuid()}:{getgid()}"])
+
+    docker_cmd.extend([
+        "-v",
+        f"{docker_claude_dir}:/home/node/.claude:rw",
+        "-e",
+        "CLAUDE_CONFIG_DIR=/home/node/.claude",
+        "-e",
+        "HOME=/home/node",  # Ensure HOME is set for cco-install
+        "--entrypoint",
+        "cco-install",  # Override entrypoint to run directly
+        image_name,
+    ])
 
     try:
         result = subprocess.run(
-            [
-                "docker",
-                "run",
-                "--rm",
-                "--network=none",  # No network needed
-                "--memory=64m",  # Minimal RAM
-                "--security-opt=no-new-privileges",
-                "--user",
-                f"{host_uid}:{host_gid}",  # Run as host user for correct ownership
-                "-v",
-                f"{docker_claude_dir}:/home/node/.claude:rw",
-                "-e",
-                "CLAUDE_CONFIG_DIR=/home/node/.claude",
-                "-e",
-                "HOME=/home/node",  # Ensure HOME is set for cco-install
-                "--entrypoint",
-                "cco-install",  # Override entrypoint to run directly
-                image_name,
-            ],
+            docker_cmd,
             capture_output=True,
             text=True,
             check=False,
