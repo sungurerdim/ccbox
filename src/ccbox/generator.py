@@ -42,7 +42,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \\
     # yq (not in apt, install from GitHub - auto-detect architecture)
     && YQ_ARCH=$(dpkg --print-architecture | sed 's/armhf/arm/;s/i386/386/') \\
     && curl -sL "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_${YQ_ARCH}" -o /usr/local/bin/yq \\
-    && chmod +x /usr/local/bin/yq
+    && chmod +x /usr/local/bin/yq \\
+    # git-delta (syntax-highlighted diffs for better code review)
+    && DELTA_VER="0.18.2" \\
+    && DELTA_ARCH=$(dpkg --print-architecture) \\
+    && curl -sL "https://github.com/dandavison/delta/releases/download/${DELTA_VER}/git-delta_${DELTA_VER}_${DELTA_ARCH}.deb" -o /tmp/delta.deb \\
+    && dpkg -i /tmp/delta.deb && rm /tmp/delta.deb
 
 # Locale and performance environment
 ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \\
@@ -65,27 +70,29 @@ RUN curl -fsSL https://deb.nodesource.com/setup_current.x | bash - \\
 
 # Python dev tools (without CCO)
 PYTHON_TOOLS_BASE = """
-# Python dev tools (ruff, mypy, pytest) - pinned versions
-RUN pip install --break-system-packages --no-cache-dir ruff==0.14.10 mypy==1.19.1 pytest==9.0.2
+# uv (ultra-fast Python package manager - 10-100x faster than pip)
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:$PATH"
+
+# Python dev tools (ruff, mypy, pytest) - latest versions
+RUN uv pip install --system --no-cache ruff mypy pytest
 """
 
 # CCO installation (pip package only - cco-install runs at build time)
 # ARG CCO_CACHE_BUST forces Docker layer cache invalidation
 CCO_INSTALL = """
-# Claude Code Optimizer (CCO) - fresh install every build
-# pip cache purge + --no-cache-dir + --force-reinstall = guaranteed fresh
+# Claude Code Optimizer (CCO) - fresh install every build (using uv for speed)
 ARG CCO_CACHE_BUST=1
-RUN pip cache purge 2>/dev/null || true \\
-    && pip install --break-system-packages --no-cache-dir --upgrade --force-reinstall \\
+RUN uv pip install --system --no-cache --reinstall \\
     git+https://github.com/sungurerdim/ClaudeCodeOptimizer.git \\
     && echo "CCO installed: $(date) [cache_bust=$CCO_CACHE_BUST]"
 """
 
 # Claude Code + Node.js dev tools
 NODE_TOOLS_BASE = """
-# Node.js dev tools (typescript, eslint, vitest) + Claude Code - pinned versions
+# Node.js dev tools (typescript, eslint, vitest) + Claude Code - latest versions
 RUN npm config set fund false && npm config set update-notifier false \\
-    && npm install -g typescript@5.9.3 eslint@9.39.2 vitest@4.0.16 @anthropic-ai/claude-code@2.0.76 --force \\
+    && npm install -g typescript eslint vitest @anthropic-ai/claude-code --force \\
     && npm cache clean --force
 """
 
@@ -110,6 +117,10 @@ def _minimal_dockerfile() -> str:
 FROM node:lts-slim
 
 LABEL org.opencontainers.image.title="ccbox:minimal"
+
+# Timezone passthrough from host
+ARG TZ=UTC
+ENV TZ="${{TZ}}"
 
 ENV DEBIAN_FRONTEND=noninteractive
 {COMMON_TOOLS}
@@ -138,6 +149,10 @@ FROM golang:latest
 
 LABEL org.opencontainers.image.title="ccbox:go"
 
+# Timezone passthrough from host
+ARG TZ=UTC
+ENV TZ="${{TZ}}"
+
 ENV DEBIAN_FRONTEND=noninteractive
 {NODE_INSTALL}{COMMON_TOOLS}
 {PYTHON_TOOLS_BASE}
@@ -157,6 +172,10 @@ FROM rust:latest
 
 LABEL org.opencontainers.image.title="ccbox:rust"
 
+# Timezone passthrough from host
+ARG TZ=UTC
+ENV TZ="${{TZ}}"
+
 ENV DEBIAN_FRONTEND=noninteractive
 {NODE_INSTALL}{COMMON_TOOLS}
 {PYTHON_TOOLS_BASE}
@@ -175,6 +194,10 @@ def _java_dockerfile() -> str:
 FROM eclipse-temurin:latest
 
 LABEL org.opencontainers.image.title="ccbox:java"
+
+# Timezone passthrough from host
+ARG TZ=UTC
+ENV TZ="${{TZ}}"
 
 ENV DEBIAN_FRONTEND=noninteractive
 {NODE_INSTALL}{COMMON_TOOLS}
@@ -741,8 +764,56 @@ def _add_dns_options(cmd: list[str]) -> None:
     )
 
 
+def _get_host_timezone() -> str:
+    """Detect host timezone in IANA format (cross-platform).
+
+    Detection order:
+    1. TZ environment variable (if set)
+    2. /etc/timezone file (Debian/Ubuntu)
+    3. /etc/localtime symlink target (Linux/macOS)
+    4. Fallback to UTC
+
+    Returns:
+        IANA timezone string (e.g., "Europe/Istanbul", "America/New_York")
+    """
+    # 1. Check TZ environment variable
+    tz_env = os.environ.get("TZ")
+    if tz_env and "/" in tz_env:  # IANA format has slash
+        return tz_env
+
+    # 2. Try /etc/timezone (Debian/Ubuntu)
+    try:
+        tz_file = Path("/etc/timezone")
+        if tz_file.exists():
+            tz = tz_file.read_text().strip()
+            if tz and "/" in tz:
+                return tz
+    except (OSError, PermissionError):
+        pass
+
+    # 3. Try /etc/localtime symlink (Linux/macOS)
+    try:
+        localtime = Path("/etc/localtime")
+        if localtime.is_symlink():
+            target = os.readlink(localtime)
+            # Extract timezone from path like /usr/share/zoneinfo/Europe/Istanbul
+            if "zoneinfo/" in target:
+                tz = target.split("zoneinfo/", 1)[1]
+                if "/" in tz:
+                    return tz
+    except (OSError, PermissionError):
+        pass
+
+    # 4. Fallback to UTC
+    return "UTC"
+
+
 def _add_claude_env(cmd: list[str]) -> None:
     """Add Claude Code environment variables."""
+    # Timezone passthrough from host (cross-platform detection)
+    tz = _get_host_timezone()
+    cmd.extend(["-e", f"TZ={tz}"])
+
     cmd.extend(
         [
             "-e",
