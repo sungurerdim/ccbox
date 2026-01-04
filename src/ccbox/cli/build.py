@@ -50,6 +50,10 @@ def _run_cco_install(image_name: str) -> bool:
     This installs CCO commands/agents/rules from the Docker image to the host's
     ~/.claude directory. Runs once during build, not at every container start.
 
+    Strategy: Run as root to handle any existing root-owned directories, then
+    chown everything to the host user. This solves the permission mismatch that
+    occurs when directories were created by previous root operations.
+
     Args:
         image_name: Docker image to use for running cco-install.
 
@@ -67,7 +71,9 @@ def _run_cco_install(image_name: str) -> bool:
 
     console.print("[dim]Installing CCO to host ~/.claude...[/dim]")
 
-    # Build docker command
+    # Build docker command - run as ROOT to handle existing root-owned dirs
+    # Use stat inside container to get real host UID/GID from mounted directory
+    # This works even when ccbox itself runs inside a container (Docker-in-Docker)
     docker_cmd = [
         "docker",
         "run",
@@ -75,26 +81,24 @@ def _run_cco_install(image_name: str) -> bool:
         "--network=none",  # No network needed
         "--memory=64m",  # Minimal RAM
         "--security-opt=no-new-privileges",
-    ]
-
-    # Add --user flag only on Unix (Windows Docker Desktop handles ownership automatically)
-    # getuid/getgid only exist on Unix systems
-    getuid = getattr(os, "getuid", None)
-    getgid = getattr(os, "getgid", None)
-    if getuid is not None and getgid is not None:
-        docker_cmd.extend(["--user", f"{getuid()}:{getgid()}"])
-
-    docker_cmd.extend([
         "-v",
         f"{docker_claude_dir}:/home/node/.claude:rw",
         "-e",
         "CLAUDE_CONFIG_DIR=/home/node/.claude",
         "-e",
-        "HOME=/home/node",  # Ensure HOME is set for cco-install
+        "HOME=/home/node",
         "--entrypoint",
-        "cco-install",  # Override entrypoint to run directly
+        "/bin/sh",
         image_name,
-    ])
+        "-c",
+        # 1. Get real host UID/GID from mounted directory via stat
+        # 2. Run cco-install as root (can write to any dir)
+        # 3. Fix ownership to match host user
+        "HOST_UID=$(stat -c '%u' /home/node/.claude 2>/dev/null || echo 1000) && "
+        "HOST_GID=$(stat -c '%g' /home/node/.claude 2>/dev/null || echo 1000) && "
+        "cco-install && "
+        "chown -R $HOST_UID:$HOST_GID /home/node/.claude",
+    ]
 
     try:
         result = subprocess.run(
@@ -110,7 +114,10 @@ def _run_cco_install(image_name: str) -> bool:
             return True
         else:
             # Show error but don't fail build
-            console.print(f"[yellow]⚠ CCO install warning: {result.stderr.strip()}[/yellow]")
+            stderr = result.stderr.strip()
+            stdout = result.stdout.strip()
+            error_msg = stderr or stdout or "unknown error"
+            console.print(f"[yellow]⚠ CCO install warning: {error_msg}[/yellow]")
             return True  # Non-fatal - CCO might already be installed
 
     except subprocess.TimeoutExpired:
