@@ -74,16 +74,19 @@ PYTHON_TOOLS_BASE = """
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:$PATH"
 
-# Python dev tools (ruff, mypy, pytest) - latest versions
-RUN uv pip install --system --no-cache ruff mypy pytest
+# Python dev tools (ruff, mypy, pytest) - installed as isolated tools
+# Using 'uv tool' avoids PEP 668 externally-managed-environment errors
+RUN uv tool install ruff && uv tool install mypy && uv tool install pytest
+ENV PATH="/root/.local/bin:$PATH"
 """
 
 # CCO installation (pip package only - cco-install runs at build time)
 # ARG CCO_CACHE_BUST forces Docker layer cache invalidation
 CCO_INSTALL = """
 # Claude Code Optimizer (CCO) - fresh install every build (using uv for speed)
+# Using 'uv tool' avoids PEP 668 externally-managed-environment errors
 ARG CCO_CACHE_BUST=1
-RUN uv pip install --system --no-cache --reinstall \\
+RUN uv tool install --reinstall \\
     git+https://github.com/sungurerdim/ClaudeCodeOptimizer.git \\
     && echo "CCO installed: $(date) [cache_bust=$CCO_CACHE_BUST]"
 """
