@@ -92,9 +92,9 @@ def _run_cco_install(image_name: str) -> bool:
         "/bin/sh",
         image_name,
         "-c",
-        # 1. Run cco-install (uv tools installed to /root/.local/bin)
+        # 1. Run cco-install (PATH already set in image via ENV)
         # 2. Fix ownership using passed UID/GID (not stat - dir may be root-owned)
-        "/root/.local/bin/cco-install && chown -R $TARGET_UID:$TARGET_GID /home/node/.claude",
+        "cco-install && chown -R $TARGET_UID:$TARGET_GID /home/node/.claude",
     ]
 
     try:
