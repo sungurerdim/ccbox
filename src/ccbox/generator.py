@@ -81,8 +81,9 @@ RUN uv tool install ruff && uv tool install mypy && uv tool install pytest
 ENV PATH="/root/.local/bin:$PATH"
 """
 
-# CCO installation (pip package only - cco-install runs at build time)
+# CCO installation (cco package includes cco-install command)
 # ARG CCO_CACHE_BUST forces Docker layer cache invalidation
+# Post-build: build.py runs `cco-install` to copy rules/agents to host ~/.claude
 CCO_INSTALL = """
 # Claude Code Optimizer (CCO) - fresh install every build (using uv for speed)
 # Using 'uv tool' avoids PEP 668 externally-managed-environment errors
