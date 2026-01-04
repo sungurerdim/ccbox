@@ -1221,7 +1221,7 @@ class TestUpdateDefaultStack:
     """Tests for update command default behavior."""
 
     def test_update_default_stack(self) -> None:
-        """Test update with no flags rebuilds BASE."""
+        """Test update with no flags rebuilds MINIMAL + BASE."""
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
@@ -1229,7 +1229,10 @@ class TestUpdateDefaultStack:
         ):
             result = runner.invoke(cli, ["update"])
             assert result.exit_code == 0
-            mock_build.assert_called_once_with(LanguageStack.BASE)
+            # Default: rebuild minimal + base from scratch
+            assert mock_build.call_count == 2
+            mock_build.assert_any_call(LanguageStack.MINIMAL)
+            mock_build.assert_any_call(LanguageStack.BASE)
 
 
 class TestChdirOption:

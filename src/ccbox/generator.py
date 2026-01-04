@@ -21,6 +21,7 @@ from .config import (
     get_container_name,
     get_image_name,
 )
+from .constants import BUILD_DIR
 from .paths import resolve_for_docker
 
 if TYPE_CHECKING:
@@ -471,7 +472,7 @@ fi
 
 def write_build_files(stack: LanguageStack) -> Path:
     """Write Dockerfile and entrypoint to build directory."""
-    build_dir = Path("/tmp/ccbox/build") / stack.value
+    build_dir = Path(BUILD_DIR) / stack.value
     build_dir.mkdir(parents=True, exist_ok=True)
 
     # Write with Unix line endings (open with newline="" to prevent OS conversion)

@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 from rich.console import Console
 
 from ..config import (
+    CCO_ENABLED_STACKS,
     DOCKER_COMMAND_TIMEOUT,
     STACK_DEPENDENCIES,
     LanguageStack,
@@ -22,7 +23,7 @@ from ..config import (
     get_image_name,
     image_exists,
 )
-from ..constants import DOCKER_BUILD_TIMEOUT
+from ..constants import BUILD_DIR, DOCKER_BUILD_TIMEOUT
 from ..deps import DepsInfo, DepsMode
 from ..generator import generate_project_dockerfile, write_build_files
 from ..paths import resolve_for_docker
@@ -32,16 +33,6 @@ if TYPE_CHECKING:
     pass
 
 console = Console()
-
-# Stacks that include CCO (all except MINIMAL)
-CCO_STACKS = {
-    LanguageStack.BASE,
-    LanguageStack.GO,
-    LanguageStack.RUST,
-    LanguageStack.JAVA,
-    LanguageStack.WEB,
-    LanguageStack.FULL,
-}
 
 
 def _run_cco_install(image_name: str) -> bool:
@@ -101,9 +92,9 @@ def _run_cco_install(image_name: str) -> bool:
         "/bin/sh",
         image_name,
         "-c",
-        # 1. Run cco-install as root (can write to any dir including root-owned)
+        # 1. Run cco-install via uv tool run (handles PATH automatically)
         # 2. Fix ownership using passed UID/GID (not stat - dir may be root-owned)
-        "cco-install && chown -R $TARGET_UID:$TARGET_GID /home/node/.claude",
+        "uv tool run cco-install && chown -R $TARGET_UID:$TARGET_GID /home/node/.claude",
     ]
 
     try:
@@ -182,7 +173,7 @@ def build_image(stack: LanguageStack) -> bool:
         console.print(f"[green]✓ Built {image_name}[/green]")
 
         # Run cco-install for CCO-enabled stacks (updates host ~/.claude)
-        if stack in CCO_STACKS:
+        if stack in CCO_ENABLED_STACKS:
             _run_cco_install(image_name)
 
         # Post-build cleanup: remove ccbox-originated dangling images only
@@ -262,7 +253,7 @@ def build_project_image(
     )
 
     # Write to temp build directory
-    build_dir = Path("/tmp/ccbox/build/project") / project_name
+    build_dir = Path(BUILD_DIR) / "project" / project_name
     build_dir.mkdir(parents=True, exist_ok=True)
 
     dockerfile_path = build_dir / "Dockerfile"

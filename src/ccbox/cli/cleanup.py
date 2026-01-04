@@ -15,7 +15,7 @@ from rich.table import Table
 
 from .. import docker
 from ..config import DOCKER_COMMAND_TIMEOUT, LanguageStack, get_image_name
-from ..constants import PRUNE_TIMEOUT
+from ..constants import BUILD_DIR, PRUNE_TIMEOUT
 
 console = Console()
 
@@ -298,8 +298,9 @@ def clean_temp_files() -> int:
     Returns:
         1 if temp files were removed, 0 otherwise.
     """
-    build_dir = Path("/tmp/ccbox")
-    if build_dir.exists():
-        shutil.rmtree(build_dir, ignore_errors=True)
+    # BUILD_DIR is /tmp/ccbox/build, parent is /tmp/ccbox
+    ccbox_tmp = Path(BUILD_DIR).parent
+    if ccbox_tmp.exists():
+        shutil.rmtree(ccbox_tmp, ignore_errors=True)
         return 1
     return 0

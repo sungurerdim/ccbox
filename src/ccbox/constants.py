@@ -37,8 +37,8 @@ CONTAINER_PROJECT_DIR = "/home/node/project"  # Project mount point
 CONTAINER_CLAUDE_DIR = "/home/node/.claude"  # Claude config in container
 CONTAINER_TMP_DIR = "/tmp"  # Tmpfs mount point
 
-# Build paths
-BUILD_DIR_PREFIX = "/tmp/ccbox-"  # Prefix for build directories
+# Build paths - SSOT for all Dockerfile generation
+BUILD_DIR = "/tmp/ccbox/build"  # Base directory for all builds
 
 # Tmpfs configuration
 TMPFS_SIZE = "64m"  # Default tmpfs size for /tmp
