@@ -78,6 +78,8 @@ def _run_cco_install(image_name: str) -> bool:
                 "--security-opt=no-new-privileges",
                 "-v",
                 f"{docker_claude_dir}:/home/node/.claude:rw",
+                "-e",
+                "CLAUDE_CONFIG_DIR=/home/node/.claude",  # Root user needs explicit target
                 image_name,
                 "cco-install",
             ],
