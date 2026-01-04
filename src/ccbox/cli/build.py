@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -130,6 +131,7 @@ def build_image(stack: LanguageStack) -> bool:
 
     try:
         # Disable all Docker cache to ensure fresh builds (Claude Code + CCO updates)
+        # CCO_CACHE_BUST with timestamp ensures pip also gets fresh package
         # Redirect stderr to stdout so build progress doesn't appear as errors
         subprocess.run(
             [
@@ -140,6 +142,8 @@ def build_image(stack: LanguageStack) -> bool:
                 "-f",
                 str(build_dir / "Dockerfile"),
                 "--no-cache",
+                "--build-arg",
+                f"CCO_CACHE_BUST={int(time.time())}",
                 "--progress=auto",
                 str(build_dir),
             ],

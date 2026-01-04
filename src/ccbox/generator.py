@@ -69,17 +69,16 @@ PYTHON_TOOLS_BASE = """
 RUN pip install --break-system-packages --no-cache-dir ruff==0.14.10 mypy==1.19.1 pytest==9.0.2
 """
 
-# CCO installation (pip package only - cco-install runs at container start)
-# ARG CCO_VERSION forces cache invalidation when version changes
+# CCO installation (pip package only - cco-install runs at build time)
+# ARG CCO_CACHE_BUST forces Docker layer cache invalidation
 CCO_INSTALL = """
-# Claude Code Optimizer (CCO) - pip package installed, runs at container start
-# entrypoint.sh runs cco-install which:
-# 1. Cleans old cco-*.md files (handles version upgrades)
-# 2. Installs commands/agents/rules from pip package to ~/.claude
-# --upgrade --force-reinstall ensures fresh install even with cached layers
-ARG CCO_VERSION=latest
-RUN pip install --break-system-packages --no-cache-dir --upgrade --force-reinstall \\
-    git+https://github.com/sungurerdim/ClaudeCodeOptimizer.git
+# Claude Code Optimizer (CCO) - fresh install every build
+# pip cache purge + --no-cache-dir + --force-reinstall = guaranteed fresh
+ARG CCO_CACHE_BUST=1
+RUN pip cache purge 2>/dev/null || true \\
+    && pip install --break-system-packages --no-cache-dir --upgrade --force-reinstall \\
+    git+https://github.com/sungurerdim/ClaudeCodeOptimizer.git \\
+    && echo "CCO installed: $(date) [cache_bust=$CCO_CACHE_BUST]"
 """
 
 # Claude Code + Node.js dev tools
