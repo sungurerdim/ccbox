@@ -71,9 +71,15 @@ def _run_cco_install(image_name: str) -> bool:
 
     console.print("[dim]Installing CCO to host ~/.claude...[/dim]")
 
+    # Get caller's UID/GID - this is the user who should own the files
+    # Works correctly whether ccbox runs on host or inside a container
+    getuid = getattr(os, "getuid", None)
+    getgid = getattr(os, "getgid", None)
+    uid = getuid() if getuid else 1000
+    gid = getgid() if getgid else 1000
+
     # Build docker command - run as ROOT to handle existing root-owned dirs
-    # Use stat inside container to get real host UID/GID from mounted directory
-    # This works even when ccbox itself runs inside a container (Docker-in-Docker)
+    # Pass UID/GID as env vars (can't rely on stat - mounted dir may be root-owned)
     docker_cmd = [
         "docker",
         "run",
@@ -87,17 +93,17 @@ def _run_cco_install(image_name: str) -> bool:
         "CLAUDE_CONFIG_DIR=/home/node/.claude",
         "-e",
         "HOME=/home/node",
+        "-e",
+        f"TARGET_UID={uid}",
+        "-e",
+        f"TARGET_GID={gid}",
         "--entrypoint",
         "/bin/sh",
         image_name,
         "-c",
-        # 1. Get real host UID/GID from mounted directory via stat
-        # 2. Run cco-install as root (can write to any dir)
-        # 3. Fix ownership to match host user
-        "HOST_UID=$(stat -c '%u' /home/node/.claude 2>/dev/null || echo 1000) && "
-        "HOST_GID=$(stat -c '%g' /home/node/.claude 2>/dev/null || echo 1000) && "
-        "cco-install && "
-        "chown -R $HOST_UID:$HOST_GID /home/node/.claude",
+        # 1. Run cco-install as root (can write to any dir including root-owned)
+        # 2. Fix ownership using passed UID/GID (not stat - dir may be root-owned)
+        "cco-install && chown -R $TARGET_UID:$TARGET_GID /home/node/.claude",
     ]
 
     try:
