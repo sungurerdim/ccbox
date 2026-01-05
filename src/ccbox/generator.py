@@ -853,7 +853,7 @@ def _add_claude_env(cmd: list[str]) -> None:
             "-e",
             "FORCE_COLOR=1",  # Ensure ANSI colors enabled (fallback for TTY detection)
             "-e",
-            "CLAUDE_CONFIG_DIR=/home/node/.claude",  # Override default ~/.config/claude
+            f"CLAUDE_CONFIG_DIR={container_path('/home/node/.claude')}",  # Override default ~/.config/claude
             "-e",
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",  # Disable telemetry
             "-e",
@@ -868,7 +868,7 @@ def _add_claude_env(cmd: list[str]) -> None:
             "NODE_NO_READLINE=1",  # Reduce readline interference for cleaner output
             "-e",
             # Node.js 22+: compile cache for 40% faster subsequent startups
-            "NODE_COMPILE_CACHE=/home/node/.cache/node-compile",
+            f"NODE_COMPILE_CACHE={container_path('/home/node/.cache/node-compile')}",
         ]
     )
 
