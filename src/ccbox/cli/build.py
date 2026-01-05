@@ -26,6 +26,7 @@ from ..config import (
 from ..constants import BUILD_DIR, DOCKER_BUILD_TIMEOUT
 from ..deps import DepsInfo, DepsMode
 from ..generator import generate_project_dockerfile, write_build_files
+from ..logging import get_logger
 from ..paths import resolve_for_docker
 from .cleanup import cleanup_ccbox_dangling_images
 
@@ -33,6 +34,7 @@ if TYPE_CHECKING:
     pass
 
 console = Console()
+logger = get_logger(__name__)
 
 
 def _run_cco_install(image_name: str) -> bool:

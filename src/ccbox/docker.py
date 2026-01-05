@@ -11,6 +11,9 @@ from typing import TYPE_CHECKING
 
 from .constants import DOCKER_COMMAND_TIMEOUT
 from .errors import DockerError, DockerNotFoundError, DockerTimeoutError
+from .logging import get_logger
+
+logger = get_logger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -58,18 +61,26 @@ def safe_docker_run(
         DockerTimeoutError: If command times out.
         subprocess.CalledProcessError: If check=True and command fails.
     """
+    cmd_str = " ".join(cmd[:4]) + ("..." if len(cmd) > 4 else "")
+    logger.debug("Running Docker command: %s", cmd_str)
     try:
-        return subprocess.run(
+        result = subprocess.run(
             cmd,
             capture_output=capture_output,
             text=True,
             check=check,
             timeout=timeout,
         )
+        logger.debug("Docker command completed: exit=%d", result.returncode)
+        return result
     except FileNotFoundError as e:
-        raise DockerNotFoundError("Docker not found in PATH") from e
+        logger.error("Docker not found in PATH: %s", cmd_str)
+        raise DockerNotFoundError(f"Docker not found in PATH. Command: {cmd_str}") from e
     except subprocess.TimeoutExpired as e:
-        raise DockerTimeoutError(f"Docker command timed out after {timeout}s") from e
+        logger.error("Docker command timed out after %ds: %s", timeout, cmd_str)
+        raise DockerTimeoutError(
+            f"Docker command timed out after {timeout}s. Command: {cmd_str}"
+        ) from e
 
 
 def check_docker_status() -> bool:

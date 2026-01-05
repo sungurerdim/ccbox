@@ -105,22 +105,36 @@ def _validate_model(model: str | None) -> str | None:
 
 
 # Re-export for backward compatibility
+# These exports allow external code to import from ccbox.cli directly
+# instead of from submodules. When adding new public APIs:
+# 1. Export from the submodule (e.g., cli/build.py)
+# 2. Add re-export here if backward compatibility needed
+# 3. Document the source module in __all__
 __all__ = [
+    # cli/__init__.py
     "cli",
+    # cli/utils.py
     "check_docker",
-    "build_image",
     "get_git_config",
-    "get_installed_ccbox_images",
-    "image_exists",
-    "detect_project_type",
-    "detect_dependencies",
-    "write_build_files",
-    "select_stack",
     "_start_docker_desktop",
+    # cli/build.py
+    "build_image",
+    "get_installed_ccbox_images",
     "_project_image_exists",
     "_get_project_image_name",
+    # cli/cleanup.py
     "remove_ccbox_containers",
     "remove_ccbox_images",
+    # cli/prompts.py
+    "select_stack",
+    # config.py (re-exported for convenience)
+    "image_exists",
+    # detector.py (re-exported for convenience)
+    "detect_project_type",
+    # deps.py (re-exported for convenience)
+    "detect_dependencies",
+    # generator.py (re-exported for convenience)
+    "write_build_files",
 ]
 
 
