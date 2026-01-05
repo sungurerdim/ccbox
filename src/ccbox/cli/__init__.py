@@ -16,6 +16,16 @@ import shutil
 import sys
 from pathlib import Path
 
+# Configure UTF-8 encoding for Windows console output
+# This prevents UnicodeEncodeError when Rich outputs Unicode characters (→, ✓, etc.)
+# Must happen before any output, including Rich Console initialization
+if sys.platform == "win32":
+    # Reconfigure stdout/stderr to use UTF-8 with error replacement
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 import click
 from rich.console import Console
 from rich.table import Table
@@ -45,7 +55,7 @@ from .utils import (
     get_git_config,
 )
 
-console = Console()
+console = Console(force_terminal=True, legacy_windows=False)
 
 
 def _validate_prompt(prompt: str | None) -> str | None:

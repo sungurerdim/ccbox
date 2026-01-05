@@ -24,7 +24,7 @@ from ..detector import detect_project_type
 from .build import get_installed_ccbox_images
 from .utils import get_git_config
 
-console = Console()
+console = Console(force_terminal=True, legacy_windows=False)
 
 
 def validate_deps_choice(choice: str, max_option: int) -> int | None:

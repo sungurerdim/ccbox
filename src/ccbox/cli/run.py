@@ -36,7 +36,7 @@ from .cleanup import prune_stale_resources
 from .prompts import prompt_deps, resolve_stack, setup_git_config
 from .utils import ERR_DOCKER_NOT_RUNNING, _check_docker_status, check_docker
 
-console = Console()
+console = Console(force_terminal=True, legacy_windows=False)
 logger = get_logger(__name__)
 
 

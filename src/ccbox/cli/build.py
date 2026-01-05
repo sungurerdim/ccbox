@@ -33,7 +33,7 @@ from .cleanup import cleanup_ccbox_dangling_images
 if TYPE_CHECKING:
     pass
 
-console = Console()
+console = Console(force_terminal=True, legacy_windows=False)
 logger = get_logger(__name__)
 
 
