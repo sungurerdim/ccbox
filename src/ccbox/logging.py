@@ -106,8 +106,6 @@ def set_debug(enabled: bool = True) -> None:
     for handler in root_logger.handlers:
         handler.setLevel(level)
         if enabled:
-            handler.setFormatter(
-                logging.Formatter(LOG_FORMAT_DEBUG, datefmt=DATE_FORMAT)
-            )
+            handler.setFormatter(logging.Formatter(LOG_FORMAT_DEBUG, datefmt=DATE_FORMAT))
         else:
             handler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=DATE_FORMAT))

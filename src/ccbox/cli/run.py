@@ -23,6 +23,7 @@ from ..config import (
 from ..deps import DepsInfo, DepsMode, detect_dependencies
 from ..detector import detect_project_type
 from ..generator import get_docker_run_cmd
+from ..logging import get_logger
 from ..paths import validate_project_path
 from .build import (
     build_image,
@@ -36,6 +37,7 @@ from .prompts import prompt_deps, resolve_stack, setup_git_config
 from .utils import ERR_DOCKER_NOT_RUNNING, _check_docker_status, check_docker
 
 console = Console()
+logger = get_logger(__name__)
 
 
 def diagnose_container_failure(returncode: int, project_name: str) -> None:
@@ -321,6 +323,7 @@ def run(
     unrestricted: bool = False,
 ) -> None:
     """Run Claude Code in Docker container."""
+    logger.info("Starting run workflow: path=%s, stack=%s", path, stack_name)
     if not check_docker():
         console.print(ERR_DOCKER_NOT_RUNNING)
         console.print("Start Docker and try again.")
