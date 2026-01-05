@@ -3,6 +3,12 @@
 # This script is embedded in generator.py via generate_entrypoint()
 # Kept as reference file for documentation and potential external use
 #
+# Security model:
+# - Container runs as host user via Docker --user flag (Linux/macOS)
+# - On Windows, Docker Desktop handles UID/GID automatically
+# - no-new-privileges is enabled (no setuid/setgid allowed)
+# - All capabilities dropped except minimal set
+#
 # Debug output is controlled by CCBOX_DEBUG environment variable:
 # - CCBOX_DEBUG=1: Basic progress messages
 # - CCBOX_DEBUG=2: Verbose with environment details
@@ -13,6 +19,7 @@
 # - CCO files from /opt/cco copied to ~/.claude (merges with host's)
 # - CCO CLAUDE.md (if exists) copied to project .claude
 # - Project .claude -> persistent (rw)
+# - tmpfs for container internals (.npm, .config, .cache)
 #
 # VANILLA mode (--bare):
 # - Host ~/.claude -> /home/node/.claude (rw for credentials/settings)
@@ -47,26 +54,16 @@ _log "Entrypoint started (PID: $$)"
 _log_verbose "Working directory: $PWD"
 _log_verbose "Arguments: $*"
 
-# Detect host UID/GID from mounted directory
-HOST_UID=$(stat -c '%u' "$PWD" 2>/dev/null || stat -f '%u' "$PWD" 2>/dev/null || echo "1000")
-HOST_GID=$(stat -c '%g' "$PWD" 2>/dev/null || stat -f '%g' "$PWD" 2>/dev/null || echo "1000")
-_log_verbose "Host UID/GID: $HOST_UID/$HOST_GID"
+# Log current user info
+_log "Running as UID: $(id -u), GID: $(id -g)"
+_log_verbose "User: $(id -un 2>/dev/null || echo 'unknown')"
 
-# If root, switch to node user (with optional UID remapping)
+# Warn if running as root (legacy/misconfigured setup)
 if [[ "$(id -u)" == "0" ]]; then
-    _log "Running as root, switching to node user..."
-    if [[ "$HOST_UID" != "0" && "$HOST_UID" != "1000" ]]; then
-        _log "Remapping UID $HOST_UID -> node"
-        usermod -u "$HOST_UID" node 2>/dev/null || true
-        groupmod -g "$HOST_GID" node 2>/dev/null || true
-        chown "$HOST_UID:$HOST_GID" /home/node 2>/dev/null || true
-        chown -R "$HOST_UID:$HOST_GID" /home/node/.claude /home/node/.npm /home/node/.config 2>/dev/null || true
-    fi
-    _log "Switching to node user via gosu..."
-    exec gosu node "$0" "$@"
+    echo "[ccbox:WARN] Running as root is not recommended." >&2
+    echo "[ccbox:WARN] Container should be started with --user flag for security." >&2
+    echo "[ccbox:WARN] Continuing anyway, but file ownership may be incorrect." >&2
 fi
-
-_log "Running as node user (UID: $(id -u))"
 
 # CCO files are installed during 'ccbox build' (not at runtime)
 # This keeps container startup fast and predictable
