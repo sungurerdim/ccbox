@@ -27,7 +27,7 @@ from ..constants import BUILD_DIR, DOCKER_BUILD_TIMEOUT
 from ..deps import DepsInfo, DepsMode
 from ..generator import generate_project_dockerfile, write_build_files
 from ..logging import get_logger
-from ..paths import resolve_for_docker
+from ..paths import get_docker_env, resolve_for_docker
 from .cleanup import cleanup_ccbox_dangling_images
 
 if TYPE_CHECKING:
@@ -106,6 +106,7 @@ def _run_cco_install(image_name: str) -> bool:
             text=True,
             check=False,
             timeout=60,
+            env=get_docker_env(),
         )
 
         if result.returncode == 0:
@@ -147,7 +148,8 @@ def build_image(stack: LanguageStack) -> bool:
     build_dir = write_build_files(stack)
 
     # Enable BuildKit for faster, more efficient builds
-    env = os.environ.copy()
+    # Use get_docker_env() to disable MSYS path translation on Windows
+    env = get_docker_env()
     env["DOCKER_BUILDKIT"] = "1"
 
     try:
@@ -212,6 +214,7 @@ def project_image_exists(project_name: str, stack: LanguageStack) -> bool:
             capture_output=True,
             check=False,
             timeout=DOCKER_COMMAND_TIMEOUT,
+            env=get_docker_env(),
         )
         return result.returncode == 0
     except FileNotFoundError:
@@ -262,7 +265,7 @@ def build_project_image(
     with open(dockerfile_path, "w", encoding="utf-8", newline="\n") as f:
         f.write(dockerfile_content)
 
-    env = os.environ.copy()
+    env = get_docker_env()
     env["DOCKER_BUILDKIT"] = "1"
 
     try:
@@ -304,6 +307,7 @@ def get_installed_ccbox_images() -> set[str]:
             text=True,
             check=False,
             timeout=DOCKER_COMMAND_TIMEOUT,
+            env=get_docker_env(),
         )
         if result.returncode != 0:
             return set()

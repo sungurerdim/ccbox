@@ -248,6 +248,23 @@ def container_path(path: str) -> str:
     return path
 
 
+def get_docker_env() -> dict[str, str]:
+    """Get environment dict for running Docker commands on Windows.
+
+    On Windows with Git Bash (MSYS2), path translation must be disabled
+    to prevent /home/node/.claude from becoming C:/Program Files/Git/home/node/.claude.
+
+    Returns:
+        Environment dict with MSYS_NO_PATHCONV=1 on Windows, copy of os.environ otherwise.
+    """
+    env = os.environ.copy()
+    if os.name == "nt":
+        # Disable MSYS path conversion for Docker volume mounts
+        env["MSYS_NO_PATHCONV"] = "1"
+        env["MSYS2_ARG_CONV_EXCL"] = "*"  # Also disable for MSYS2
+    return env
+
+
 def validate_project_path(path: str | Path) -> Path:
     """Validate and resolve a project path.
 

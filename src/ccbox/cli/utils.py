@@ -16,6 +16,7 @@ from rich.console import Console
 from .. import docker
 from ..config import DOCKER_COMMAND_TIMEOUT
 from ..constants import DOCKER_CHECK_INTERVAL, DOCKER_STARTUP_TIMEOUT
+from ..paths import get_docker_env
 
 console = Console(force_terminal=True, legacy_windows=False)
 
@@ -40,6 +41,7 @@ def _start_docker_desktop() -> bool:
             capture_output=True,
             check=False,
             timeout=DOCKER_COMMAND_TIMEOUT,
+            env=get_docker_env(),
         )
         if result.returncode == 0:
             return True
@@ -57,6 +59,7 @@ def _start_docker_desktop() -> bool:
             capture_output=True,
             check=False,
             timeout=DOCKER_COMMAND_TIMEOUT,
+            env=get_docker_env(),
         )
         return True
     return False
