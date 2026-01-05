@@ -192,8 +192,9 @@ class TestGenerator:
         assert f"/dev/null:{container_path('/home/node/.claude/CLAUDE.md')}" not in cmd_str
         # Verify workdir uses directory name
         assert any(container_path("/home/node/myproject") in arg for arg in cmd)
-        # Verify CLAUDE_CONFIG_DIR env var (inside container, no double slash needed)
-        assert any("CLAUDE_CONFIG_DIR=/home/node/.claude" in arg for arg in cmd)
+        # Verify CLAUDE_CONFIG_DIR env var (with platform-aware path)
+        config_dir = f"CLAUDE_CONFIG_DIR={container_path('/home/node/.claude')}"
+        assert any(config_dir in arg for arg in cmd)
         # Verify tmpfs for no residue
         assert "--tmpfs" in cmd
         assert any(f"{container_path('/tmp')}:" in arg for arg in cmd)
