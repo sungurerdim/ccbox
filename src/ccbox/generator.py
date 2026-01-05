@@ -745,11 +745,7 @@ def _add_security_options(cmd: list[str]) -> None:
 
 
 def _add_tmpfs_mounts(cmd: list[str], dirname: str) -> None:
-    """Add tmpfs mounts for workdir and temp directories.
-
-    Includes a tmpfs home for container internals (npm cache, node config).
-    This allows any UID to write, solving the --user flag compatibility.
-    """
+    """Add tmpfs mounts for workdir and temp directories."""
     cmd.extend(
         [
             "-w",
@@ -758,13 +754,6 @@ def _add_tmpfs_mounts(cmd: list[str], dirname: str) -> None:
             "/tmp:rw,noexec,nosuid,size=512m",  # Temp directory in memory
             "--tmpfs",
             "/var/tmp:rw,noexec,nosuid,size=256m",  # Var temp in memory
-            # Container internals: npm, node config (not mounted from host)
-            "--tmpfs",
-            "/home/node/.npm:rw,size=256m",  # npm cache
-            "--tmpfs",
-            "/home/node/.config:rw,size=64m",  # node/app config
-            "--tmpfs",
-            "/home/node/.cache:rw,size=256m",  # general cache
         ]
     )
 
@@ -783,17 +772,17 @@ def _add_dns_options(cmd: list[str]) -> None:
     )
 
 
-def _get_host_user_ids() -> tuple[int, int] | None:
+def _get_host_user_ids() -> tuple[int, int]:
     """Get host UID and GID for --user flag (cross-platform).
 
     Returns:
-        Tuple of (uid, gid) on Linux/macOS, None on Windows.
-        On Windows, Docker Desktop handles UID/GID mapping automatically
-        through its virtualization layer, so --user is not needed.
+        Tuple of (uid, gid). On Linux/macOS uses actual host IDs.
+        On Windows uses 1000:1000 (Docker's default node user).
     """
     if sys.platform == "win32":
-        # Windows: Docker Desktop VM handles UID/GID automatically
-        return None
+        # Windows: Use node user's UID/GID (1000:1000 in Docker images)
+        # This ensures Claude Code runs as node, not root
+        return (1000, 1000)
 
     # Linux/macOS: Use actual host UID/GID
     return (os.getuid(), os.getgid())
@@ -803,12 +792,10 @@ def _add_user_mapping(cmd: list[str]) -> None:
     """Add --user flag for host UID/GID mapping.
 
     On Linux/macOS: Maps container user to host user for correct file ownership.
-    On Windows: Skipped (Docker Desktop handles this automatically).
+    On Windows: Uses node user (1000:1000) to run as non-root.
     """
-    user_ids = _get_host_user_ids()
-    if user_ids:
-        uid, gid = user_ids
-        cmd.extend(["--user", f"{uid}:{gid}"])
+    uid, gid = _get_host_user_ids()
+    cmd.extend(["--user", f"{uid}:{gid}"])
 
 
 def _get_host_timezone() -> str:

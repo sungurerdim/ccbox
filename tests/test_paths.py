@@ -68,31 +68,31 @@ class TestWindowsToDockerPath:
     """Tests for windows_to_docker_path function."""
 
     def test_basic_conversion(self) -> None:
-        assert windows_to_docker_path(r"D:\GitHub\Project") == "/d/GitHub/Project"
+        assert windows_to_docker_path(r"D:\GitHub\Project") == "D:/GitHub/Project"
 
     def test_forward_slash_input(self) -> None:
-        assert windows_to_docker_path("D:/GitHub/Project") == "/d/GitHub/Project"
+        assert windows_to_docker_path("D:/GitHub/Project") == "D:/GitHub/Project"
 
     def test_lowercase_drive(self) -> None:
-        assert windows_to_docker_path("c:/Users/name/project") == "/c/Users/name/project"
+        assert windows_to_docker_path("c:/Users/name/project") == "C:/Users/name/project"
 
     def test_uppercase_drive_becomes_lowercase(self) -> None:
-        assert windows_to_docker_path("C:/Users/name") == "/c/Users/name"
+        assert windows_to_docker_path("C:/Users/name") == "C:/Users/name"
 
     def test_mixed_slashes(self) -> None:
-        assert windows_to_docker_path(r"D:\GitHub/Mixed\Path") == "/d/GitHub/Mixed/Path"
+        assert windows_to_docker_path(r"D:\GitHub/Mixed\Path") == "D:/GitHub/Mixed/Path"
 
     def test_trailing_slash_removed(self) -> None:
-        assert windows_to_docker_path("D:/Project/") == "/d/Project"
-        assert windows_to_docker_path(r"D:\Project\\") == "/d/Project"
+        assert windows_to_docker_path("D:/Project/") == "D:/Project"
+        assert windows_to_docker_path(r"D:\Project\\") == "D:/Project"
 
     def test_deep_path(self) -> None:
         path = r"D:\GitHub\ClaudeCodeOptimizer\benchmark\output\test"
-        expected = "/d/GitHub/ClaudeCodeOptimizer/benchmark/output/test"
+        expected = "D:/GitHub/ClaudeCodeOptimizer/benchmark/output/test"
         assert windows_to_docker_path(path) == expected
 
     def test_path_with_spaces(self) -> None:
-        assert windows_to_docker_path(r"C:\Program Files\App") == "/c/Program Files/App"
+        assert windows_to_docker_path(r"C:\Program Files\App") == "C:/Program Files/App"
 
     def test_non_windows_path_unchanged(self) -> None:
         assert windows_to_docker_path("/home/user/project") == "/home/user/project"
@@ -101,12 +101,12 @@ class TestWindowsToDockerPath:
         assert windows_to_docker_path("relative/path") == "relative/path"
 
     def test_root_drive_only(self) -> None:
-        assert windows_to_docker_path("C:/") == "/c"
-        assert windows_to_docker_path(r"C:\\") == "/c"
-        assert windows_to_docker_path("D:") == "/d"
+        assert windows_to_docker_path("C:/") == "C:/"
+        assert windows_to_docker_path(r"C:\\") == "C:/"
+        assert windows_to_docker_path("D:") == "D:/"
 
     def test_double_slashes_normalized(self) -> None:
-        assert windows_to_docker_path(r"C:\Users\\name\\project") == "/c/Users/name/project"
+        assert windows_to_docker_path(r"C:\Users\\name\\project") == "C:/Users/name/project"
 
 
 class TestWslToDockerPath:
@@ -170,7 +170,7 @@ class TestResolveForDocker:
 
         mock_path = MockPath()
         result = resolve_for_docker(mock_path)  # type: ignore[arg-type]
-        assert result == "/d/GitHub/Project"
+        assert result == "D:/GitHub/Project"
 
 
 class TestIsWsl:
