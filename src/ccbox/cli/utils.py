@@ -17,7 +17,7 @@ from .. import docker
 from ..config import DOCKER_COMMAND_TIMEOUT
 from ..constants import DOCKER_CHECK_INTERVAL, DOCKER_STARTUP_TIMEOUT
 
-console = Console()
+console = Console(force_terminal=True, legacy_windows=False)
 
 # Re-export constants for backward compatibility
 DOCKER_STARTUP_TIMEOUT_SECONDS = DOCKER_STARTUP_TIMEOUT

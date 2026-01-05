@@ -462,6 +462,6 @@ class TestE2EErrorHandling:
         """Test error on non-existent project path."""
         runner = CliRunner()
 
-        result = runner.invoke(cli, ["-p", "/nonexistent/path/12345"])
+        result = runner.invoke(cli, ["--path", "/nonexistent/path/12345"])
 
         assert result.exit_code != 0

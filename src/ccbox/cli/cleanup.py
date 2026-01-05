@@ -17,7 +17,7 @@ from .. import docker
 from ..config import DOCKER_COMMAND_TIMEOUT, LanguageStack, get_image_name
 from ..constants import BUILD_DIR, PRUNE_TIMEOUT
 
-console = Console()
+console = Console(force_terminal=True, legacy_windows=False)
 
 
 def _get_ccbox_image_ids() -> set[str]:
