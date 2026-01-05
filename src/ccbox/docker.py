@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 from .constants import DOCKER_COMMAND_TIMEOUT
 from .errors import DockerError, DockerNotFoundError, DockerTimeoutError
 from .logging import get_logger
+from .paths import get_docker_env
 
 logger = get_logger(__name__)
 
@@ -70,6 +71,7 @@ def safe_docker_run(
             text=True,
             check=check,
             timeout=timeout,
+            env=get_docker_env(),
         )
         logger.debug("Docker command completed: exit=%d", result.returncode)
         return result

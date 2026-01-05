@@ -16,6 +16,7 @@ from rich.table import Table
 from .. import docker
 from ..config import DOCKER_COMMAND_TIMEOUT, LanguageStack, get_image_name
 from ..constants import BUILD_DIR, PRUNE_TIMEOUT
+from ..paths import get_docker_env
 
 console = Console(force_terminal=True, legacy_windows=False)
 
@@ -163,6 +164,7 @@ def get_docker_disk_usage() -> dict[str, str]:
             text=True,
             check=False,
             timeout=DOCKER_COMMAND_TIMEOUT,
+            env=get_docker_env(),
         )
         if result.returncode == 0:
             for line in result.stdout.strip().split("\n"):
@@ -251,6 +253,7 @@ def prune_system(force: bool) -> None:
         capture_output=True,
         check=False,
         timeout=PRUNE_TIMEOUT,
+        env=get_docker_env(),
     )
 
     # 2. Remove dangling images
@@ -260,6 +263,7 @@ def prune_system(force: bool) -> None:
         capture_output=True,
         check=False,
         timeout=PRUNE_TIMEOUT,
+        env=get_docker_env(),
     )
 
     # 3. Remove unused volumes
@@ -269,6 +273,7 @@ def prune_system(force: bool) -> None:
         capture_output=True,
         check=False,
         timeout=PRUNE_TIMEOUT,
+        env=get_docker_env(),
     )
 
     # 4. Remove build cache
@@ -278,6 +283,7 @@ def prune_system(force: bool) -> None:
         capture_output=True,
         check=False,
         timeout=PRUNE_TIMEOUT,
+        env=get_docker_env(),
     )
 
     # Show final disk usage

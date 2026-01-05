@@ -24,7 +24,7 @@ from ..deps import DepsInfo, DepsMode, detect_dependencies
 from ..detector import detect_project_type
 from ..generator import get_docker_run_cmd
 from ..logging import get_logger
-from ..paths import validate_project_path
+from ..paths import get_docker_env, validate_project_path
 from .build import (
     build_image,
     build_project_image,
@@ -155,7 +155,9 @@ def execute_container(
         if inhibit_sleep:
             returncode = sleepctl.run_with_sleep_inhibition(cmd, stdin=stdin)
         else:
-            result = subprocess.run(cmd, check=False, stdin=stdin, text=True, timeout=1800)
+            result = subprocess.run(
+                cmd, check=False, stdin=stdin, text=True, timeout=1800, env=get_docker_env()
+            )
             returncode = result.returncode
     except subprocess.CalledProcessError as e:
         returncode = e.returncode

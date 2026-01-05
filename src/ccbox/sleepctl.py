@@ -29,6 +29,7 @@ from .constants import (
     SLEEP_CHECK_INTERVAL,
     THREAD_JOIN_TIMEOUT,
 )
+from .paths import get_docker_env
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -376,6 +377,7 @@ def _run_with_pipes(
             stdin=stdin,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
+            env=get_docker_env(),
         )
 
         if proc.stdout is None:
