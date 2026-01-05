@@ -1,7 +1,7 @@
 """Cross-platform path utilities for Docker mount compatibility.
 
 Handles path conversion between Windows, WSL, and Docker formats.
-Docker Desktop expects POSIX-style paths: /c/Users/... (not C:\\Users\\...)
+Docker Desktop on Windows expects Windows paths with forward slashes: C:/Users/...
 
 Dependency direction:
     This module has NO internal dependencies (leaf module).
@@ -77,22 +77,22 @@ def _normalize_path_separators(path_str: str) -> str:
 def windows_to_docker_path(path: str | Path) -> str:
     """Convert Windows path to Docker Desktop compatible format.
 
-    Docker Desktop on Windows expects paths in POSIX format with lowercase
-    drive letter prefix: D:\\GitHub\\Project -> /d/GitHub/Project
+    Docker Desktop on Windows expects Windows paths with forward slashes.
+    The /c/... format only works in Git Bash (MSYS path translation).
 
     Args:
         path: Windows path to convert.
 
     Returns:
-        Docker-compatible POSIX path.
+        Docker-compatible path (Windows format with forward slashes).
 
     Examples:
         >>> windows_to_docker_path("D:\\\\GitHub\\\\Project")
-        '/d/GitHub/Project'
+        'D:/GitHub/Project'
         >>> windows_to_docker_path("C:/Users/name/project")
-        '/c/Users/name/project'
+        'C:/Users/name/project'
         >>> windows_to_docker_path("C:\\\\")
-        '/c'
+        'C:/'
     """
     path_str = str(path)
 
@@ -101,7 +101,7 @@ def windows_to_docker_path(path: str | Path) -> str:
     if not match:
         return path_str  # Not a Windows path, return as-is
 
-    drive = match.group(1).lower()
+    drive = match.group(1).upper()
     rest = match.group(2)
 
     # Normalize separators (handles backslashes, duplicates, trailing)
@@ -109,9 +109,9 @@ def windows_to_docker_path(path: str | Path) -> str:
 
     # Handle root drive case (C:\ or C:)
     if not rest:
-        return f"/{drive}"
+        return f"{drive}:/"
 
-    return f"/{drive}/{rest}"
+    return f"{drive}:/{rest}"
 
 
 def wsl_to_docker_path(path: str | Path) -> str:
@@ -173,8 +173,8 @@ def resolve_for_docker(path: Path) -> str:
     Handles all platform variations automatically.
 
     Handles:
-    - Windows paths (D:\\GitHub\\...) -> /d/GitHub/...
-    - WSL paths (/mnt/d/...) -> /d/...
+    - Windows paths (D:\\GitHub\\...) -> D:/GitHub/...
+    - WSL paths (/mnt/d/...) -> /d/... (for WSL Docker integration)
     - Native Linux/macOS paths -> unchanged
 
     Args:
@@ -188,7 +188,7 @@ def resolve_for_docker(path: Path) -> str:
 
     Examples:
         >>> resolve_for_docker(Path("D:/GitHub/Project"))
-        '/d/GitHub/Project'
+        'D:/GitHub/Project'
         >>> resolve_for_docker(Path("/mnt/c/Users/name"))
         '/c/Users/name'
         >>> resolve_for_docker(Path("/home/user/project"))
