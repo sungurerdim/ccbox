@@ -1166,7 +1166,6 @@ class TestPruneStaleResources:
         """Test prune_stale_resources handles timeout gracefully."""
         from subprocess import TimeoutExpired
 
-
         with patch("subprocess.run", side_effect=TimeoutExpired(cmd="docker", timeout=30)):
             results = prune_stale_resources(verbose=False)
             assert results["containers"] == 0

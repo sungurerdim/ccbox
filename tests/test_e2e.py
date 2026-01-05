@@ -38,9 +38,7 @@ class TestE2EPythonProject:
             patch("ccbox.cli.run.project_image_exists", return_value=True),
             patch("ccbox.cli.run.get_project_image_name", return_value="ccbox-test:base"),
             patch("ccbox.cli.run.get_docker_run_cmd", return_value=docker_cmd),
-            patch(
-                "ccbox.cli.run.sleepctl.run_with_sleep_inhibition", return_value=0
-            ) as mock_run,
+            patch("ccbox.cli.run.sleepctl.run_with_sleep_inhibition", return_value=0) as mock_run,
         ):
             from ccbox.config import Config
 
@@ -319,9 +317,7 @@ class TestE2EPromptMode:
             patch("ccbox.cli.run.project_image_exists", return_value=True),
             patch("ccbox.cli.run.get_project_image_name", return_value="ccbox-test:base"),
             patch("ccbox.cli.run.get_docker_run_cmd", return_value=docker_cmd),
-            patch(
-                "ccbox.cli.run.sleepctl.run_with_sleep_inhibition", return_value=0
-            ) as mock_run,
+            patch("ccbox.cli.run.sleepctl.run_with_sleep_inhibition", return_value=0) as mock_run,
         ):
             from ccbox.config import Config
 
@@ -367,9 +363,7 @@ class TestE2EBareMode:
             patch("ccbox.cli.run.project_image_exists", return_value=True),
             patch("ccbox.cli.run.get_project_image_name", return_value="ccbox-test:base"),
             patch("ccbox.cli.run.get_docker_run_cmd", return_value=bare_cmd),
-            patch(
-                "ccbox.cli.run.sleepctl.run_with_sleep_inhibition", return_value=0
-            ) as mock_run,
+            patch("ccbox.cli.run.sleepctl.run_with_sleep_inhibition", return_value=0) as mock_run,
         ):
             from ccbox.config import Config
 

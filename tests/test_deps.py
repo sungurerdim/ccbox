@@ -413,9 +413,7 @@ class TestEdgeCases:
         # The important thing is no error is raised
         detect_dependencies(tmp_path)  # Should not raise
 
-    @pytest.mark.skipif(
-        sys.platform == "win32", reason="Symlinks require admin on Windows"
-    )
+    @pytest.mark.skipif(sys.platform == "win32", reason="Symlinks require admin on Windows")
     def test_symlink_to_package_file(self, tmp_path: Path) -> None:
         """Test detection with symlinked package file."""
         real_file = tmp_path / "real_package.json"
