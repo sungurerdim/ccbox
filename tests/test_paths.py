@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from ccbox.paths import (
     _normalize_path_separators,
+    container_path,
     is_windows_path,
     is_wsl,
     resolve_for_docker,
@@ -243,3 +244,30 @@ class TestIsWsl:
 
         # Clear cache after test
         is_wsl.cache_clear()
+
+
+class TestContainerPath:
+    """Tests for container_path function (MSYS path translation prevention)."""
+
+    def test_windows_adds_double_slash(self) -> None:
+        """On Windows, container paths get // prefix to prevent MSYS translation."""
+        with patch("ccbox.paths.os.name", "nt"):
+            assert container_path("/home/node/.claude") == "//home/node/.claude"
+            assert container_path("/tmp") == "//tmp"
+            assert container_path("/var/tmp") == "//var/tmp"
+
+    def test_non_windows_unchanged(self) -> None:
+        """On non-Windows, container paths are unchanged."""
+        with patch("ccbox.paths.os.name", "posix"):
+            assert container_path("/home/node/.claude") == "/home/node/.claude"
+            assert container_path("/tmp") == "/tmp"
+
+    def test_non_slash_path_unchanged(self) -> None:
+        """Paths not starting with / are unchanged on all platforms."""
+        with patch("ccbox.paths.os.name", "nt"):
+            assert container_path("relative/path") == "relative/path"
+            assert container_path("C:/Windows") == "C:/Windows"
+
+    def test_empty_string(self) -> None:
+        """Empty string is unchanged."""
+        assert container_path("") == ""

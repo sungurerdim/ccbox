@@ -22,7 +22,7 @@ from .config import (
     get_image_name,
 )
 from .constants import BUILD_DIR
-from .paths import resolve_for_docker
+from .paths import container_path, resolve_for_docker
 
 if TYPE_CHECKING:
     from .deps import DepsInfo, DepsMode
@@ -638,9 +638,9 @@ def _add_bare_mode_mounts(cmd: list[str]) -> None:
     """Add bare/vanilla mode mounts to isolate host customizations."""
     user_dirs = ["rules", "commands", "agents", "skills"]
     for d in user_dirs:
-        cmd.extend(["--tmpfs", f"/home/node/.claude/{d}:rw,size=16m,uid=1000,gid=1000,mode=0755"])
+        cmd.extend(["--tmpfs", f"{container_path(f'/home/node/.claude/{d}')}:rw,size=16m,uid=1000,gid=1000,mode=0755"])
     # Hide host's CLAUDE.md
-    cmd.extend(["-v", "/dev/null:/home/node/.claude/CLAUDE.md:ro"])
+    cmd.extend(["-v", f"/dev/null:{container_path('/home/node/.claude/CLAUDE.md')}:ro"])
     # Skip CCO injection in entrypoint
     cmd.extend(["-e", "CCBOX_BARE_MODE=1"])
 
@@ -749,11 +749,11 @@ def _add_tmpfs_mounts(cmd: list[str], dirname: str) -> None:
     cmd.extend(
         [
             "-w",
-            f"/home/node/{dirname}",  # Workdir: dynamic based on directory name
+            container_path(f"/home/node/{dirname}"),  # Workdir: dynamic based on directory name
             "--tmpfs",
-            "/tmp:rw,noexec,nosuid,size=512m",  # Temp directory in memory
+            f"{container_path('/tmp')}:rw,noexec,nosuid,size=512m",  # Temp directory in memory
             "--tmpfs",
-            "/var/tmp:rw,noexec,nosuid,size=256m",  # Var temp in memory
+            f"{container_path('/var/tmp')}:rw,noexec,nosuid,size=256m",  # Var temp in memory
         ]
     )
 
@@ -999,7 +999,7 @@ def get_docker_run_cmd(
             container_name,
             # Mounts: project (rw)
             "-v",
-            f"{docker_project_path}:/home/node/{dirname}:rw",
+            f"{docker_project_path}:{container_path(f'/home/node/{dirname}')}:rw",
         ]
     )
 
@@ -1007,7 +1007,7 @@ def get_docker_run_cmd(
     docker_claude_config = resolve_for_docker(claude_config)
 
     # Mount host .claude directory (rw for full access)
-    cmd.extend(["-v", f"{docker_claude_config}:/home/node/.claude:rw"])
+    cmd.extend(["-v", f"{docker_claude_config}:{container_path('/home/node/.claude')}:rw"])
 
     if bare:
         _add_bare_mode_mounts(cmd)
@@ -1038,7 +1038,7 @@ def get_docker_run_cmd(
 
     # Debug logs: tmpfs by default (ephemeral), persistent with --debug-logs
     if not debug_logs:
-        cmd.extend(["--tmpfs", "/home/node/.claude/debug:rw,size=512m,mode=0777"])
+        cmd.extend(["--tmpfs", f"{container_path('/home/node/.claude/debug')}:rw,size=512m,mode=0777"])
 
     _add_git_env(cmd, config)
 

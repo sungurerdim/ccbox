@@ -225,6 +225,29 @@ def resolve_for_docker(path: Path) -> str:
     return path_str
 
 
+def container_path(path: str) -> str:
+    """Format container path to prevent MSYS path translation on Windows.
+
+    Git Bash (MSYS2) translates Unix-style paths like /home/node to
+    C:/Program Files/Git/home/node. Double slashes prevent this.
+
+    Args:
+        path: Container path (must start with /).
+
+    Returns:
+        Path with // prefix on Windows, unchanged on other platforms.
+
+    Examples:
+        >>> container_path("/home/node/.claude")  # Windows
+        '//home/node/.claude'
+        >>> container_path("/home/node/.claude")  # Linux/macOS
+        '/home/node/.claude'
+    """
+    if os.name == "nt" and path.startswith("/"):
+        return "/" + path  # Double slash prevents MSYS translation
+    return path
+
+
 def validate_project_path(path: str | Path) -> Path:
     """Validate and resolve a project path.
 
