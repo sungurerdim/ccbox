@@ -1007,8 +1007,15 @@ def get_docker_run_cmd(
     # Mount host .claude directory (rw for full access)
     cmd.extend(["-v", f"{docker_claude_config}:/home/node/.claude:rw"])
 
-    # Note: ~/.claude/.claude.json (onboarding state) is included in the .claude/ mount above
-    # No separate mount needed - Claude Code reads from .claude/.claude.json
+    # Mount ~/.claude.json for MCP config and OAuth tokens
+    # This file is separate from ~/.claude/ directory and stores:
+    # - MCP server configurations (mcpServers)
+    # - OAuth tokens for GitHub, etc.
+    # - Other user state
+    claude_json_path = claude_config.parent / ".claude.json"
+    if claude_json_path.exists():
+        docker_claude_json = resolve_for_docker(claude_json_path)
+        cmd.extend(["-v", f"{docker_claude_json}:/home/node/.claude.json:rw"])
 
     if bare:
         _add_bare_mode_mounts(cmd)
