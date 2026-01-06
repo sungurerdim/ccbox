@@ -22,7 +22,7 @@ from .config import (
     get_image_name,
 )
 from .constants import BUILD_DIR
-from .paths import container_path, resolve_for_docker
+from .paths import resolve_for_docker
 
 if TYPE_CHECKING:
     from .deps import DepsInfo, DepsMode
@@ -638,9 +638,9 @@ def _add_bare_mode_mounts(cmd: list[str]) -> None:
     """Add bare/vanilla mode mounts to isolate host customizations."""
     user_dirs = ["rules", "commands", "agents", "skills"]
     for d in user_dirs:
-        cmd.extend(["--tmpfs", f"{container_path(f'/home/node/.claude/{d}')}:rw,size=16m,uid=1000,gid=1000,mode=0755"])
+        cmd.extend(["--tmpfs", f"/home/node/.claude/{d}:rw,size=16m,uid=1000,gid=1000,mode=0755"])
     # Hide host's CLAUDE.md
-    cmd.extend(["-v", f"/dev/null:{container_path('/home/node/.claude/CLAUDE.md')}:ro"])
+    cmd.extend(["-v", "/dev/null:/home/node/.claude/CLAUDE.md:ro"])
     # Skip CCO injection in entrypoint
     cmd.extend(["-e", "CCBOX_BARE_MODE=1"])
 
@@ -723,23 +723,47 @@ def _add_terminal_env(cmd: list[str]) -> None:
             cmd.extend(["-e", f"{var}={value}"])
 
 
+def _get_host_user_ids() -> tuple[int, int]:
+    """Get host UID and GID for --user flag (cross-platform).
+
+    Returns:
+        Tuple of (uid, gid). On Linux/macOS uses actual host IDs.
+        On Windows uses 1000:1000 (Docker's default node user).
+    """
+    if sys.platform == "win32":
+        # Windows: Use node user's UID/GID (1000:1000 in Docker images)
+        return (1000, 1000)
+
+    # Linux/macOS: Use actual host UID/GID
+    return (os.getuid(), os.getgid())
+
+
+def _add_user_mapping(cmd: list[str]) -> None:
+    """Add --user flag for host UID/GID mapping.
+
+    On Linux/macOS: Maps container user to host user for correct file ownership.
+    On Windows: Uses node user (1000:1000) to run as non-root.
+    """
+    uid, gid = _get_host_user_ids()
+    cmd.extend(["--user", f"{uid}:{gid}"])
+
+
 def _add_security_options(cmd: list[str]) -> None:
     """Add security hardening options to Docker command.
 
     Security model: Container runs as host user via --user flag, eliminating
     the need for privilege switching (gosu) and enabling no-new-privileges.
-    This provides maximum security while maintaining correct file ownership.
     """
     cmd.extend(
         [
             "--cap-drop=ALL",  # Drop all Linux capabilities
             "--security-opt=no-new-privileges",  # Prevent privilege escalation
-            "--pids-limit=2048",  # Fork bomb protection (512 too low for heavy agent use)
+            "--pids-limit=2048",  # Fork bomb protection
             "--init",  # Proper signal handling, zombie reaping (tini)
-            "--shm-size=256m",  # Shared memory for Node.js/Chrome (default 64MB too small)
+            "--shm-size=256m",  # Shared memory for Node.js/Chrome
             "--ulimit",
-            "nofile=65535:65535",  # File descriptor limit for parallel subprocess spawning
-            "--memory-swappiness=0",  # Minimize swap usage for better performance
+            "nofile=65535:65535",  # File descriptor limit
+            "--memory-swappiness=0",  # Minimize swap usage
         ]
     )
 
@@ -749,11 +773,11 @@ def _add_tmpfs_mounts(cmd: list[str], dirname: str) -> None:
     cmd.extend(
         [
             "-w",
-            container_path(f"/home/node/{dirname}"),  # Workdir: dynamic based on directory name
+            f"/home/node/{dirname}",  # Workdir: dynamic based on directory name
             "--tmpfs",
-            f"{container_path('/tmp')}:rw,noexec,nosuid,size=512m",  # Temp directory in memory
+            "/tmp:rw,noexec,nosuid,size=512m",  # Temp directory in memory
             "--tmpfs",
-            f"{container_path('/var/tmp')}:rw,noexec,nosuid,size=256m",  # Var temp in memory
+            "/var/tmp:rw,noexec,nosuid,size=256m",  # Var temp in memory
         ]
     )
 
@@ -770,32 +794,6 @@ def _add_dns_options(cmd: list[str]) -> None:
             "attempts:1",
         ]
     )
-
-
-def _get_host_user_ids() -> tuple[int, int]:
-    """Get host UID and GID for --user flag (cross-platform).
-
-    Returns:
-        Tuple of (uid, gid). On Linux/macOS uses actual host IDs.
-        On Windows uses 1000:1000 (Docker's default node user).
-    """
-    if sys.platform == "win32":
-        # Windows: Use node user's UID/GID (1000:1000 in Docker images)
-        # This ensures Claude Code runs as node, not root
-        return (1000, 1000)
-
-    # Linux/macOS: Use actual host UID/GID
-    return (os.getuid(), os.getgid())
-
-
-def _add_user_mapping(cmd: list[str]) -> None:
-    """Add --user flag for host UID/GID mapping.
-
-    On Linux/macOS: Maps container user to host user for correct file ownership.
-    On Windows: Uses node user (1000:1000) to run as non-root.
-    """
-    uid, gid = _get_host_user_ids()
-    cmd.extend(["--user", f"{uid}:{gid}"])
 
 
 def _get_host_timezone() -> str:
@@ -853,7 +851,7 @@ def _add_claude_env(cmd: list[str]) -> None:
             "-e",
             "FORCE_COLOR=1",  # Ensure ANSI colors enabled (fallback for TTY detection)
             "-e",
-            f"CLAUDE_CONFIG_DIR={container_path('/home/node/.claude')}",  # Override default ~/.config/claude
+            "CLAUDE_CONFIG_DIR=/home/node/.claude",  # Override default ~/.config/claude
             "-e",
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",  # Disable telemetry
             "-e",
@@ -868,7 +866,7 @@ def _add_claude_env(cmd: list[str]) -> None:
             "NODE_NO_READLINE=1",  # Reduce readline interference for cleaner output
             "-e",
             # Node.js 22+: compile cache for 40% faster subsequent startups
-            f"NODE_COMPILE_CACHE={container_path('/home/node/.cache/node-compile')}",
+            "NODE_COMPILE_CACHE=/home/node/.cache/node-compile",
         ]
     )
 
@@ -999,7 +997,7 @@ def get_docker_run_cmd(
             container_name,
             # Mounts: project (rw)
             "-v",
-            f"{docker_project_path}:{container_path(f'/home/node/{dirname}')}:rw",
+            f"{docker_project_path}:/home/node/{dirname}:rw",
         ]
     )
 
@@ -1007,14 +1005,14 @@ def get_docker_run_cmd(
     docker_claude_config = resolve_for_docker(claude_config)
 
     # Mount host .claude directory (rw for full access)
-    cmd.extend(["-v", f"{docker_claude_config}:{container_path('/home/node/.claude')}:rw"])
+    cmd.extend(["-v", f"{docker_claude_config}:/home/node/.claude:rw"])
 
     if bare:
         _add_bare_mode_mounts(cmd)
 
     # Add container configuration
     _add_tmpfs_mounts(cmd, dirname)
-    _add_user_mapping(cmd)  # --user for correct file ownership (Linux/macOS)
+    _add_user_mapping(cmd)
     _add_security_options(cmd)
     _add_dns_options(cmd)
 
@@ -1038,7 +1036,7 @@ def get_docker_run_cmd(
 
     # Debug logs: tmpfs by default (ephemeral), persistent with --debug-logs
     if not debug_logs:
-        cmd.extend(["--tmpfs", f"{container_path('/home/node/.claude/debug')}:rw,size=512m,mode=0777"])
+        cmd.extend(["--tmpfs", "/home/node/.claude/debug:rw,size=512m,mode=0777"])
 
     _add_git_env(cmd, config)
 
