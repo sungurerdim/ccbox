@@ -279,7 +279,7 @@ class TestRemoveContainer:
         """Test successful container removal."""
         with patch("ccbox.docker.safe_docker_run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
-            result = remove_container("ccbox-test")
+            result = remove_container("ccbox.test")
             assert result is True
             mock_run.assert_called_once()
             call_args = mock_run.call_args[0][0]
@@ -289,7 +289,7 @@ class TestRemoveContainer:
         """Test removal without force flag."""
         with patch("ccbox.docker.safe_docker_run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
-            result = remove_container("ccbox-test", force=False)
+            result = remove_container("ccbox.test", force=False)
             assert result is True
             call_args = mock_run.call_args[0][0]
             assert "-f" not in call_args
@@ -298,14 +298,14 @@ class TestRemoveContainer:
         """Test returns False when removal fails."""
         with patch("ccbox.docker.safe_docker_run") as mock_run:
             mock_run.return_value = MagicMock(returncode=1)
-            result = remove_container("ccbox-test")
+            result = remove_container("ccbox.test")
             assert result is False
 
     def test_remove_docker_not_found(self) -> None:
         """Test returns False when Docker not found."""
         with patch("ccbox.docker.safe_docker_run") as mock_run:
             mock_run.side_effect = DockerNotFoundError("not found")
-            result = remove_container("ccbox-test")
+            result = remove_container("ccbox.test")
             assert result is False
 
 
@@ -317,33 +317,33 @@ class TestListContainers:
         with patch("ccbox.docker.safe_docker_run") as mock_run:
             mock_run.return_value = MagicMock(
                 returncode=0,
-                stdout="ccbox-project1\nccbox-project2\n",
+                stdout="ccbox.project1\nccbox.project2\n",
             )
             result = list_containers()
-            assert result == ["ccbox-project1", "ccbox-project2"]
+            assert result == ["ccbox.project1", "ccbox.project2"]
 
     def test_list_with_name_filter(self) -> None:
         """Test listing with name filter."""
         with patch("ccbox.docker.safe_docker_run") as mock_run:
             mock_run.return_value = MagicMock(
                 returncode=0,
-                stdout="ccbox-test\n",
+                stdout="ccbox.test\n",
             )
-            result = list_containers(name_filter="ccbox-test")
-            assert result == ["ccbox-test"]
+            result = list_containers(name_filter="ccbox.test")
+            assert result == ["ccbox.test"]
             call_args = mock_run.call_args[0][0]
             assert "--filter" in call_args
-            assert "name=ccbox-test" in call_args
+            assert "name=ccbox.test" in call_args
 
     def test_list_with_status_filter(self) -> None:
         """Test listing with status filter."""
         with patch("ccbox.docker.safe_docker_run") as mock_run:
             mock_run.return_value = MagicMock(
                 returncode=0,
-                stdout="ccbox-running\n",
+                stdout="ccbox.running\n",
             )
             result = list_containers(status_filter="running")
-            assert result == ["ccbox-running"]
+            assert result == ["ccbox.running"]
             call_args = mock_run.call_args[0][0]
             assert "status=running" in call_args
 
@@ -352,10 +352,10 @@ class TestListContainers:
         with patch("ccbox.docker.safe_docker_run") as mock_run:
             mock_run.return_value = MagicMock(
                 returncode=0,
-                stdout="ccbox-running\n",
+                stdout="ccbox.running\n",
             )
             result = list_containers(all_containers=False)
-            assert result == ["ccbox-running"]
+            assert result == ["ccbox.running"]
             call_args = mock_run.call_args[0][0]
             assert "-a" not in call_args
 
@@ -392,20 +392,20 @@ class TestListImages:
         with patch("ccbox.docker.safe_docker_run") as mock_run:
             mock_run.return_value = MagicMock(
                 returncode=0,
-                stdout="ccbox:latest\nubuntu:22.04\n",
+                stdout="ccbox/latest\nubuntu:22.04\n",
             )
             result = list_images()
-            assert result == ["ccbox:latest", "ubuntu:22.04"]
+            assert result == ["ccbox/latest", "ubuntu:22.04"]
 
     def test_list_with_prefix(self) -> None:
         """Test listing with prefix filter."""
         with patch("ccbox.docker.safe_docker_run") as mock_run:
             mock_run.return_value = MagicMock(
                 returncode=0,
-                stdout="ccbox:latest\nccbox:dev\nubuntu:22.04\n",
+                stdout="ccbox/latest\nccbox/dev\nubuntu:22.04\n",
             )
             result = list_images(prefix="ccbox")
-            assert result == ["ccbox:latest", "ccbox:dev"]
+            assert result == ["ccbox/latest", "ccbox/dev"]
 
     def test_list_empty(self) -> None:
         """Test returns empty list when no images."""

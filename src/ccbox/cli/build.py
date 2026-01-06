@@ -196,13 +196,13 @@ def get_project_image_name(project_name: str, stack: LanguageStack) -> str:
     Docker image tags have length limits (128 chars max for tag part).
     This function sanitizes and validates the project name.
     """
-    # Sanitize project name for Docker tag
+    # Sanitize project name for Docker image
     safe_name = "".join(c if c.isalnum() or c in "-_" else "-" for c in project_name.lower())
-    # Docker tag limit is 128 chars; ccbox- prefix is 6 chars, :stack is ~10 chars max
+    # Docker image name limit; ccbox. prefix is 6 chars, /stack is ~10 chars max
     max_name_len = 110
     if len(safe_name) > max_name_len:
         safe_name = safe_name[:max_name_len]
-    return f"ccbox-{safe_name}:{stack.value}"
+    return f"ccbox.{safe_name}/{stack.value}"
 
 
 def project_image_exists(project_name: str, stack: LanguageStack) -> bool:

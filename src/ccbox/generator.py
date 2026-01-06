@@ -123,10 +123,10 @@ ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 def _minimal_dockerfile() -> str:
     """MINIMAL stack: node:lts-slim + Python (no CCO)."""
     return f"""# syntax=docker/dockerfile:1
-# ccbox:minimal - Node.js + Python (no CCO)
+# ccbox/minimal - Node.js + Python (no CCO)
 FROM node:lts-slim
 
-LABEL org.opencontainers.image.title="ccbox:minimal"
+LABEL org.opencontainers.image.title="ccbox/minimal"
 
 # Timezone passthrough from host
 ARG TZ=UTC
@@ -143,10 +143,10 @@ ENV DEBIAN_FRONTEND=noninteractive
 def _base_dockerfile() -> str:
     """BASE stack: minimal + CCO."""
     return f"""# syntax=docker/dockerfile:1
-# ccbox:base - minimal + CCO (default)
-FROM ccbox:minimal
+# ccbox/base - minimal + CCO (default)
+FROM ccbox/minimal
 
-LABEL org.opencontainers.image.title="ccbox:base"
+LABEL org.opencontainers.image.title="ccbox/base"
 {CCO_INSTALL}
 """
 
@@ -154,10 +154,10 @@ LABEL org.opencontainers.image.title="ccbox:base"
 def _go_dockerfile() -> str:
     """GO stack: golang:latest + Node.js + Python + CCO."""
     return f"""# syntax=docker/dockerfile:1
-# ccbox:go - Go + Node.js + Python + CCO
+# ccbox/go - Go + Node.js + Python + CCO
 FROM golang:latest
 
-LABEL org.opencontainers.image.title="ccbox:go"
+LABEL org.opencontainers.image.title="ccbox/go"
 
 # Timezone passthrough from host
 ARG TZ=UTC
@@ -177,10 +177,10 @@ RUN curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/i
 def _rust_dockerfile() -> str:
     """RUST stack: rust:latest + Node.js + Python + CCO."""
     return f"""# syntax=docker/dockerfile:1
-# ccbox:rust - Rust + Node.js + Python + CCO
+# ccbox/rust - Rust + Node.js + Python + CCO
 FROM rust:latest
 
-LABEL org.opencontainers.image.title="ccbox:rust"
+LABEL org.opencontainers.image.title="ccbox/rust"
 
 # Timezone passthrough from host
 ARG TZ=UTC
@@ -200,10 +200,10 @@ RUN rustup component add clippy rustfmt
 def _java_dockerfile() -> str:
     """JAVA stack: eclipse-temurin:latest + Node.js + Python + CCO."""
     return f"""# syntax=docker/dockerfile:1
-# ccbox:java - Java (Temurin LTS) + Node.js + Python + CCO
+# ccbox/java - Java (Temurin LTS) + Node.js + Python + CCO
 FROM eclipse-temurin:latest
 
-LABEL org.opencontainers.image.title="ccbox:java"
+LABEL org.opencontainers.image.title="ccbox/java"
 
 # Timezone passthrough from host
 ARG TZ=UTC
@@ -226,11 +226,11 @@ RUN set -eux; \\
 def _web_dockerfile() -> str:
     """WEB stack: ccbox:base + pnpm (fullstack)."""
     return """# syntax=docker/dockerfile:1
-# ccbox:web - Node.js + pnpm + Python + CCO (fullstack)
-# Layered on ccbox:base for efficient caching
-FROM ccbox:base
+# ccbox/web - Node.js + pnpm + Python + CCO (fullstack)
+# Layered on ccbox/base for efficient caching
+FROM ccbox/base
 
-LABEL org.opencontainers.image.title="ccbox:web"
+LABEL org.opencontainers.image.title="ccbox/web"
 
 # pnpm (latest)
 RUN npm install -g pnpm --force && npm cache clean --force
@@ -240,11 +240,11 @@ RUN npm install -g pnpm --force && npm cache clean --force
 def _full_dockerfile() -> str:
     """FULL stack: ccbox:base + all languages (Go + Rust + Java + pnpm)."""
     return """# syntax=docker/dockerfile:1
-# ccbox:full - All languages (Go + Rust + Java + pnpm)
-# Layered on ccbox:base for efficient caching
-FROM ccbox:base
+# ccbox/full - All languages (Go + Rust + Java + pnpm)
+# Layered on ccbox/base for efficient caching
+FROM ccbox/base
 
-LABEL org.opencontainers.image.title="ccbox:full"
+LABEL org.opencontainers.image.title="ccbox/full"
 
 USER root
 
