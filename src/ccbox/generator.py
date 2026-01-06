@@ -638,12 +638,24 @@ def _add_bare_mode_mounts(cmd: list[str], docker_claude_config: str) -> None:
     """Add vanilla mode mounts: credentials only, no host customizations.
 
     In vanilla/bare mode:
+    - Base ~/.claude mounted as tmpfs (ensures directory exists with correct perms)
     - Only credential files are mounted from host (.credentials.json, .claude.json, settings.json)
     - Customization directories use empty tmpfs (rules, commands, agents, skills)
     - CLAUDE.md is hidden via /dev/null mount
     - This provides factory-default Claude Code behavior with working authentication
     """
-    # Mount ONLY credential files (not entire ~/.claude directory)
+    uid, gid = _get_host_user_ids()
+
+    # First: mount base .claude directory as tmpfs (creates directory with correct perms)
+    # This MUST come before file mounts to ensure parent directory exists
+    cmd.extend(
+        [
+            "--tmpfs",
+            f"/home/node/.claude:rw,size=64m,uid={uid},gid={gid},mode=0755",
+        ]
+    )
+
+    # Mount credential files INTO the tmpfs
     credential_files = [".credentials.json", ".claude.json", "settings.json"]
     for f in credential_files:
         host_file = Path(docker_claude_config) / f
@@ -657,7 +669,7 @@ def _add_bare_mode_mounts(cmd: list[str], docker_claude_config: str) -> None:
         cmd.extend(
             [
                 "--tmpfs",
-                f"/home/node/.claude/{d}:rw,size=16m,uid=1000,gid=1000,mode=0755",
+                f"/home/node/.claude/{d}:rw,size=16m,uid={uid},gid={gid},mode=0755",
             ]
         )
 

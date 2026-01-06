@@ -700,6 +700,9 @@ class TestGeneratorExtended:
             docker_claude_dir = resolve_for_docker(claude_dir)
             assert f"{docker_claude_dir}:/home/node/.claude:rw" not in cmd_str
 
+            # VANILLA mode: Base .claude directory is tmpfs (ensures dir exists)
+            assert "--tmpfs /home/node/.claude:rw,size=64m" in cmd_str
+
             # VANILLA mode: Only credential files are mounted
             docker_creds = resolve_for_docker(creds_file)
             assert f"{docker_creds}:/home/node/.claude/.credentials.json:rw" in cmd_str
@@ -708,11 +711,11 @@ class TestGeneratorExtended:
             docker_settings = resolve_for_docker(settings_file)
             assert f"{docker_settings}:/home/node/.claude/settings.json:rw" in cmd_str
 
-            # User customization dirs are empty tmpfs
-            assert "--tmpfs /home/node/.claude/rules:rw,size=16m" in cmd_str
-            assert "--tmpfs /home/node/.claude/commands:rw,size=16m" in cmd_str
-            assert "--tmpfs /home/node/.claude/agents:rw,size=16m" in cmd_str
-            assert "--tmpfs /home/node/.claude/skills:rw,size=16m" in cmd_str
+            # User customization dirs are empty tmpfs (with dynamic UID/GID)
+            assert "/home/node/.claude/rules:rw,size=16m" in cmd_str
+            assert "/home/node/.claude/commands:rw,size=16m" in cmd_str
+            assert "/home/node/.claude/agents:rw,size=16m" in cmd_str
+            assert "/home/node/.claude/skills:rw,size=16m" in cmd_str
 
             # CLAUDE.md is hidden via /dev/null mount
             assert "/dev/null:/home/node/.claude/CLAUDE.md:ro" in cmd_str
