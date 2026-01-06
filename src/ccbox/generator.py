@@ -1007,6 +1007,9 @@ def get_docker_run_cmd(
     # Mount host .claude directory (rw for full access)
     cmd.extend(["-v", f"{docker_claude_config}:/home/node/.claude:rw"])
 
+    # Note: ~/.claude/.claude.json (onboarding state) is included in the .claude/ mount above
+    # No separate mount needed - Claude Code reads from .claude/.claude.json
+
     if bare:
         _add_bare_mode_mounts(cmd)
 
