@@ -675,11 +675,15 @@ class TestGeneratorExtended:
         assert "/home/node/.claude/debug" not in cmd_str
 
     def test_get_docker_run_cmd_bare_mode(self) -> None:
-        """Test bare mode sets CCBOX_BARE_MODE."""
+        """Test bare mode mounts only credentials, not full ~/.claude directory."""
         claude_dir = Path.home() / ".claude-test-bare"
         claude_dir.mkdir(exist_ok=True)
         creds_file = claude_dir / ".credentials.json"
         creds_file.write_text('{"key": "test"}')
+        claude_json_file = claude_dir / ".claude.json"
+        claude_json_file.write_text('{"projects": {}}')
+        settings_file = claude_dir / "settings.json"
+        settings_file.write_text('{"theme": "dark"}')
 
         try:
             config = Config(claude_config_dir=str(claude_dir))
@@ -691,18 +695,34 @@ class TestGeneratorExtended:
                 bare=True,
             )
             cmd_str = " ".join(cmd)
-            # Host .claude mounted rw (use Docker-format path for assertion)
+
+            # VANILLA mode: NO full ~/.claude mount
             docker_claude_dir = resolve_for_docker(claude_dir)
-            assert f"{docker_claude_dir}:/home/node/.claude:rw" in cmd_str
-            # User customization dirs are tmpfs overlays
+            assert f"{docker_claude_dir}:/home/node/.claude:rw" not in cmd_str
+
+            # VANILLA mode: Only credential files are mounted
+            docker_creds = resolve_for_docker(creds_file)
+            assert f"{docker_creds}:/home/node/.claude/.credentials.json:rw" in cmd_str
+            docker_claude_json = resolve_for_docker(claude_json_file)
+            assert f"{docker_claude_json}:/home/node/.claude/.claude.json:rw" in cmd_str
+            docker_settings = resolve_for_docker(settings_file)
+            assert f"{docker_settings}:/home/node/.claude/settings.json:rw" in cmd_str
+
+            # User customization dirs are empty tmpfs
             assert "--tmpfs /home/node/.claude/rules:rw,size=16m" in cmd_str
             assert "--tmpfs /home/node/.claude/commands:rw,size=16m" in cmd_str
+            assert "--tmpfs /home/node/.claude/agents:rw,size=16m" in cmd_str
+            assert "--tmpfs /home/node/.claude/skills:rw,size=16m" in cmd_str
+
             # CLAUDE.md is hidden via /dev/null mount
             assert "/dev/null:/home/node/.claude/CLAUDE.md:ro" in cmd_str
+
             # Bare mode flag
             assert "CCBOX_BARE_MODE=1" in cmd_str
         finally:
             creds_file.unlink(missing_ok=True)
+            claude_json_file.unlink(missing_ok=True)
+            settings_file.unlink(missing_ok=True)
             claude_dir.rmdir()
 
     def test_get_docker_run_cmd_normal_mode_no_bare_flag(self) -> None:
