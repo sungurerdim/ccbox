@@ -634,14 +634,37 @@ def _transform_slash_command(prompt: str | None) -> str | None:
     return instruction
 
 
-def _add_bare_mode_mounts(cmd: list[str]) -> None:
-    """Add bare/vanilla mode mounts to isolate host customizations."""
+def _add_bare_mode_mounts(cmd: list[str], docker_claude_config: str) -> None:
+    """Add vanilla mode mounts: credentials only, no host customizations.
+
+    In vanilla/bare mode:
+    - Only credential files are mounted from host (.credentials.json, .claude.json, settings.json)
+    - Customization directories use empty tmpfs (rules, commands, agents, skills)
+    - CLAUDE.md is hidden via /dev/null mount
+    - This provides factory-default Claude Code behavior with working authentication
+    """
+    # Mount ONLY credential files (not entire ~/.claude directory)
+    credential_files = [".credentials.json", ".claude.json", "settings.json"]
+    for f in credential_files:
+        host_file = Path(docker_claude_config) / f
+        if host_file.exists():
+            docker_path = resolve_for_docker(host_file)
+            cmd.extend(["-v", f"{docker_path}:/home/node/.claude/{f}:rw"])
+
+    # tmpfs for customization directories (empty, no host content)
     user_dirs = ["rules", "commands", "agents", "skills"]
     for d in user_dirs:
-        cmd.extend(["--tmpfs", f"/home/node/.claude/{d}:rw,size=16m,uid=1000,gid=1000,mode=0755"])
+        cmd.extend(
+            [
+                "--tmpfs",
+                f"/home/node/.claude/{d}:rw,size=16m,uid=1000,gid=1000,mode=0755",
+            ]
+        )
+
     # Hide host's CLAUDE.md
     cmd.extend(["-v", "/dev/null:/home/node/.claude/CLAUDE.md:ro"])
-    # Skip CCO injection in entrypoint
+
+    # Signal bare mode to entrypoint
     cmd.extend(["-e", "CCBOX_BARE_MODE=1"])
 
 
@@ -1004,8 +1027,12 @@ def get_docker_run_cmd(
     # Convert claude config path for Docker mount
     docker_claude_config = resolve_for_docker(claude_config)
 
-    # Mount host .claude directory (rw for full access)
-    cmd.extend(["-v", f"{docker_claude_config}:/home/node/.claude:rw"])
+    if bare:
+        # VANILLA mode: credentials only, no host customizations
+        _add_bare_mode_mounts(cmd, str(claude_config))
+    else:
+        # NORMAL mode: full ~/.claude RW mount
+        cmd.extend(["-v", f"{docker_claude_config}:/home/node/.claude:rw"])
 
     # Mount ~/.claude.json for MCP config and OAuth tokens
     # This file is separate from ~/.claude/ directory and stores:
@@ -1016,9 +1043,6 @@ def get_docker_run_cmd(
     if claude_json_path.exists():
         docker_claude_json = resolve_for_docker(claude_json_path)
         cmd.extend(["-v", f"{docker_claude_json}:/home/node/.claude.json:rw"])
-
-    if bare:
-        _add_bare_mode_mounts(cmd)
 
     # Add container configuration
     _add_tmpfs_mounts(cmd, dirname)
