@@ -36,7 +36,7 @@ class TestE2EPythonProject:
             patch("ccbox.cli.run.detect_project_type") as mock_detect,
             patch("ccbox.cli.run.detect_dependencies", return_value=[]),
             patch("ccbox.cli.run.project_image_exists", return_value=True),
-            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox-test:base"),
+            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox.test/base"),
             patch("ccbox.cli.run.get_docker_run_cmd", return_value=docker_cmd),
             patch("ccbox.cli.run.sleepctl.run_with_sleep_inhibition", return_value=0) as mock_run,
         ):
@@ -83,7 +83,7 @@ class TestE2EPythonProject:
             patch("ccbox.cli.run.image_exists", return_value=True),
             patch("ccbox.cli.run.ensure_image_ready", return_value=True),
             patch(
-                "ccbox.cli.run.build_project_image", return_value="ccbox-test:base"
+                "ccbox.cli.run.build_project_image", return_value="ccbox.test/base"
             ) as mock_build,
             patch("ccbox.cli.run.get_docker_run_cmd", return_value=["echo", "test"]),
             patch("ccbox.cli.run.sleepctl.run_with_sleep_inhibition", return_value=0),
@@ -126,7 +126,7 @@ class TestE2ENodeProject:
             patch("ccbox.cli.run.detect_project_type", return_value=mock_detection),
             patch("ccbox.cli.run.detect_dependencies", return_value=[]),
             patch("ccbox.cli.run.project_image_exists", return_value=True),
-            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox-test:web"),
+            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox.test/web"),
             patch("ccbox.cli.run.get_docker_run_cmd", return_value=["echo", "test"]),
             patch("ccbox.cli.run.sleepctl.run_with_sleep_inhibition", return_value=0),
         ):
@@ -155,7 +155,7 @@ class TestE2ENodeProject:
             patch("ccbox.cli.run.detect_project_type") as mock_detect,
             patch("ccbox.cli.run.detect_dependencies", return_value=[]),
             patch("ccbox.cli.run.project_image_exists", return_value=True),
-            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox-test:base"),
+            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox.test/base"),
             patch("ccbox.cli.run.get_docker_run_cmd", return_value=["echo", "test"]),
             patch("ccbox.cli.run.sleepctl.run_with_sleep_inhibition", return_value=0),
         ):
@@ -195,8 +195,8 @@ class TestE2EGoProject:
             patch("ccbox.cli.run.detect_project_type", return_value=mock_detection),
             patch("ccbox.cli.run.detect_dependencies", return_value=[]),
             patch("ccbox.cli.run.project_image_exists", return_value=True),
-            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox-test:go"),
-            patch("ccbox.cli.run.get_docker_run_cmd", return_value=["docker", "run", "ccbox:go"]),
+            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox.test/go"),
+            patch("ccbox.cli.run.get_docker_run_cmd", return_value=["docker", "run", "ccbox/go"]),
             patch("ccbox.cli.run.sleepctl.run_with_sleep_inhibition", return_value=0) as mock_run,
         ):
             from ccbox.config import Config
@@ -210,7 +210,7 @@ class TestE2EGoProject:
             assert result.exit_code == 0
             # Check that go stack image is used
             cmd = mock_run.call_args[0][0]
-            assert any("ccbox:go" in arg for arg in cmd)
+            assert any("ccbox/go" in arg for arg in cmd)
 
 
 class TestE2ERustProject:
@@ -238,8 +238,8 @@ class TestE2ERustProject:
             patch("ccbox.cli.run.detect_project_type", return_value=mock_detection),
             patch("ccbox.cli.run.detect_dependencies", return_value=[]),
             patch("ccbox.cli.run.project_image_exists", return_value=True),
-            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox-test:rust"),
-            patch("ccbox.cli.run.get_docker_run_cmd", return_value=["docker", "run", "ccbox:rust"]),
+            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox.test/rust"),
+            patch("ccbox.cli.run.get_docker_run_cmd", return_value=["docker", "run", "ccbox/rust"]),
             patch("ccbox.cli.run.sleepctl.run_with_sleep_inhibition", return_value=0) as mock_run,
         ):
             from ccbox.config import Config
@@ -252,7 +252,7 @@ class TestE2ERustProject:
 
             assert result.exit_code == 0
             cmd = mock_run.call_args[0][0]
-            assert any("ccbox:rust" in arg for arg in cmd)
+            assert any("ccbox/rust" in arg for arg in cmd)
 
 
 class TestE2EFullstackProject:
@@ -279,8 +279,8 @@ class TestE2EFullstackProject:
             patch("ccbox.cli.run.detect_project_type", return_value=mock_detection),
             patch("ccbox.cli.run.detect_dependencies", return_value=[]),
             patch("ccbox.cli.run.project_image_exists", return_value=True),
-            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox-test:web"),
-            patch("ccbox.cli.run.get_docker_run_cmd", return_value=["docker", "run", "ccbox:web"]),
+            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox.test/web"),
+            patch("ccbox.cli.run.get_docker_run_cmd", return_value=["docker", "run", "ccbox/web"]),
             patch("ccbox.cli.run.sleepctl.run_with_sleep_inhibition", return_value=0) as mock_run,
         ):
             from ccbox.config import Config
@@ -294,7 +294,7 @@ class TestE2EFullstackProject:
             assert result.exit_code == 0
             cmd = mock_run.call_args[0][0]
             # Fullstack projects use web stack
-            assert any("ccbox:web" in arg for arg in cmd)
+            assert any("ccbox/web" in arg for arg in cmd)
 
 
 class TestE2EPromptMode:
@@ -315,7 +315,7 @@ class TestE2EPromptMode:
             patch("ccbox.cli.run.detect_project_type") as mock_detect,
             patch("ccbox.cli.run.detect_dependencies", return_value=[]),
             patch("ccbox.cli.run.project_image_exists", return_value=True),
-            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox-test:base"),
+            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox.test/base"),
             patch("ccbox.cli.run.get_docker_run_cmd", return_value=docker_cmd),
             patch("ccbox.cli.run.sleepctl.run_with_sleep_inhibition", return_value=0) as mock_run,
         ):
@@ -361,7 +361,7 @@ class TestE2EBareMode:
             patch("ccbox.cli.run.detect_project_type") as mock_detect,
             patch("ccbox.cli.run.detect_dependencies", return_value=[]),
             patch("ccbox.cli.run.project_image_exists", return_value=True),
-            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox-test:base"),
+            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox.test/base"),
             patch("ccbox.cli.run.get_docker_run_cmd", return_value=bare_cmd),
             patch("ccbox.cli.run.sleepctl.run_with_sleep_inhibition", return_value=0) as mock_run,
         ):

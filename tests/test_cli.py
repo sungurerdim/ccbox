@@ -78,24 +78,24 @@ class TestConfigFunctions:
     def test_get_container_name(self) -> None:
         """Test container name generation."""
         # Test unique=False (deterministic names)
-        assert get_container_name("my-project", unique=False) == "ccbox-my-project"
-        assert get_container_name("My Project", unique=False) == "ccbox-my-project"
-        assert get_container_name("test_app", unique=False) == "ccbox-test_app"
+        assert get_container_name("my-project", unique=False) == "ccbox.my-project"
+        assert get_container_name("My Project", unique=False) == "ccbox.my-project"
+        assert get_container_name("test_app", unique=False) == "ccbox.test_app"
 
         # Test unique=True (default) - has random suffix
         name1 = get_container_name("my-project")
         name2 = get_container_name("my-project")
-        assert name1.startswith("ccbox-my-project-")
-        assert name2.startswith("ccbox-my-project-")
+        assert name1.startswith("ccbox.my-project-")
+        assert name2.startswith("ccbox.my-project-")
         assert len(name1.split("-")[-1]) == 6  # 6-char hex suffix
         assert name1 != name2  # Each call generates unique name
 
     def test_image_name(self) -> None:
         """Test image name generation."""
-        assert get_image_name(LanguageStack.MINIMAL) == "ccbox:minimal"
-        assert get_image_name(LanguageStack.BASE) == "ccbox:base"
-        assert get_image_name(LanguageStack.GO) == "ccbox:go"
-        assert get_image_name(LanguageStack.RUST) == "ccbox:rust"
+        assert get_image_name(LanguageStack.MINIMAL) == "ccbox/minimal"
+        assert get_image_name(LanguageStack.BASE) == "ccbox/base"
+        assert get_image_name(LanguageStack.GO) == "ccbox/go"
+        assert get_image_name(LanguageStack.RUST) == "ccbox/rust"
 
 
 class TestGenerator:
@@ -113,7 +113,7 @@ class TestGenerator:
     def test_generate_dockerfile_base(self) -> None:
         """Test BASE Dockerfile generation (minimal + CCO)."""
         dockerfile = generate_dockerfile(LanguageStack.BASE)
-        assert "FROM ccbox:minimal" in dockerfile
+        assert "FROM ccbox/minimal" in dockerfile
         assert "ClaudeCodeOptimizer" in dockerfile
         assert "syntax=docker/dockerfile:1" in dockerfile  # BuildKit
 
@@ -140,7 +140,7 @@ class TestGenerator:
     def test_generate_dockerfile_full(self) -> None:
         """Test FULL Dockerfile generation - layered on base."""
         dockerfile = generate_dockerfile(LanguageStack.FULL)
-        assert "FROM ccbox:base" in dockerfile
+        assert "FROM ccbox/base" in dockerfile
         assert "go.dev" in dockerfile
         assert "rustup" in dockerfile
         assert "adoptium" in dockerfile.lower()
@@ -176,7 +176,7 @@ class TestGenerator:
         assert "run" in cmd
         assert "--rm" in cmd
         assert "-i" in cmd  # TTY flag (-t) only added when terminal attached
-        assert "ccbox:base" in cmd
+        assert "ccbox/base" in cmd
         assert any("GIT_AUTHOR_NAME=Test" in arg for arg in cmd)
         # Verify mounts use directory name
         project_mount = ":/home/node/myproject:rw"
@@ -596,7 +596,7 @@ class TestMainRunFlow:
             patch("ccbox.cli.run.detect_dependencies", return_value=[]),
             patch("ccbox.cli.run.image_exists", return_value=True),
             patch("ccbox.cli.run.project_image_exists", return_value=True),
-            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox-test:base"),
+            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox.test:base"),
             patch("ccbox.cli.run.get_docker_run_cmd", return_value=["echo", "test"]),
             patch("ccbox.cli.run.sleepctl.run_with_sleep_inhibition", return_value=0),
         ):
@@ -631,7 +631,7 @@ class TestGeneratorExtended:
     def test_generate_dockerfile_web(self) -> None:
         """Test WEB Dockerfile generation - layered on base."""
         dockerfile = generate_dockerfile(LanguageStack.WEB)
-        assert "FROM ccbox:base" in dockerfile
+        assert "FROM ccbox/base" in dockerfile
         assert "pnpm" in dockerfile
 
     def test_get_docker_run_cmd_no_git(self) -> None:
@@ -952,7 +952,7 @@ class TestRunFlowExtended:
             patch("ccbox.cli.run.detect_project_type") as mock_detect,
             patch("ccbox.cli.run.detect_dependencies", return_value=[]),
             patch("ccbox.cli.run.project_image_exists", return_value=True),
-            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox-test:base"),
+            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox.test:base"),
             patch("ccbox.cli.run.get_docker_run_cmd", return_value=["docker", "run"]),
             patch(
                 "ccbox.cli.run.sleepctl.run_with_sleep_inhibition",
@@ -982,7 +982,7 @@ class TestRunFlowExtended:
             patch("ccbox.cli.run.detect_project_type") as mock_detect,
             patch("ccbox.cli.run.detect_dependencies", return_value=[]),
             patch("ccbox.cli.run.project_image_exists", return_value=True),
-            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox-test:base"),
+            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox.test:base"),
             patch("ccbox.cli.run.get_docker_run_cmd", return_value=["docker", "run"]),
             patch(
                 "ccbox.cli.run.sleepctl.run_with_sleep_inhibition",
@@ -1008,12 +1008,12 @@ class TestGeneratorFallback:
             assert "FROM" in dockerfile
             # MINIMAL, GO, RUST, JAVA include claude-code directly
             # BASE inherits from ccbox:minimal
-            # WEB and FULL inherit from ccbox:base
+            # WEB and FULL inherit from ccbox/base
             if stack == LanguageStack.BASE:
-                assert "FROM ccbox:minimal" in dockerfile
+                assert "FROM ccbox/minimal" in dockerfile
                 assert "ClaudeCodeOptimizer" in dockerfile
             elif stack in (LanguageStack.WEB, LanguageStack.FULL):
-                assert "FROM ccbox:base" in dockerfile
+                assert "FROM ccbox/base" in dockerfile
             else:
                 assert "claude-code" in dockerfile
 
@@ -1068,19 +1068,19 @@ class TestPruneCommand:
             assert "Docker" in result.output
 
     def test_prune_only_targets_ccbox_resources(self) -> None:
-        """Test prune only removes ccbox-prefixed resources."""
+        """Test prune only removes ccbox.prefixed resources."""
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
             patch("subprocess.run") as mock_run,
             patch("pathlib.Path.exists", return_value=False),
         ):
-            mock_run.return_value = MagicMock(stdout="ccbox-project-abc123\n", returncode=0)
+            mock_run.return_value = MagicMock(stdout="ccbox.project-abc123\n", returncode=0)
             result = runner.invoke(cli, ["prune", "-f"])
             assert result.exit_code == 0
-            # Verify docker commands target ccbox- prefix
+            # Verify docker commands target ccbox. prefix
             calls = [str(call) for call in mock_run.call_args_list]
-            assert any("ccbox-" in call for call in calls)
+            assert any("ccbox." in call for call in calls)
 
 
 class TestPruneSystemFlag:
@@ -1175,8 +1175,14 @@ class TestPruneStaleResources:
     def testprune_stale_resources_removes_exited_containers(self) -> None:
         """Test prune_stale_resources removes exited ccbox containers."""
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(stdout="abc123\ndef456\n", returncode=0)
+        def mock_subprocess(*args: object, **kwargs: object) -> MagicMock:
+            cmd = args[0] if args else []
+            # Return containers only for ccbox. prefix (new format), empty for ccbox- (old)
+            if isinstance(cmd, list) and "--filter" in cmd and "name=ccbox." in str(cmd):
+                return MagicMock(stdout="abc123\ndef456\n", returncode=0)
+            return MagicMock(stdout="", returncode=0)
+
+        with patch("subprocess.run", side_effect=mock_subprocess):
             results = prune_stale_resources(verbose=False)
             assert results["containers"] == 2
 
@@ -1323,7 +1329,7 @@ class TestChdirOption:
             patch("ccbox.cli.run.detect_project_type") as mock_detect,
             patch("ccbox.cli.run.detect_dependencies", return_value=[]),
             patch("ccbox.cli.run.project_image_exists", return_value=True),
-            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox-test:base"),
+            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox.test:base"),
             patch("ccbox.cli.run.get_docker_run_cmd", return_value=["echo", "test"]),
             patch("ccbox.cli.run.sleepctl.run_with_sleep_inhibition", return_value=0),
         ):
@@ -1360,7 +1366,7 @@ class TestInteractiveStackSelection:
             patch("ccbox.cli.run.detect_project_type") as mock_detect,
             patch("ccbox.cli.run.detect_dependencies", return_value=[]),
             patch("ccbox.cli.run.project_image_exists", return_value=True),
-            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox-test:base"),
+            patch("ccbox.cli.run.get_project_image_name", return_value="ccbox.test:base"),
             patch("ccbox.cli.run.get_docker_run_cmd", return_value=["echo", "test"]),
             patch("ccbox.cli.run.sleepctl.run_with_sleep_inhibition", return_value=0),
         ):
@@ -1399,7 +1405,7 @@ class TestBenchmarkCLIOptions:
             # Prompt should be last (positional arg after all flags)
             assert cmd[-1] == "Build a REST API"
             # --print should come after image name
-            image_idx = cmd.index("ccbox:base")
+            image_idx = cmd.index("ccbox/base")
             print_idx = cmd.index("--print")
             assert print_idx > image_idx
         finally:
@@ -1422,7 +1428,7 @@ class TestBenchmarkCLIOptions:
             assert "--model" in cmd
             assert "opus" in cmd
             # --model should come after image name
-            image_idx = cmd.index("ccbox:base")
+            image_idx = cmd.index("ccbox/base")
             model_idx = cmd.index("--model")
             assert model_idx > image_idx
         finally:
@@ -1445,7 +1451,7 @@ class TestBenchmarkCLIOptions:
             # quiet maps to --print in claude CLI
             assert "--print" in cmd
             # --print should come after image name
-            image_idx = cmd.index("ccbox:base")
+            image_idx = cmd.index("ccbox/base")
             print_idx = cmd.index("--print")
             assert print_idx > image_idx
         finally:
@@ -1522,7 +1528,7 @@ class TestBenchmarkCLIOptions:
             # Empty prompt is falsy, so --print and prompt should NOT be added
             assert "--print" not in cmd
             # Image name should be in command
-            assert "ccbox:base" in cmd
+            assert "ccbox/base" in cmd
             # Empty string should not be added as argument
             assert "" not in cmd
         finally:
@@ -1780,8 +1786,8 @@ class TestProjectImageNameValidation:
 
         # Result should be under 128 chars total
         assert len(result) <= 128
-        assert result.startswith("ccbox-")
-        assert result.endswith(":base")
+        assert result.startswith("ccbox.")
+        assert result.endswith("/base")
 
 
 class TestExtractedHelperFunctions:
@@ -1866,7 +1872,11 @@ class TestSharedCleanupHelpers:
                 result = MagicMock()
                 result.returncode = 0
                 if "ps" in cmd:
-                    result.stdout = "ccbox-project1\nccbox-project2"
+                    # Return containers only for new prefix (ccbox.), empty for old (ccbox-)
+                    if "name=ccbox." in str(cmd):
+                        result.stdout = "ccbox.project1\nccbox.project2"
+                    else:
+                        result.stdout = ""
                 return result
 
             mock_run.side_effect = side_effect
@@ -1904,7 +1914,7 @@ class TestSharedCleanupHelpers:
                 elif "docker" in cmd and "images" in cmd:
                     # List images for project images
                     result.returncode = 0
-                    result.stdout = "ccbox-myproject:base\nccbox-other:go\nunrelated:latest"
+                    result.stdout = "ccbox.myproject:base\nccbox.other:go\nunrelated:latest"
                 else:
                     result.returncode = 0
 

@@ -97,11 +97,12 @@ def prune_stale_resources(verbose: bool = False) -> dict[str, int]:
     results: dict[str, int] = {"containers": 0}
 
     # Remove stopped ccbox containers (crash recovery - shouldn't exist due to --rm)
-    # Only targets containers with ccbox- prefix
-    containers = docker.list_containers(name_filter="ccbox-", status_filter="exited")
-    for container_name in containers:
-        if docker.remove_container(container_name, force=True):
-            results["containers"] += 1
+    # Targets both old (ccbox-) and new (ccbox.) naming conventions
+    for prefix in ("ccbox.", "ccbox-"):
+        containers = docker.list_containers(name_filter=prefix, status_filter="exited")
+        for container_name in containers:
+            if docker.remove_container(container_name, force=True):
+                results["containers"] += 1
 
     # Note: We don't prune global dangling images or build cache here
     # as they may belong to other Docker projects. ccbox uses --no-cache
@@ -120,11 +121,13 @@ def remove_ccbox_containers() -> int:
     Returns:
         Number of containers removed.
     """
-    containers = docker.list_containers(name_filter="ccbox-")
     removed = 0
-    for name in containers:
-        if docker.remove_container(name, force=True):
-            removed += 1
+    # Target both old (ccbox-) and new (ccbox.) naming conventions
+    for prefix in ("ccbox.", "ccbox-"):
+        containers = docker.list_containers(name_filter=prefix)
+        for name in containers:
+            if docker.remove_container(name, force=True):
+                removed += 1
     return removed
 
 
@@ -136,16 +139,21 @@ def remove_ccbox_images() -> int:
     """
     removed = 0
 
-    # Remove stack images (ccbox:base, ccbox:go, etc.)
+    # Remove stack images - new format (ccbox/base) and old format (ccbox:base)
     for stack in LanguageStack:
+        # New format: ccbox/base
         if docker.remove_image(get_image_name(stack), force=True):
             removed += 1
-
-    # Remove project images (ccbox-projectname:stack)
-    images = docker.list_images(prefix="ccbox-")
-    for image in images:
-        if docker.remove_image(image, force=True):
+        # Old format: ccbox:base
+        if docker.remove_image(f"ccbox:{stack.value}", force=True):
             removed += 1
+
+    # Remove project images - both old (ccbox-project:stack) and new (ccbox.project/stack)
+    for prefix in ("ccbox.", "ccbox-"):
+        images = docker.list_images(prefix=prefix)
+        for image in images:
+            if docker.remove_image(image, force=True):
+                removed += 1
 
     return removed
 

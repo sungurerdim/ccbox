@@ -138,7 +138,7 @@ def get_claude_config_dir(config: Config) -> Path:
 
 def get_image_name(stack: LanguageStack) -> str:
     """Get Docker image name for a language stack."""
-    return f"ccbox:{stack.value}"
+    return f"ccbox/{stack.value}"
 
 
 # Re-export from constants for backward compatibility
@@ -169,5 +169,5 @@ def get_container_name(project_name: str, unique: bool = True) -> str:
     safe_name = "".join(c if c.isalnum() or c in "-_" else "-" for c in project_name.lower())
     if unique:
         suffix = uuid.uuid4().hex[:6]
-        return f"ccbox-{safe_name}-{suffix}"
-    return f"ccbox-{safe_name}"
+        return f"ccbox.{safe_name}-{suffix}"
+    return f"ccbox.{safe_name}"
