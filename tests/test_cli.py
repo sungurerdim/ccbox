@@ -38,7 +38,7 @@ from ccbox.generator import (
     get_docker_run_cmd,
     write_build_files,
 )
-from ccbox.paths import container_path, resolve_for_docker
+from ccbox.paths import resolve_for_docker
 
 
 def strip_ansi(text: str) -> str:
@@ -178,26 +178,26 @@ class TestGenerator:
         assert "-i" in cmd  # TTY flag (-t) only added when terminal attached
         assert "ccbox:base" in cmd
         assert any("GIT_AUTHOR_NAME=Test" in arg for arg in cmd)
-        # Verify mounts use directory name (with platform-aware container paths)
-        project_mount = f":{container_path('/home/node/myproject')}:rw"
+        # Verify mounts use directory name
+        project_mount = ":/home/node/myproject:rw"
         assert any(project_mount in arg for arg in cmd)
         # Host .claude mounted rw (full access, no tmpfs overlays in normal mode)
-        claude_mount = f":{container_path('/home/node/.claude')}:rw"
+        claude_mount = ":/home/node/.claude:rw"
         assert any(claude_mount in arg for arg in cmd)
         # Normal mode: NO tmpfs overlays for user dirs (host's accessible, CCO merges)
         cmd_str = " ".join(cmd)
-        assert f"{container_path('/home/node/.claude/rules')}:rw,size=16m" not in cmd_str
-        assert f"{container_path('/home/node/.claude/commands')}:rw,size=16m" not in cmd_str
+        assert "/home/node/.claude/rules:rw,size=16m" not in cmd_str
+        assert "/home/node/.claude/commands:rw,size=16m" not in cmd_str
         # Normal mode: NO /dev/null mount for CLAUDE.md (host's used)
-        assert f"/dev/null:{container_path('/home/node/.claude/CLAUDE.md')}" not in cmd_str
+        assert "/dev/null:/home/node/.claude/CLAUDE.md" not in cmd_str
         # Verify workdir uses directory name
-        assert any(container_path("/home/node/myproject") in arg for arg in cmd)
-        # Verify CLAUDE_CONFIG_DIR env var (with platform-aware path)
-        config_dir = f"CLAUDE_CONFIG_DIR={container_path('/home/node/.claude')}"
+        assert any("/home/node/myproject" in arg for arg in cmd)
+        # Verify CLAUDE_CONFIG_DIR env var
+        config_dir = "CLAUDE_CONFIG_DIR=/home/node/.claude"
         assert any(config_dir in arg for arg in cmd)
         # Verify tmpfs for no residue
         assert "--tmpfs" in cmd
-        assert any(f"{container_path('/tmp')}:" in arg for arg in cmd)
+        assert any("/tmp:" in arg for arg in cmd)
 
 
 class TestCLI:
@@ -658,7 +658,7 @@ class TestGeneratorExtended:
         # Debug logs use tmpfs by default (ephemeral), mode 0777 for dynamic UID
         cmd_str = " ".join(cmd)
         assert "--tmpfs" in cmd_str
-        assert f"{container_path('/home/node/.claude/debug')}:rw,size=512m,mode=0777" in cmd_str
+        assert "/home/node/.claude/debug:rw,size=512m,mode=0777" in cmd_str
 
     def test_get_docker_run_cmd_debug_logs_persistent(self) -> None:
         """Test docker run command skips tmpfs when debug_logs=True."""
@@ -672,7 +672,7 @@ class TestGeneratorExtended:
         )
         # Debug logs persistent - no tmpfs for debug dir
         cmd_str = " ".join(cmd)
-        assert f"{container_path('/home/node/.claude/debug')}" not in cmd_str
+        assert "/home/node/.claude/debug" not in cmd_str
 
     def test_get_docker_run_cmd_bare_mode(self) -> None:
         """Test bare mode sets CCBOX_BARE_MODE."""
@@ -693,12 +693,12 @@ class TestGeneratorExtended:
             cmd_str = " ".join(cmd)
             # Host .claude mounted rw (use Docker-format path for assertion)
             docker_claude_dir = resolve_for_docker(claude_dir)
-            assert f"{docker_claude_dir}:{container_path('/home/node/.claude')}:rw" in cmd_str
+            assert f"{docker_claude_dir}:/home/node/.claude:rw" in cmd_str
             # User customization dirs are tmpfs overlays
-            assert f"--tmpfs {container_path('/home/node/.claude/rules')}:rw,size=16m" in cmd_str
-            assert f"--tmpfs {container_path('/home/node/.claude/commands')}:rw,size=16m" in cmd_str
+            assert "--tmpfs /home/node/.claude/rules:rw,size=16m" in cmd_str
+            assert "--tmpfs /home/node/.claude/commands:rw,size=16m" in cmd_str
             # CLAUDE.md is hidden via /dev/null mount
-            assert f"/dev/null:{container_path('/home/node/.claude/CLAUDE.md')}:ro" in cmd_str
+            assert "/dev/null:/home/node/.claude/CLAUDE.md:ro" in cmd_str
             # Bare mode flag
             assert "CCBOX_BARE_MODE=1" in cmd_str
         finally:
@@ -724,10 +724,10 @@ class TestGeneratorExtended:
             cmd_str = " ".join(cmd)
             # Host .claude mounted rw (use Docker-format path for assertion)
             docker_claude_dir = resolve_for_docker(claude_dir)
-            assert f"{docker_claude_dir}:{container_path('/home/node/.claude')}:rw" in cmd_str
+            assert f"{docker_claude_dir}:/home/node/.claude:rw" in cmd_str
             # Normal mode: NO tmpfs overlays (host's accessible, CCO merges)
-            assert f"{container_path('/home/node/.claude/rules')}:rw,size=16m" not in cmd_str
-            assert f"/dev/null:{container_path('/home/node/.claude/CLAUDE.md')}" not in cmd_str
+            assert "/home/node/.claude/rules:rw,size=16m" not in cmd_str
+            assert "/dev/null:/home/node/.claude/CLAUDE.md" not in cmd_str
             # Normal mode: no CCBOX_BARE_MODE flag
             assert "CCBOX_BARE_MODE" not in cmd_str
         finally:
