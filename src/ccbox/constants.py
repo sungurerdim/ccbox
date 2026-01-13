@@ -45,6 +45,4 @@ TMPFS_SIZE = "64m"  # Default tmpfs size for /tmp
 TMPFS_MODE = "1777"  # Tmpfs permissions (sticky bit)
 
 # Resource limits
-DEFAULT_MEMORY_LIMIT = "4g"  # Default container memory limit
-DEFAULT_MEMORY_SWAP = "4g"  # Same as memory (no swap)
-DEFAULT_PIDS_LIMIT = 256  # Process limit per container
+DEFAULT_PIDS_LIMIT = 2048  # Process limit per container (fork bomb protection)

@@ -349,7 +349,7 @@ class TestCLIFunctions:
             return tmp_path
 
         with (
-            patch("ccbox.cli.image_exists", return_value=True),  # Base exists
+            patch("ccbox.config.image_exists", return_value=True),  # Base exists
             patch("ccbox.cli.build.write_build_files", side_effect=mock_write_build_files),
             patch("subprocess.run") as mock_run,
         ):
@@ -490,7 +490,7 @@ class TestCLICommands:
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.build_image", return_value=True),
+            patch("ccbox.cli.build.build_image", return_value=True),
         ):
             result = runner.invoke(cli, ["update", "-s", "base"])
             assert result.exit_code == 0
@@ -500,8 +500,8 @@ class TestCLICommands:
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.image_exists", return_value=True),
-            patch("ccbox.cli.build_image", return_value=True),
+            patch("ccbox.config.image_exists", return_value=True),
+            patch("ccbox.cli.build.build_image", return_value=True),
         ):
             result = runner.invoke(cli, ["update", "-a"])
             assert result.exit_code == 0
@@ -511,7 +511,7 @@ class TestCLICommands:
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.image_exists", return_value=False),
+            patch("ccbox.config.image_exists", return_value=False),
         ):
             result = runner.invoke(cli, ["update", "-a"])
             assert result.exit_code == 0
@@ -522,7 +522,7 @@ class TestCLICommands:
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.image_exists", return_value=True),
+            patch("ccbox.config.image_exists", return_value=True),
             patch("subprocess.run") as mock_run,
         ):
             mock_run.return_value = MagicMock(stdout="", returncode=0)
@@ -542,8 +542,8 @@ class TestCLICommands:
         with (
             patch("ccbox.cli.check_docker", return_value=True),
             patch("ccbox.cli.prompts.get_git_config", return_value=("Test", "t@t.com")),
-            patch("ccbox.cli.image_exists", return_value=False),
-            patch("ccbox.cli.prompts.detect_project_type") as mock_detect,
+            patch("ccbox.config.image_exists", return_value=False),
+            patch("ccbox.detector.detect_project_type") as mock_detect,
         ):
             from ccbox.detector import DetectionResult
 
@@ -561,8 +561,8 @@ class TestCLICommands:
         with (
             patch("ccbox.cli.check_docker", return_value=True),
             patch("ccbox.cli.prompts.get_git_config", return_value=("Test", "t@t.com")),
-            patch("ccbox.cli.image_exists", return_value=True),
-            patch("ccbox.cli.prompts.detect_project_type") as mock_detect,
+            patch("ccbox.config.image_exists", return_value=True),
+            patch("ccbox.detector.detect_project_type") as mock_detect,
         ):
             from ccbox.detector import DetectionResult
 
@@ -1026,7 +1026,7 @@ class TestCleanCommand:
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.image_exists", return_value=True),
+            patch("ccbox.config.image_exists", return_value=True),
             patch("subprocess.run") as mock_run,
         ):
             mock_run.return_value = MagicMock(stdout="container1\n", returncode=0)
@@ -1223,8 +1223,8 @@ class TestDoctorDiskCheck:
         with (
             patch("ccbox.cli.check_docker", return_value=True),
             patch("ccbox.cli.prompts.get_git_config", return_value=("T", "t@t")),
-            patch("ccbox.cli.image_exists", return_value=False),
-            patch("ccbox.cli.prompts.detect_project_type") as mock_detect,
+            patch("ccbox.config.image_exists", return_value=False),
+            patch("ccbox.detector.detect_project_type") as mock_detect,
             patch("shutil.disk_usage", side_effect=OSError("Cannot check")),
         ):
             from ccbox.detector import DetectionResult
@@ -1256,7 +1256,7 @@ class TestUpdateDefaultStack:
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.build_image", return_value=True) as mock_build,
+            patch("ccbox.cli.build.build_image", return_value=True) as mock_build,
         ):
             result = runner.invoke(cli, ["update"])
             assert result.exit_code == 0
@@ -1947,9 +1947,9 @@ class TestPruneIntegration:
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.remove_ccbox_containers", return_value=3) as mock_containers,
-            patch("ccbox.cli.remove_ccbox_images", return_value=5) as mock_images,
-            patch("ccbox.cli.clean_temp_files", return_value=1) as mock_temp,
+            patch("ccbox.cli.cleanup.remove_ccbox_containers", return_value=3) as mock_containers,
+            patch("ccbox.cli.cleanup.remove_ccbox_images", return_value=5) as mock_images,
+            patch("ccbox.cli.cleanup.clean_temp_files", return_value=1) as mock_temp,
         ):
             result = runner.invoke(cli, ["prune", "-f"])
 
@@ -1970,9 +1970,9 @@ class TestPruneIntegration:
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.remove_ccbox_containers", return_value=0),
-            patch("ccbox.cli.remove_ccbox_images", return_value=0),
-            patch("ccbox.cli.clean_temp_files", return_value=0),
+            patch("ccbox.cli.cleanup.remove_ccbox_containers", return_value=0),
+            patch("ccbox.cli.cleanup.remove_ccbox_images", return_value=0),
+            patch("ccbox.cli.cleanup.clean_temp_files", return_value=0),
         ):
             result = runner.invoke(cli, ["prune", "-f"])
 
@@ -1984,8 +1984,8 @@ class TestPruneIntegration:
         runner = CliRunner()
         with (
             patch("ccbox.cli.check_docker", return_value=True),
-            patch("ccbox.cli.remove_ccbox_containers", return_value=2) as mock_containers,
-            patch("ccbox.cli.remove_ccbox_images", return_value=3) as mock_images,
+            patch("ccbox.cli.cleanup.remove_ccbox_containers", return_value=2) as mock_containers,
+            patch("ccbox.cli.cleanup.remove_ccbox_images", return_value=3) as mock_images,
         ):
             result = runner.invoke(cli, ["clean", "-f"])
 

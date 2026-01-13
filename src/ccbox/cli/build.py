@@ -9,7 +9,6 @@ import os
 import subprocess
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from rich.console import Console
 
@@ -29,9 +28,6 @@ from ..generator import generate_project_dockerfile, write_build_files
 from ..logging import get_logger
 from ..paths import get_docker_env, resolve_for_docker
 from .cleanup import cleanup_ccbox_dangling_images
-
-if TYPE_CHECKING:
-    pass
 
 console = Console(force_terminal=True, legacy_windows=False)
 logger = get_logger(__name__)
@@ -155,13 +151,14 @@ def build_image(stack: LanguageStack) -> bool:
     try:
         # Disable all Docker cache to ensure fresh builds (Claude Code + CCO updates)
         # CCO_CACHE_BUST with timestamp ensures pip also gets fresh package
+        # Use zstd compression for smaller images and faster push/pull (Docker 23+)
         # Redirect stderr to stdout so build progress doesn't appear as errors
         subprocess.run(
             [
                 "docker",
                 "build",
-                "-t",
-                image_name,
+                "--output",
+                f"type=image,name={image_name},compression=zstd,compression-level=3",
                 "-f",
                 str(build_dir / "Dockerfile"),
                 "--no-cache",

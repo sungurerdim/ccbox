@@ -21,7 +21,7 @@ from .config import (
     get_container_name,
     get_image_name,
 )
-from .constants import BUILD_DIR
+from .constants import BUILD_DIR, DEFAULT_PIDS_LIMIT
 from .paths import resolve_for_docker
 
 if TYPE_CHECKING:
@@ -51,7 +51,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \\
     && DELTA_VER="0.18.2" \\
     && DELTA_ARCH=$(dpkg --print-architecture) \\
     && curl -sL "https://github.com/dandavison/delta/releases/download/${DELTA_VER}/git-delta_${DELTA_VER}_${DELTA_ARCH}.deb" -o /tmp/delta.deb \\
-    && dpkg -i /tmp/delta.deb && rm /tmp/delta.deb
+    && dpkg -i /tmp/delta.deb && rm /tmp/delta.deb \\
+    # Cleanup unnecessary files (~50MB savings)
+    && rm -rf /usr/share/doc/* /usr/share/man/* /var/log/* \\
+    && find /usr/share/locale -mindepth 1 -maxdepth 1 ! -name 'en*' -exec rm -rf {} +
 
 # Locale and performance environment
 ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \\
@@ -80,8 +83,13 @@ ENV PATH="/root/.local/bin:$PATH"
 
 # Python dev tools (ruff, mypy, pytest) - installed as isolated tools
 # Using 'uv tool' avoids PEP 668 externally-managed-environment errors
-RUN uv tool install ruff && uv tool install mypy && uv tool install pytest
-ENV PATH="/root/.local/bin:$PATH"
+# Pre-compile bytecode at build time for faster startup
+RUN uv tool install ruff && uv tool install mypy && uv tool install pytest \\
+    && python -m compileall -q /root/.local/lib/python*/site-packages 2>/dev/null || true
+
+# Disable runtime bytecode generation (SSD wear reduction)
+# Pre-compiled .pyc files from build are still used
+ENV PATH="/root/.local/bin:$PATH" PYTHONDONTWRITEBYTECODE=1
 """
 
 # CCO installation (cco package includes cco-install command)
@@ -793,7 +801,7 @@ def _add_security_options(cmd: list[str]) -> None:
         [
             "--cap-drop=ALL",  # Drop all Linux capabilities
             "--security-opt=no-new-privileges",  # Prevent privilege escalation
-            "--pids-limit=2048",  # Fork bomb protection
+            f"--pids-limit={DEFAULT_PIDS_LIMIT}",  # Fork bomb protection
             "--init",  # Proper signal handling, zombie reaping (tini)
             "--shm-size=256m",  # Shared memory for Node.js/Chrome
             "--ulimit",
@@ -804,7 +812,13 @@ def _add_security_options(cmd: list[str]) -> None:
 
 
 def _add_tmpfs_mounts(cmd: list[str], dirname: str) -> None:
-    """Add tmpfs mounts for workdir and temp directories."""
+    """Add tmpfs mounts for workdir and temp directories.
+
+    Uses tmpfs for:
+    - /tmp, /var/tmp: Standard temp directories
+    - .npm, .cache: Package manager caches (SSD wear reduction)
+    """
+    uid, gid = _get_host_user_ids()
     cmd.extend(
         [
             "-w",
@@ -813,6 +827,11 @@ def _add_tmpfs_mounts(cmd: list[str], dirname: str) -> None:
             "/tmp:rw,noexec,nosuid,size=512m",  # Temp directory in memory
             "--tmpfs",
             "/var/tmp:rw,noexec,nosuid,size=256m",  # Var temp in memory
+            # Package manager caches in memory (SSD wear reduction)
+            "--tmpfs",
+            f"/home/node/.npm:rw,size=256m,uid={uid},gid={gid},mode=0755",
+            "--tmpfs",
+            f"/home/node/.cache:rw,size=512m,uid={uid},gid={gid},mode=0755",
         ]
     )
 
