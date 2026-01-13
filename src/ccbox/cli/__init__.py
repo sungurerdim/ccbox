@@ -7,6 +7,11 @@ This package contains the CLI commands and supporting modules:
 - cleanup: Resource cleanup operations
 - prompts: User interaction and selection
 - utils: Utilities (Docker checks, git config)
+
+Lazy Import Strategy:
+    Heavy modules (run, build, cleanup, prompts, deps, detector, generator) are
+    deferred until actually needed. This reduces startup time for --help/--version
+    from ~280ms to ~80ms. Re-exports for backward compatibility use __getattr__.
 """
 
 from __future__ import annotations
@@ -31,26 +36,11 @@ from rich.console import Console
 from rich.table import Table
 
 from .. import __version__
-from ..config import STACK_INFO, LanguageStack, image_exists
+from ..config import STACK_INFO, LanguageStack
 from ..constants import MAX_PROMPT_LENGTH, MAX_SYSTEM_PROMPT_LENGTH, VALID_MODELS
-from ..deps import detect_dependencies
-from ..detector import detect_project_type
 from ..errors import ValidationError
-from ..generator import write_build_files
-from .build import build_image, get_installed_ccbox_images
-from .build import get_project_image_name as _get_project_image_name
-from .build import project_image_exists as _project_image_exists
-from .cleanup import (
-    clean_temp_files,
-    prune_system,
-    remove_ccbox_containers,
-    remove_ccbox_images,
-)
-from .prompts import select_stack
-from .run import run
 from .utils import (
     ERR_DOCKER_NOT_RUNNING,
-    _start_docker_desktop,
     check_docker,
     get_git_config,
 )
@@ -114,36 +104,81 @@ def _validate_model(model: str | None) -> str | None:
     return model
 
 
-# Re-export for backward compatibility
-# These exports allow external code to import from ccbox.cli directly
-# instead of from submodules. When adding new public APIs:
-# 1. Export from the submodule (e.g., cli/build.py)
-# 2. Add re-export here if backward compatibility needed
-# 3. Document the source module in __all__
-__all__ = [
-    # cli/__init__.py
-    "cli",
+# Lazy import mappings for backward compatibility
+# Maps exported name -> (module_path, attribute_name)
+_LAZY_IMPORTS: dict[str, tuple[str, str]] = {
+    # cli/build.py
+    "build_image": (".build", "build_image"),
+    "get_installed_ccbox_images": (".build", "get_installed_ccbox_images"),
+    "_project_image_exists": (".build", "project_image_exists"),
+    "_get_project_image_name": (".build", "get_project_image_name"),
+    # cli/cleanup.py
+    "remove_ccbox_containers": (".cleanup", "remove_ccbox_containers"),
+    "remove_ccbox_images": (".cleanup", "remove_ccbox_images"),
+    # cli/prompts.py
+    "select_stack": (".prompts", "select_stack"),
     # cli/utils.py
+    "_start_docker_desktop": (".utils", "_start_docker_desktop"),
+    # config.py
+    "image_exists": ("..config", "image_exists"),
+    # detector.py
+    "detect_project_type": ("..detector", "detect_project_type"),
+    # deps.py
+    "detect_dependencies": ("..deps", "detect_dependencies"),
+    # generator.py
+    "write_build_files": ("..generator", "write_build_files"),
+}
+
+
+def __getattr__(name: str) -> object:
+    """Lazy import handler for backward compatibility.
+
+    Allows `from ccbox.cli import build_image` without loading build module
+    at package import time. Only loads when the attribute is actually accessed.
+    """
+    if name in _LAZY_IMPORTS:
+        module_path, attr_name = _LAZY_IMPORTS[name]
+        # Use importlib for relative imports
+        import importlib
+
+        if module_path.startswith(".."):
+            # Parent package modules: ..config -> ccbox.config
+            full_module = f"ccbox{module_path[1:]}"
+        else:
+            # Submodules: .build -> ccbox.cli.build
+            full_module = f"ccbox.cli.{module_path[1:]}"
+        module = importlib.import_module(full_module)
+        return getattr(module, attr_name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+# Re-export for backward compatibility (lazy-loaded via __getattr__)
+# These exports allow external code to import from ccbox.cli directly
+# instead of from submodules. Actual loading is deferred until access.
+__all__ = [
+    # cli/__init__.py (always loaded)
+    "cli",
+    # cli/utils.py (always loaded - lightweight)
     "check_docker",
     "get_git_config",
-    "_start_docker_desktop",
-    # cli/build.py
+    "_start_docker_desktop",  # lazy
+    # cli/build.py (lazy)
     "build_image",
     "get_installed_ccbox_images",
     "_project_image_exists",
     "_get_project_image_name",
-    # cli/cleanup.py
+    # cli/cleanup.py (lazy)
     "remove_ccbox_containers",
     "remove_ccbox_images",
-    # cli/prompts.py
+    # cli/prompts.py (lazy)
     "select_stack",
-    # config.py (re-exported for convenience)
+    # config.py (lazy)
     "image_exists",
-    # detector.py (re-exported for convenience)
+    # detector.py (lazy)
     "detect_project_type",
-    # deps.py (re-exported for convenience)
+    # deps.py (lazy)
     "detect_dependencies",
-    # generator.py (re-exported for convenience)
+    # generator.py (lazy)
     "write_build_files",
 ]
 
@@ -254,7 +289,10 @@ def cli(
         console.print(f"[red]Error: {e}[/red]")
         sys.exit(1)
 
-    run(
+    # Lazy import: run module is heavy (~15ms), only load when actually running
+    from .run import run as _run
+
+    _run(
         stack,
         build,
         path,
@@ -287,6 +325,10 @@ def update(stack: str | None, build_all: bool) -> None:
         console.print(ERR_DOCKER_NOT_RUNNING)
         sys.exit(1)
 
+    # Lazy import: build module is heavy (~35ms)
+    from ..config import image_exists
+    from .build import build_image
+
     stacks_to_build: list[LanguageStack] = []
 
     if stack:
@@ -317,6 +359,9 @@ def clean(force: bool) -> None:
 
     if not force and not click.confirm("Remove all ccbox containers and images?", default=False):
         return
+
+    # Lazy import: cleanup module is heavy (~15ms)
+    from .cleanup import remove_ccbox_containers, remove_ccbox_images
 
     console.print("[dim]Removing containers...[/dim]")
     containers_removed = remove_ccbox_containers()
@@ -352,6 +397,14 @@ def prune(force: bool, system: bool) -> None:
     if not check_docker():
         console.print(ERR_DOCKER_NOT_RUNNING)
         sys.exit(1)
+
+    # Lazy import: cleanup module is heavy (~15ms)
+    from .cleanup import (
+        clean_temp_files,
+        prune_system,
+        remove_ccbox_containers,
+        remove_ccbox_images,
+    )
 
     if system:
         prune_system(force)
@@ -406,6 +459,10 @@ def doctor(path: str) -> None:
     project_path = Path(path).resolve()
 
     from rich.panel import Panel
+
+    # Lazy import: detector module
+    from ..config import image_exists
+    from ..detector import detect_project_type
 
     console.print(Panel.fit("[bold]ccbox Doctor[/bold]", border_style="blue"))
 
