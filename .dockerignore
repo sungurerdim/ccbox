@@ -1,40 +1,26 @@
-# Virtual environments
-.venv/
-venv/
-.env/
-env/
+# Dependencies
+node_modules/
 
 # Git
 .git/
 .gitignore
+.github/
 
-# Python cache
-__pycache__/
-*.py[cod]
-*.pyo
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
+# Build output (will be built in container)
+dist/
 
 # IDE
 .idea/
 .vscode/
 *.swp
-*.swo
 
-# Build artifacts
-dist/
-build/
-*.egg-info/
+# Test
+tests/
+coverage/
 
-# Test/coverage
-.coverage
-htmlcov/
-.tox/
-
-# Documentation
-docs/_build/
-
-# OS files
+# OS
 .DS_Store
 Thumbs.db
+
+# Docs
+*.md

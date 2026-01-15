@@ -1,0 +1,58 @@
+{
+  "name": "ccbox",
+  "version": "1.0.0",
+  "description": "Secure Docker sandbox for Claude Code CLI",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "ccbox": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "src/scripts"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli.ts",
+    "test": "node tests/verify.mjs",
+    "test:e2e": "node tests/e2e.mjs",
+    "test:all": "npm test && npm run test:e2e",
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build && npm run typecheck && npm test"
+  },
+  "keywords": [
+    "claude",
+    "docker",
+    "cli",
+    "sandbox",
+    "ai",
+    "claude-code",
+    "container"
+  ],
+  "author": "Sungur Zahid Erdim <https://github.com/sungurerdim>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sungurerdim/ccbox.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sungurerdim/ccbox/issues"
+  },
+  "homepage": "https://github.com/sungurerdim/ccbox#readme",
+  "dependencies": {
+    "@inquirer/prompts": "^7.3.2",
+    "chalk": "^5.4.1",
+    "commander": "^13.1.0",
+    "execa": "^9.5.2",
+    "globby": "^14.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.1",
+    "typescript": "^5.7.3"
+  }
+}
