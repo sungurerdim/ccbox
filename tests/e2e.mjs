@@ -227,10 +227,10 @@ await testAsync("Run container with test project", async () => {
   const { code: imageCheck } = docker("image inspect ccbox/minimal");
   if (imageCheck !== 0) return "skip";
 
-  // Run a simple command in container
+  // Run a simple command in container (bypass entrypoint for direct testing)
   const containerName = `ccbox-e2e-test-${Date.now()}`;
   const { code, stdout } = docker(
-    `run --rm --name ${containerName} -v "${TEST_PROJECT}:/home/node/project" ccbox/minimal node -e "console.log('E2E_SUCCESS')"`
+    `run --rm --name ${containerName} --entrypoint node -v "${TEST_PROJECT}:/home/node/project" ccbox/minimal -e "console.log('E2E_SUCCESS')"`
   );
 
   return code === 0 && stdout.includes("E2E_SUCCESS");
@@ -243,7 +243,7 @@ await testAsync("Container has correct working directory", async () => {
   if (imageCheck !== 0) return "skip";
 
   const { code, stdout } = docker(
-    `run --rm -v "${TEST_PROJECT}:/home/node/project" ccbox/minimal pwd`
+    `run --rm --entrypoint pwd -w /home/node/project -v "${TEST_PROJECT}:/home/node/project" ccbox/minimal`
   );
 
   return code === 0 && stdout.trim() === "/home/node/project";
@@ -256,7 +256,7 @@ await testAsync("Container runs as non-root user", async () => {
   if (imageCheck !== 0) return "skip";
 
   const { code, stdout } = docker(
-    `run --rm ccbox/minimal whoami`
+    `run --rm --entrypoint whoami --user 1000:1000 ccbox/minimal`
   );
 
   return code === 0 && stdout.trim() === "node";
@@ -269,7 +269,7 @@ await testAsync("Container has Node.js available", async () => {
   if (imageCheck !== 0) return "skip";
 
   const { code, stdout } = docker(
-    `run --rm ccbox/minimal node --version`
+    `run --rm --entrypoint node ccbox/minimal --version`
   );
 
   return code === 0 && stdout.startsWith("v");
@@ -282,7 +282,7 @@ await testAsync("Container has Python available", async () => {
   if (imageCheck !== 0) return "skip";
 
   const { code, stdout } = docker(
-    `run --rm ccbox/minimal python3 --version`
+    `run --rm --entrypoint python3 ccbox/minimal --version`
   );
 
   return code === 0 && stdout.includes("Python");
@@ -299,7 +299,7 @@ await testAsync("Volume mount preserves file content", async () => {
   writeFileSync(join(TEST_PROJECT, "mount-test.txt"), testContent);
 
   const { code, stdout } = docker(
-    `run --rm -v "${TEST_PROJECT}:/home/node/project" ccbox/minimal cat /home/node/project/mount-test.txt`
+    `run --rm --entrypoint cat -v "${TEST_PROJECT}:/home/node/project" ccbox/minimal /home/node/project/mount-test.txt`
   );
 
   return code === 0 && stdout.trim() === testContent;
@@ -315,7 +315,7 @@ await testAsync("Container can write to mounted volume", async () => {
   const testContent = `written-${Date.now()}`;
 
   const { code } = docker(
-    `run --rm -v "${TEST_PROJECT}:/home/node/project" ccbox/minimal sh -c "echo '${testContent}' > /home/node/project/write-test.txt"`
+    `run --rm --entrypoint sh -v "${TEST_PROJECT}:/home/node/project" ccbox/minimal -c "echo '${testContent}' > /home/node/project/write-test.txt"`
   );
 
   if (code !== 0) return false;

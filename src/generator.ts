@@ -370,25 +370,23 @@ if [[ "$(id -u)" == "0" ]]; then
     echo "[ccbox:WARN] Continuing anyway, but file ownership may be incorrect." >&2
 fi
 
-# CCO plugin installation (skip for bare mode and minimal stack)
+# CCO plugin installation (skip for bare mode, minimal stack, and root user)
 if [[ -n "$CCBOX_BARE_MODE" ]]; then
     _log "Bare mode: vanilla Claude Code (no CCO)"
 elif [[ "$CCBOX_STACK" == "minimal" ]]; then
     _log "Minimal stack: vanilla Claude Code (no CCO)"
+elif [[ "$(id -u)" == "0" ]]; then
+    _log "Root user: skipping CCO plugin (Claude requires non-root)"
 else
     # Install/update CCO plugin (ensures latest commit each session)
     _log "Installing CCO plugin..."
 
-    # Marketplace: add if missing, update if exists
-    if claude plugin marketplace list 2>/dev/null | grep -q "cco"; then
-        claude plugin marketplace update cco 2>/dev/null || true
-    else
-        claude plugin marketplace add sungurerdim/ClaudeCodeOptimizer 2>/dev/null || true
-    fi
+    # Marketplace: add repo (idempotent - fails silently if exists)
+    claude plugin marketplace add sungurerdim/ClaudeCodeOptimizer &>/dev/null || true
 
     # Plugin: uninstall + reinstall (guarantees latest commit)
-    claude plugin uninstall cco 2>/dev/null || true
-    claude plugin install cco@cco 2>/dev/null || true
+    claude plugin uninstall cco &>/dev/null || true
+    claude plugin install cco@cco &>/dev/null || true
 
     _log "CCO plugin ready"
 fi
