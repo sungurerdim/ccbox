@@ -409,7 +409,7 @@ type DetectFn = (path: string, files: string[]) => DepsInfo | null;
 
 function detectPipPyproject(path: string, files: string[]): DepsInfo | null {
   const pyprojectPath = join(path, "pyproject.toml");
-  if (!existsSync(pyprojectPath)) return null;
+  if (!existsSync(pyprojectPath)) {return null;}
 
   const content = readFileSync(pyprojectPath, "utf-8");
 
@@ -444,7 +444,7 @@ function detectPipPyproject(path: string, files: string[]): DepsInfo | null {
 
 function detectPipRequirements(path: string, files: string[]): DepsInfo | null {
   const reqPath = join(path, "requirements.txt");
-  if (!existsSync(reqPath)) return null;
+  if (!existsSync(reqPath)) {return null;}
 
   const devFiles = [
     "requirements-dev.txt",
@@ -484,10 +484,10 @@ function detectPipSetup(path: string, files: string[]): DepsInfo | null {
   const setupPy = join(path, "setup.py");
   const setupCfg = join(path, "setup.cfg");
 
-  if (!existsSync(setupPy) && !existsSync(setupCfg)) return null;
+  if (!existsSync(setupPy) && !existsSync(setupCfg)) {return null;}
 
   // Skip if pyproject.toml exists
-  if (existsSync(join(path, "pyproject.toml"))) return null;
+  if (existsSync(join(path, "pyproject.toml"))) {return null;}
 
   const installScript =
     'python3 -c "' +
@@ -525,7 +525,7 @@ function detectCabal(path: string, _files: string[]): DepsInfo | null {
 
   if (cabalFiles.length > 0 || cabalProject) {
     const files = [...cabalFiles];
-    if (cabalProject) files.push("cabal.project");
+    if (cabalProject) {files.push("cabal.project");}
 
     return createDepsInfo(
       "cabal",
@@ -568,7 +568,7 @@ function detectOpam(path: string, _files: string[]): DepsInfo | null {
 
   if (opamFiles.length > 0 || duneProject) {
     const files = [...opamFiles];
-    if (duneProject) files.push("dune-project");
+    if (duneProject) {files.push("dune-project");}
 
     return createDepsInfo(
       "opam",
@@ -584,7 +584,7 @@ function detectOpam(path: string, _files: string[]): DepsInfo | null {
 
 function detectMake(path: string, files: string[]): DepsInfo | null {
   const makefilePath = join(path, "Makefile");
-  if (!existsSync(makefilePath)) return null;
+  if (!existsSync(makefilePath)) {return null;}
 
   const content = readFileSync(makefilePath, "utf-8");
   const targets = ["deps", "install", "dependencies", "setup"];
@@ -646,7 +646,7 @@ export function detectDependencies(path: string): DepsInfo[] {
       matchedFiles.push(...matchesPattern(path, pattern));
     }
 
-    if (matchedFiles.length === 0) continue;
+    if (matchedFiles.length === 0) {continue;}
 
     // Use custom detection function if provided
     if (pm.detectFn) {
@@ -662,7 +662,7 @@ export function detectDependencies(path: string): DepsInfo[] {
     }
 
     // Skip if we already detected this manager
-    if (detectedManagers.has(pm.name)) continue;
+    if (detectedManagers.has(pm.name)) {continue;}
 
     // Create DepsInfo from static config
     results.push(
@@ -691,7 +691,7 @@ export function detectDependencies(path: string): DepsInfo[] {
  * @returns List of shell commands to run.
  */
 export function getInstallCommands(depsList: DepsInfo[], mode: DepsMode): string[] {
-  if (mode === "skip") return [];
+  if (mode === "skip") {return [];}
 
   return depsList.map((deps) => (mode === "all" ? deps.installAll : deps.installProd));
 }

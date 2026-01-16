@@ -65,9 +65,9 @@ function determineStack(languages: string[]): LanguageStack {
   }
 
   // Single compiled language takes priority
-  if (hasGo) return LanguageStack.GO;
-  if (hasRust) return LanguageStack.RUST;
-  if (hasJava) return LanguageStack.JAVA;
+  if (hasGo) {return LanguageStack.GO;}
+  if (hasRust) {return LanguageStack.RUST;}
+  if (hasJava) {return LanguageStack.JAVA;}
 
   // Node + Python -> WEB (fullstack)
   if (hasNode && hasPython) {

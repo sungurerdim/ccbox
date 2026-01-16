@@ -387,19 +387,45 @@ else
     # Note: Container should be started with --user flag (ccbox CLI does this)
     _log "Installing CCO plugin..."
 
-    # Marketplace: add repo (may already exist)
-    if ! claude plugin marketplace add sungurerdim/ClaudeCodeOptimizer 2>&1; then
-        _log "Marketplace add skipped (may already exist)"
+    # Step 1: Uninstall existing plugin (only if installed)
+    if claude plugin list 2>/dev/null | grep -q "cco@ClaudeCodeOptimizer"; then
+        _log "Removing existing CCO plugin..."
+        claude plugin uninstall cco@ClaudeCodeOptimizer >/dev/null 2>&1 || true
     fi
 
-    # Plugin: uninstall existing (ignore if not installed)
-    claude plugin uninstall cco 2>&1 || _log "Plugin uninstall skipped (not installed)"
+    # Step 2: Remove marketplace (only if present)
+    if claude plugin marketplace list 2>/dev/null | grep -q "ClaudeCodeOptimizer"; then
+        _log "Removing existing marketplace..."
+        claude plugin marketplace remove ClaudeCodeOptimizer >/dev/null 2>&1 || true
+    fi
 
-    # Plugin: install latest
-    if claude plugin install cco@cco 2>&1; then
-        _log "CCO plugin installed successfully"
+    # Step 3: Add marketplace repo with full URL
+    _log "Adding CCO marketplace..."
+    if ! claude plugin marketplace add https://github.com/sungurerdim/ClaudeCodeOptimizer >/dev/null 2>&1; then
+        _log_verbose "Marketplace already exists or add failed, continuing..."
+    fi
+
+    # Step 4: Install plugin
+    _log "Installing CCO plugin..."
+    if claude plugin install cco@ClaudeCodeOptimizer >/dev/null 2>&1; then
+        _log "CCO plugin ready"
     else
         echo "[ccbox:WARN] CCO plugin installation failed" >&2
+    fi
+
+    # Step 5: Fix plugin paths for host compatibility
+    # Replace container paths (/home/node/.claude/) with portable paths (~/.claude/)
+    # This ensures plugins work on both container and host
+    PLUGIN_DIR="/home/node/.claude/plugins"
+    if [[ -d "$PLUGIN_DIR" ]]; then
+        for json_file in "$PLUGIN_DIR"/*.json; do
+            [[ -f "$json_file" ]] || continue
+            if grep -q '/home/node/.claude/' "$json_file" 2>/dev/null; then
+                sed -i 's|/home/node/.claude/|~/.claude/|g' "$json_file"
+                _log_verbose "Fixed paths in $(basename "$json_file")"
+            fi
+        done
+        _log "Plugin paths fixed for host compatibility"
     fi
 fi
 
@@ -781,12 +807,14 @@ export function getDockerRunCmd(
     cmd.push("-v", `${dockerClaudeConfig}:/home/node/.claude:rw`);
   }
 
-  // Mount ~/.claude.json for MCP config and OAuth tokens
+  // Mount ~/.claude.json for MCP config, OAuth tokens, and plugin data
+  // Create if not exists so plugin installations persist to host
   const claudeJsonPath = join(dirname(claudeConfig), ".claude.json");
-  if (existsSync(claudeJsonPath)) {
-    const dockerClaudeJson = resolveForDocker(claudeJsonPath);
-    cmd.push("-v", `${dockerClaudeJson}:/home/node/.claude.json:rw`);
+  if (!existsSync(claudeJsonPath)) {
+    writeFileSync(claudeJsonPath, "{}", { encoding: "utf-8" });
   }
+  const dockerClaudeJson = resolveForDocker(claudeJsonPath);
+  cmd.push("-v", `${dockerClaudeJson}:/home/node/.claude.json:rw`);
 
   // Add container configuration
   addTmpfsMounts(cmd, dirName);
