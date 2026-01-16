@@ -123,7 +123,14 @@ ENV PATH="/root/.local/bin:$PATH" PYTHONDONTWRITEBYTECODE=1
 // Claude Code + Node.js dev tools
 const NODE_TOOLS_BASE = `
 # Node.js dev tools (typescript, eslint, vitest) + Claude Code - latest versions
-RUN npm config set fund false && npm config set update-notifier false \\
+RUN npm config set fund false \\
+    && npm config set update-notifier false \\
+    && npm config set progress false \\
+    && npm config set audit false \\
+    && npm config set loglevel warn \\
+    && npm config set fetch-retries 5 \\
+    && npm config set fetch-retry-mintimeout 20000 \\
+    && npm config set prefer-offline true \\
     && npm install -g typescript eslint vitest @anthropic-ai/claude-code --force \\
     && npm cache clean --force
 `;
