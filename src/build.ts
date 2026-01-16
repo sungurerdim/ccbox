@@ -58,6 +58,7 @@ export async function buildImage(stack: LanguageStack): Promise<boolean> {
         "-f",
         join(buildDir, "Dockerfile"),
         "--no-cache",
+        "--pull",
         "--progress=auto",
         buildDir,
       ],
@@ -141,7 +142,7 @@ export async function buildProjectImage(
   try {
     await execa(
       "docker",
-      ["build", "-t", imageName, "-f", dockerfilePath, "--progress=auto", projectPath],
+      ["build", "-t", imageName, "-f", dockerfilePath, "--no-cache", "--pull", "--progress=auto", projectPath],
       {
         stdio: "inherit",
         env,

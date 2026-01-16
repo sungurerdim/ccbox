@@ -251,7 +251,7 @@ export async function buildImage(
   buildArgs: Record<string, string> = {},
   timeout = 600_000
 ): Promise<{ success: boolean; output: string }> {
-  const args = ["build", "-t", imageName];
+  const args = ["build", "-t", imageName, "--no-cache", "--pull"];
 
   for (const [key, value] of Object.entries(buildArgs)) {
     args.push("--build-arg", `${key}=${value}`);
