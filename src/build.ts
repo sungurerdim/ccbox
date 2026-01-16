@@ -171,7 +171,7 @@ export async function getInstalledCcboxImages(): Promise<Set<string>> {
       encoding: "utf8",
     } as ExecaOptions);
 
-    if (result.exitCode !== 0) return new Set();
+    if (result.exitCode !== 0) {return new Set();}
 
     const allImages = String(result.stdout ?? "").trim().split("\n");
     return new Set(allImages.filter((img: string) => img.startsWith("ccbox:")));

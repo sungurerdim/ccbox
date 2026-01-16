@@ -25,7 +25,7 @@ import {
  * Validate and normalize prompt parameter.
  */
 function validatePrompt(prompt: string | undefined): string | undefined {
-  if (!prompt) return undefined;
+  if (!prompt) {return undefined;}
   const trimmed = prompt.trim();
   if (!trimmed) {
     throw new ValidationError("--prompt cannot be empty or whitespace-only");
@@ -40,7 +40,7 @@ function validatePrompt(prompt: string | undefined): string | undefined {
  * Validate and normalize append-system-prompt parameter.
  */
 function validateSystemPrompt(prompt: string | undefined): string | undefined {
-  if (!prompt) return undefined;
+  if (!prompt) {return undefined;}
   const trimmed = prompt.trim();
   if (!trimmed) {
     throw new ValidationError("--append-system-prompt cannot be empty or whitespace-only");
@@ -196,7 +196,7 @@ program
         message: "Remove all ccbox containers and images?",
         default: false,
       });
-      if (!confirmed) return;
+      if (!confirmed) {return;}
     }
 
     console.log(chalk.dim("Removing containers..."));
@@ -208,8 +208,8 @@ program
     console.log(chalk.green("Cleanup complete"));
     if (containersRemoved || imagesRemoved) {
       const parts: string[] = [];
-      if (containersRemoved) parts.push(`${containersRemoved} container(s)`);
-      if (imagesRemoved) parts.push(`${imagesRemoved} image(s)`);
+      if (containersRemoved) {parts.push(`${containersRemoved} container(s)`);}
+      if (imagesRemoved) {parts.push(`${imagesRemoved} image(s)`);}
       console.log(chalk.dim(`Removed: ${parts.join(", ")}`));
     }
   });
@@ -264,9 +264,9 @@ program
     console.log();
     console.log(chalk.green("Deep clean complete"));
     const parts: string[] = [];
-    if (containersRemoved) parts.push(`${containersRemoved} container(s)`);
-    if (imagesRemoved) parts.push(`${imagesRemoved} image(s)`);
-    if (tmpdirRemoved) parts.push("temp files");
+    if (containersRemoved) {parts.push(`${containersRemoved} container(s)`);}
+    if (imagesRemoved) {parts.push(`${imagesRemoved} image(s)`);}
+    if (tmpdirRemoved) {parts.push("temp files");}
     if (parts.length > 0) {
       console.log(chalk.dim(`Removed: ${parts.join(", ")}`));
     } else {

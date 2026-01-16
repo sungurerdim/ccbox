@@ -62,9 +62,9 @@ export async function promptDeps(depsList: DepsInfo[]): Promise<DepsMode> {
     while (true) {
       const choice = await input({ message: "Select [1-3]", default: "1" });
       const validated = validateDepsChoice(choice, 3);
-      if (validated === 1) return "all";
-      if (validated === 2) return "prod";
-      if (validated === 3) return "skip";
+      if (validated === 1) {return "all";}
+      if (validated === 2) {return "prod";}
+      if (validated === 3) {return "skip";}
       console.log(chalk.red("Invalid choice. Try again."));
     }
   } else {

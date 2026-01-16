@@ -33,7 +33,7 @@ async function startDockerDesktop(): Promise<boolean> {
         reject: false,
       } as ExecaOptions);
 
-      if (result.exitCode === 0) return true;
+      if (result.exitCode === 0) {return true;}
     } catch {
       // Fall through
     }

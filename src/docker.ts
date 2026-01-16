@@ -54,7 +54,7 @@ export async function safeDockerRun(
       stderr: String(result.stderr ?? ""),
     };
   } catch (error) {
-    if (error instanceof DockerError) throw error;
+    if (error instanceof DockerError) {throw error;}
 
     const err = error as NodeJS.ErrnoException & { timedOut?: boolean };
 
@@ -95,7 +95,7 @@ export async function checkDockerStatus(): Promise<boolean> {
 export async function getImageIds(imageFilter: string): Promise<Set<string>> {
   try {
     const result = await safeDockerRun(["images", "--format", "{{.ID}}", imageFilter]);
-    if (result.exitCode !== 0) return new Set();
+    if (result.exitCode !== 0) {return new Set();}
 
     const ids = new Set(result.stdout.trim().split("\n").filter(Boolean));
     return ids;
@@ -112,7 +112,7 @@ export async function getImageIds(imageFilter: string): Promise<Set<string>> {
 export async function getDanglingImageIds(): Promise<string[]> {
   try {
     const result = await safeDockerRun(["images", "-f", "dangling=true", "-q"]);
-    if (result.exitCode !== 0 || !result.stdout.trim()) return [];
+    if (result.exitCode !== 0 || !result.stdout.trim()) {return [];}
     return result.stdout.trim().split("\n").filter(Boolean);
   } catch {
     return [];
@@ -129,12 +129,12 @@ export async function getDanglingImageIds(): Promise<string[]> {
 export async function imageHasParent(imageId: string, parentIds: Set<string>): Promise<boolean> {
   try {
     const result = await safeDockerRun(["history", "--no-trunc", "-q", imageId]);
-    if (result.exitCode !== 0) return false;
+    if (result.exitCode !== 0) {return false;}
 
     const historyIds = new Set(result.stdout.trim().split("\n"));
     // Check intersection
     for (const id of historyIds) {
-      if (parentIds.has(id)) return true;
+      if (parentIds.has(id)) {return true;}
     }
     return false;
   } catch {
@@ -152,7 +152,7 @@ export async function imageHasParent(imageId: string, parentIds: Set<string>): P
 export async function removeImage(imageId: string, force = true): Promise<boolean> {
   try {
     const args = ["rmi"];
-    if (force) args.push("-f");
+    if (force) {args.push("-f");}
     args.push(imageId);
 
     const result = await safeDockerRun(args);
@@ -172,7 +172,7 @@ export async function removeImage(imageId: string, force = true): Promise<boolea
 export async function removeContainer(containerName: string, force = true): Promise<boolean> {
   try {
     const args = ["rm"];
-    if (force) args.push("-f");
+    if (force) {args.push("-f");}
     args.push(containerName);
 
     const result = await safeDockerRun(args);
@@ -207,7 +207,7 @@ export async function listContainers(options: {
     }
 
     const result = await safeDockerRun(args);
-    if (result.exitCode !== 0) return [];
+    if (result.exitCode !== 0) {return [];}
 
     return result.stdout.trim().split("\n").filter(Boolean);
   } catch {
@@ -224,7 +224,7 @@ export async function listContainers(options: {
 export async function listImages(prefix?: string): Promise<string[]> {
   try {
     const result = await safeDockerRun(["images", "--format", "{{.Repository}}:{{.Tag}}"]);
-    if (result.exitCode !== 0) return [];
+    if (result.exitCode !== 0) {return [];}
 
     const images = result.stdout.trim().split("\n").filter(Boolean);
     if (prefix) {

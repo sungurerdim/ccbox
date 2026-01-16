@@ -30,10 +30,10 @@ import { getDockerEnv } from "./paths.js";
  */
 export async function cleanupCcboxDanglingImages(): Promise<number> {
   const ccboxIds = await getImageIds("ccbox");
-  if (ccboxIds.size === 0) return 0;
+  if (ccboxIds.size === 0) {return 0;}
 
   const danglingIds = await getDanglingImageIds();
-  if (danglingIds.length === 0) return 0;
+  if (danglingIds.length === 0) {return 0;}
 
   let removed = 0;
   for (const imageId of danglingIds) {
