@@ -265,7 +265,7 @@ test("parseStack returns undefined for invalid", () =>
 // getStackValues
 test("getStackValues returns all stacks", () => {
   const values = getStackValues();
-  return values.length === 7 && values.includes("base") && values.includes("full");
+  return values.length === 8 && values.includes("base") && values.includes("full");
 });
 
 // ════════════════════════════════════════════════════════════════════════════════
