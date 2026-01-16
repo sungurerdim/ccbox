@@ -14,12 +14,17 @@
 import { execSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir, homedir } from "node:os";
+import { tmpdir, homedir, platform } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
+
+// Get host UID:GID for --user flag (same logic as generator.ts)
+const HOST_UID = platform() === "win32" ? 1000 : (process.getuid?.() ?? 1000);
+const HOST_GID = platform() === "win32" ? 1000 : (process.getgid?.() ?? 1000);
+const DOCKER_USER = `${HOST_UID}:${HOST_GID}`;
 
 // Colors
 const G = "\x1b[32m", R = "\x1b[31m", Y = "\x1b[33m", B = "\x1b[1m", D = "\x1b[2m", X = "\x1b[0m";
@@ -230,7 +235,7 @@ await testAsync("Run container with test project", async () => {
   // Run a simple command in container (bypass entrypoint for direct testing)
   const containerName = `ccbox-e2e-test-${Date.now()}`;
   const { code, stdout } = docker(
-    `run --rm --name ${containerName} --user 1000:1000 --entrypoint node -v "${TEST_PROJECT}:/home/node/project" ccbox/minimal -e "console.log('E2E_SUCCESS')"`
+    `run --rm --name ${containerName} --user ${DOCKER_USER} --entrypoint node -v "${TEST_PROJECT}:/home/node/project" ccbox/minimal -e "console.log('E2E_SUCCESS')"`
   );
 
   return code === 0 && stdout.includes("E2E_SUCCESS");
@@ -243,7 +248,7 @@ await testAsync("Container has correct working directory", async () => {
   if (imageCheck !== 0) return "skip";
 
   const { code, stdout } = docker(
-    `run --rm --user 1000:1000 --entrypoint pwd -w /home/node/project -v "${TEST_PROJECT}:/home/node/project" ccbox/minimal`
+    `run --rm --user ${DOCKER_USER} --entrypoint pwd -w /home/node/project -v "${TEST_PROJECT}:/home/node/project" ccbox/minimal`
   );
 
   return code === 0 && stdout.trim() === "/home/node/project";
@@ -256,7 +261,7 @@ await testAsync("Container runs as non-root user", async () => {
   if (imageCheck !== 0) return "skip";
 
   const { code, stdout } = docker(
-    `run --rm --entrypoint whoami --user 1000:1000 ccbox/minimal`
+    `run --rm --entrypoint whoami --user ${DOCKER_USER} ccbox/minimal`
   );
 
   return code === 0 && stdout.trim() === "node";
@@ -269,7 +274,7 @@ await testAsync("Container has Node.js available", async () => {
   if (imageCheck !== 0) return "skip";
 
   const { code, stdout } = docker(
-    `run --rm --user 1000:1000 --entrypoint node ccbox/minimal --version`
+    `run --rm --user ${DOCKER_USER} --entrypoint node ccbox/minimal --version`
   );
 
   return code === 0 && stdout.startsWith("v");
@@ -282,7 +287,7 @@ await testAsync("Container has Python available", async () => {
   if (imageCheck !== 0) return "skip";
 
   const { code, stdout } = docker(
-    `run --rm --user 1000:1000 --entrypoint python3 ccbox/minimal --version`
+    `run --rm --user ${DOCKER_USER} --entrypoint python3 ccbox/minimal --version`
   );
 
   return code === 0 && stdout.includes("Python");
@@ -299,7 +304,7 @@ await testAsync("Volume mount preserves file content", async () => {
   writeFileSync(join(TEST_PROJECT, "mount-test.txt"), testContent);
 
   const { code, stdout } = docker(
-    `run --rm --user 1000:1000 --entrypoint cat -v "${TEST_PROJECT}:/home/node/project" ccbox/minimal /home/node/project/mount-test.txt`
+    `run --rm --user ${DOCKER_USER} --entrypoint cat -v "${TEST_PROJECT}:/home/node/project" ccbox/minimal /home/node/project/mount-test.txt`
   );
 
   return code === 0 && stdout.trim() === testContent;
@@ -315,7 +320,7 @@ await testAsync("Container can write to mounted volume", async () => {
   const testContent = `written-${Date.now()}`;
 
   const { code } = docker(
-    `run --rm --user 1000:1000 --entrypoint sh -v "${TEST_PROJECT}:/home/node/project" ccbox/minimal -c "echo '${testContent}' > /home/node/project/write-test.txt"`
+    `run --rm --user ${DOCKER_USER} --entrypoint sh -v "${TEST_PROJECT}:/home/node/project" ccbox/minimal -c "echo '${testContent}' > /home/node/project/write-test.txt"`
   );
 
   if (code !== 0) return false;
