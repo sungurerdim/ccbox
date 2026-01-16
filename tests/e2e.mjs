@@ -260,11 +260,14 @@ await testAsync("Container runs as non-root user", async () => {
   const { code: imageCheck } = docker("image inspect ccbox/minimal");
   if (imageCheck !== 0) return "skip";
 
+  // Use 'id -u' instead of 'whoami' - whoami fails if UID not in /etc/passwd
   const { code, stdout } = docker(
-    `run --rm --entrypoint whoami --user ${DOCKER_USER} ccbox/minimal`
+    `run --rm --user ${DOCKER_USER} --entrypoint id ccbox/minimal -u`
   );
 
-  return code === 0 && stdout.trim() === "node";
+  // Verify UID matches and is not root (0)
+  const uid = parseInt(stdout.trim(), 10);
+  return code === 0 && uid === HOST_UID && uid !== 0;
 });
 
 await testAsync("Container has Node.js available", async () => {
@@ -331,6 +334,25 @@ await testAsync("Container can write to mounted volume", async () => {
   return content === testContent;
 });
 
+await testAsync("Containers are removed after run (--rm flag)", async () => {
+  if (!DOCKER_AVAILABLE) return "skip";
+
+  const { code: imageCheck } = docker("image inspect ccbox/minimal");
+  if (imageCheck !== 0) return "skip";
+
+  // Run a container with --rm flag
+  const containerName = `ccbox-cleanup-test-${Date.now()}`;
+  const { code: runCode } = docker(
+    `run --rm --name ${containerName} --user ${DOCKER_USER} --entrypoint echo ccbox/minimal test`
+  );
+
+  if (runCode !== 0) return false;
+
+  // Check container doesn't exist (--rm should have removed it)
+  const { code } = docker(`container inspect ${containerName}`);
+  return code !== 0; // Should fail because container was removed
+});
+
 // ════════════════════════════════════════════════════════════════════════════════
 // E2E Tests: Cleanup Operations
 // ════════════════════════════════════════════════════════════════════════════════
@@ -349,21 +371,6 @@ test("prune command runs without error", () => {
 
   const { code } = cli("prune -f");
   return code === 0;
-});
-
-await testAsync("Containers are removed after run", async () => {
-  if (!DOCKER_AVAILABLE) return "skip";
-
-  const { code: imageCheck } = docker("image inspect ccbox/minimal");
-  if (imageCheck !== 0) return "skip";
-
-  // Run a container
-  const containerName = `ccbox-cleanup-test-${Date.now()}`;
-  docker(`run --rm --name ${containerName} ccbox/minimal echo test`);
-
-  // Check container doesn't exist (--rm should have removed it)
-  const { code } = docker(`container inspect ${containerName}`);
-  return code !== 0; // Should fail because container was removed
 });
 
 // ════════════════════════════════════════════════════════════════════════════════
