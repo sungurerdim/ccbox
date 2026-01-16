@@ -102,7 +102,6 @@ async function executeContainer(
     projectImage?: string;
     depsList?: DepsInfo[];
     unrestricted?: boolean;
-    ephemeralTmp?: boolean;
   } = {}
 ): Promise<void> {
   const {
@@ -116,7 +115,6 @@ async function executeContainer(
     projectImage,
     depsList,
     unrestricted = false,
-    ephemeralTmp = false,
   } = options;
 
   console.log(chalk.dim("Starting Claude Code..."));
@@ -133,7 +131,6 @@ async function executeContainer(
     projectImage,
     depsList,
     unrestricted,
-    ephemeralTmp,
   });
 
   // Stream mode (-dd): close stdin for watch-only (no user input)
@@ -179,7 +176,6 @@ async function tryRunExistingImage(
     quiet?: boolean;
     appendSystemPrompt?: string;
     unrestricted?: boolean;
-    ephemeralTmp?: boolean;
   } = {}
 ): Promise<boolean> {
   if (!(await projectImageExists(projectName, stack))) {
@@ -228,7 +224,6 @@ async function buildAndRun(
     quiet?: boolean;
     appendSystemPrompt?: string;
     unrestricted?: boolean;
-    ephemeralTmp?: boolean;
   } = {}
 ): Promise<void> {
   console.log();
@@ -294,7 +289,6 @@ export async function run(
     unattended?: boolean;
     prune?: boolean;
     unrestricted?: boolean;
-    ephemeralTmp?: boolean;
   } = {}
 ): Promise<void> {
   const {
@@ -309,7 +303,6 @@ export async function run(
     unattended = false,
     prune = true,
     unrestricted = false,
-    ephemeralTmp = false,
   } = options;
 
   if (!(await checkDocker())) {
@@ -348,7 +341,6 @@ export async function run(
       quiet,
       appendSystemPrompt,
       unrestricted,
-      ephemeralTmp,
     })
   ) {
     return;
@@ -396,6 +388,5 @@ export async function run(
     quiet,
     appendSystemPrompt,
     unrestricted,
-    ephemeralTmp,
   });
 }

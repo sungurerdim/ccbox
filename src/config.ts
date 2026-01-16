@@ -19,40 +19,41 @@ import { DOCKER_COMMAND_TIMEOUT } from "./constants.js";
 /**
  * Supported language stacks for Docker images.
  *
- * Hierarchy: minimal (no CCO) -> base (+ CCO) -> web/full (+ extras)
- * Standalone: go, rust, java (own base images + CCO)
- *
- * Note: CCO is installed via Claude Code plugin system (not pip).
+ * Hierarchy: minimal -> base -> python/web/full (+ extras)
+ * Standalone: go, rust, java (own base images)
  */
 export enum LanguageStack {
-  MINIMAL = "minimal", // Node + Python + tools (no CCO) (~350MB)
-  BASE = "base", // minimal + CCO (default) (~360MB)
-  GO = "go", // Go + Node + Python + CCO (~710MB)
-  RUST = "rust", // Rust + Node + Python + CCO (~860MB)
-  JAVA = "java", // JDK (Temurin LTS) + Maven + CCO (~960MB)
-  WEB = "web", // base + pnpm (fullstack) (~410MB)
-  FULL = "full", // base + Go + Rust + Java (~1.3GB)
+  MINIMAL = "minimal", // Node.js + Claude Code (~300MB)
+  BASE = "base", // minimal alias (default) (~300MB)
+  PYTHON = "python", // base + ruff, mypy, pytest, uv (~400MB)
+  GO = "go", // Go + Node.js + golangci-lint (~650MB)
+  RUST = "rust", // Rust + Node.js + clippy (~800MB)
+  JAVA = "java", // JDK (Temurin LTS) + Maven (~900MB)
+  WEB = "web", // base + pnpm (~350MB)
+  FULL = "full", // base + Go + Rust + Java + pnpm (~1.3GB)
 }
 
 /** Stack descriptions for CLI help (sizes are estimates) */
 export const STACK_INFO: Record<LanguageStack, { description: string; sizeMB: number }> = {
-  [LanguageStack.MINIMAL]: { description: "Node + Python + tools (no CCO)", sizeMB: 350 },
-  [LanguageStack.BASE]: { description: "minimal + CCO (default)", sizeMB: 360 },
-  [LanguageStack.GO]: { description: "Go + Node + Python + CCO", sizeMB: 710 },
-  [LanguageStack.RUST]: { description: "Rust + Node + Python + CCO", sizeMB: 860 },
-  [LanguageStack.JAVA]: { description: "JDK (Temurin) + Maven + CCO", sizeMB: 960 },
-  [LanguageStack.WEB]: { description: "base + pnpm (fullstack)", sizeMB: 410 },
-  [LanguageStack.FULL]: { description: "base + Go + Rust + Java", sizeMB: 1300 },
+  [LanguageStack.MINIMAL]: { description: "Node.js + Claude Code", sizeMB: 300 },
+  [LanguageStack.BASE]: { description: "minimal alias (default)", sizeMB: 300 },
+  [LanguageStack.PYTHON]: { description: "base + ruff, mypy, pytest, uv", sizeMB: 400 },
+  [LanguageStack.GO]: { description: "Go + Node.js + golangci-lint", sizeMB: 650 },
+  [LanguageStack.RUST]: { description: "Rust + Node.js + clippy", sizeMB: 800 },
+  [LanguageStack.JAVA]: { description: "JDK (Temurin) + Maven", sizeMB: 900 },
+  [LanguageStack.WEB]: { description: "base + pnpm", sizeMB: 350 },
+  [LanguageStack.FULL]: { description: "base + Go + Rust + Java + pnpm", sizeMB: 1300 },
 };
 
 /**
  * Stack dependencies: which stack must be built first.
- * Hierarchy: minimal -> base -> web/full
+ * Hierarchy: minimal -> base -> python/web/full
  * GO, RUST, JAVA use their own base images (golang:latest, rust:latest, etc.)
  */
 export const STACK_DEPENDENCIES: Record<LanguageStack, LanguageStack | null> = {
   [LanguageStack.MINIMAL]: null,
   [LanguageStack.BASE]: LanguageStack.MINIMAL,
+  [LanguageStack.PYTHON]: LanguageStack.BASE,
   [LanguageStack.GO]: null,
   [LanguageStack.RUST]: null,
   [LanguageStack.JAVA]: null,

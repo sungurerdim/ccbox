@@ -98,7 +98,6 @@ program
   .option("--append-system-prompt <prompt>", "Append custom instructions to Claude's system prompt")
   .option("--no-prune", "Skip automatic cleanup of stale Docker resources")
   .option("-U, --unrestricted", "Remove CPU/priority limits (use full system resources)")
-  .option("--ephemeral-tmp", "Delete build temp (.ccbox-tmp/) on container exit")
   .action(async (options) => {
     // Change directory if --chdir/-C specified (like git -C)
     if (options.chdir) {
@@ -140,7 +139,6 @@ program
       unattended: options.yes,
       prune: options.prune !== false,
       unrestricted: options.unrestricted,
-      ephemeralTmp: options.ephemeralTmp,
     });
   });
 
@@ -293,7 +291,7 @@ program
     console.log();
     console.log(chalk.dim("Usage: ccbox --stack=go"));
     console.log(chalk.dim("All stacks include: Python + Node.js + lint/test tools"));
-    console.log(chalk.dim("All except 'minimal' include CCO (via plugin system)"));
+    console.log(chalk.dim("All except 'minimal' include CCO plugin (installed at runtime)"));
   });
 
 // Parse and run

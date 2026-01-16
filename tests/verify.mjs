@@ -153,12 +153,12 @@ test("DEFAULT_PIDS_LIMIT = 2048", () => constants.DEFAULT_PIDS_LIMIT === 2048);
 // ════════════════════════════════════════════════════════════════════════════════
 console.log(`\n${B}[3/9] config.ts${X}`);
 
-const { LanguageStack, STACK_INFO, STACK_DEPENDENCIES, CCO_ENABLED_STACKS,
+const { LanguageStack, STACK_INFO, STACK_DEPENDENCIES,
         createConfig, validateSafePath, getClaudeConfigDir, getImageName,
         getContainerName, parseStack, getStackValues } = await import(join(ROOT, "dist/config.js"));
 
 // LanguageStack enum
-test("LanguageStack has 7 values", () => Object.values(LanguageStack).length === 7);
+test("LanguageStack has 8 values", () => Object.values(LanguageStack).length === 8);
 test("LanguageStack.MINIMAL = minimal", () => LanguageStack.MINIMAL === "minimal");
 test("LanguageStack.BASE = base", () => LanguageStack.BASE === "base");
 test("LanguageStack.GO = go", () => LanguageStack.GO === "go");
@@ -174,8 +174,8 @@ test("STACK_INFO has descriptions", () =>
   Object.values(STACK_INFO).every(s => s.description && s.description.length > 0));
 test("STACK_INFO has valid sizes", () =>
   Object.values(STACK_INFO).every(s => s.sizeMB > 0));
-test("STACK_INFO.minimal.sizeMB = 400", () => STACK_INFO.minimal.sizeMB === 400);
-test("STACK_INFO.full.sizeMB = 1350", () => STACK_INFO.full.sizeMB === 1350);
+test("STACK_INFO.minimal.sizeMB = 300", () => STACK_INFO.minimal.sizeMB === 300);
+test("STACK_INFO.full.sizeMB = 1300", () => STACK_INFO.full.sizeMB === 1300);
 
 // STACK_DEPENDENCIES
 test("STACK_DEPENDENCIES has all stacks", () =>
@@ -184,13 +184,6 @@ test("STACK_DEPENDENCIES.minimal = null", () => STACK_DEPENDENCIES.minimal === n
 test("STACK_DEPENDENCIES.base = minimal", () => STACK_DEPENDENCIES.base === LanguageStack.MINIMAL);
 test("STACK_DEPENDENCIES.web = base", () => STACK_DEPENDENCIES.web === LanguageStack.BASE);
 test("STACK_DEPENDENCIES.go = null", () => STACK_DEPENDENCIES.go === null);
-
-// CCO_ENABLED_STACKS
-test("CCO_ENABLED_STACKS is Set", () => CCO_ENABLED_STACKS instanceof Set);
-test("CCO_ENABLED_STACKS excludes minimal", () => !CCO_ENABLED_STACKS.has(LanguageStack.MINIMAL));
-test("CCO_ENABLED_STACKS includes base", () => CCO_ENABLED_STACKS.has(LanguageStack.BASE));
-test("CCO_ENABLED_STACKS includes all except minimal", () =>
-  CCO_ENABLED_STACKS.size === 6);
 
 // createConfig
 test("createConfig returns valid config", () => {

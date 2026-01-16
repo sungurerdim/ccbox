@@ -11,6 +11,11 @@ import { existsSync, mkdirSync, readFileSync, readlinkSync, writeFileSync } from
 import { platform, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { env } from "node:process";
+import { fileURLToPath } from "node:url";
+
+// ES module equivalent of __dirname
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 import type { Config } from "./config.js";
 import { getClaudeConfigDir, getContainerName, getImageName, LanguageStack } from "./config.js";
@@ -25,18 +30,11 @@ const CONTAINER_CONSTRAINTS = {
   pidsLimit: DEFAULT_PIDS_LIMIT,         // from constants.ts
   capDrop: "ALL",                        // Linux capabilities
   ephemeralPaths: ["/tmp", "/var/tmp", "~/.npm", "~/.cache"],
-  buildTmpDir: ".ccbox-tmp",             // Build temp dir inside project (exec allowed)
 } as const;
 
 /** Generate container awareness prompt with current constraints. */
 function buildContainerAwarenessPrompt(persistentPaths: string): string {
-  const { tmpOptions, pidsLimit, capDrop, ephemeralPaths, buildTmpDir } = CONTAINER_CONSTRAINTS;
-
-  // Extract noexec info from tmpOptions
-  const hasNoexec = tmpOptions.includes("noexec");
-  const noexecNote = hasNoexec
-    ? `- /tmp has noexec: use $TMPDIR (points to ${buildTmpDir}/) for build artifacts`
-    : "- /tmp allows execution";
+  const { pidsLimit, capDrop, ephemeralPaths } = CONTAINER_CONSTRAINTS;
 
   return `
 You are running inside a ccbox Docker container with an isolated filesystem.
@@ -47,20 +45,21 @@ PERSISTENT directories (mounted from host, survive container exit):
 EPHEMERAL (DELETED on exit): ${ephemeralPaths.join(", ")}, and everything else
 
 Container constraints:
-${noexecNote}
-- Build tools auto-redirect to ${buildTmpDir}/ via TMPDIR (exec allowed, persistent)
+- /tmp has noexec, but $TMPDIR points to ~/.cache/tmp (exec allowed)
 - Process limit: ${pidsLimit} PIDs max (avoid excessive parallelism)
 - Capabilities dropped: ${capDrop} (no Docker-in-docker)
 
 Best practices:
 - Run builds normally: npm install, pip install, go build, cargo build all work
 - node_modules/, venv/, target/ persist in project directory
-- ${buildTmpDir}/ is gitignored by convention (add to .gitignore if needed)
 `.trim();
 }
 
 // Common system packages (minimal - matches original)
 const COMMON_TOOLS = `
+# Ensure node user exists (idempotent - node:lts-slim has it, others don't)
+RUN id -u node &>/dev/null || useradd -m -s /bin/bash -u 1000 node
+
 # System packages (minimal but complete)
 RUN apt-get update && apt-get install -y --no-install-recommends \\
     git curl ca-certificates bash \\
@@ -129,15 +128,6 @@ RUN npm config set fund false && npm config set update-notifier false \\
     && npm cache clean --force
 `;
 
-// CCO plugin installation via Claude Code plugin system
-// Use --print for non-interactive execution during Docker build
-// --dangerously-skip-permissions required since no user confirmation is possible
-const CCO_PLUGIN_INSTALL = `
-# Install CCO via Claude Code plugin system (no pip required)
-# --print enables non-interactive mode, slash commands passed as prompts
-RUN claude --print --dangerously-skip-permissions "/plugin marketplace add sungurerdim/ClaudeCodeOptimizer" \\
-    && claude --print --dangerously-skip-permissions "/plugin install cco"
-`;
 
 // Entrypoint setup
 const ENTRYPOINT_SETUP = `
@@ -154,7 +144,7 @@ ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 // Dockerfile generators for each stack
 function minimalDockerfile(): string {
   return `# syntax=docker/dockerfile:1
-# ccbox/minimal - Node.js + Python (no CCO)
+# ccbox/minimal - Node.js + Claude Code (no Python dev tools)
 FROM node:lts-slim
 
 LABEL org.opencontainers.image.title="ccbox/minimal"
@@ -165,25 +155,34 @@ ENV TZ="\${TZ}"
 
 ENV DEBIAN_FRONTEND=noninteractive
 ${COMMON_TOOLS}
-${PYTHON_TOOLS_BASE}
 ${NODE_TOOLS_BASE}
 ${ENTRYPOINT_SETUP}
 `;
 }
 
 function baseDockerfile(): string {
+  // base is now same as minimal (CCO installation requires manual setup)
   return `# syntax=docker/dockerfile:1
-# ccbox/base - default stack with CCO
+# ccbox/base - default stack (alias for minimal)
 FROM ccbox/minimal
 
 LABEL org.opencontainers.image.title="ccbox/base"
-${CCO_PLUGIN_INSTALL}
+`;
+}
+
+function pythonDockerfile(): string {
+  return `# syntax=docker/dockerfile:1
+# ccbox/python - Python dev tools (ruff, mypy, pytest, uv)
+FROM ccbox/base
+
+LABEL org.opencontainers.image.title="ccbox/python"
+${PYTHON_TOOLS_BASE}
 `;
 }
 
 function goDockerfile(): string {
   return `# syntax=docker/dockerfile:1
-# ccbox/go - Go + Node.js + Python + CCO
+# ccbox/go - Go + Node.js + golangci-lint
 FROM golang:latest
 
 LABEL org.opencontainers.image.title="ccbox/go"
@@ -194,9 +193,7 @@ ENV TZ="\${TZ}"
 
 ENV DEBIAN_FRONTEND=noninteractive
 ${NODE_INSTALL}${COMMON_TOOLS}
-${PYTHON_TOOLS_BASE}
 ${NODE_TOOLS_BASE}
-${CCO_PLUGIN_INSTALL}
 # golangci-lint (latest)
 RUN curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b /usr/local/bin
 ${ENTRYPOINT_SETUP}
@@ -205,7 +202,7 @@ ${ENTRYPOINT_SETUP}
 
 function rustDockerfile(): string {
   return `# syntax=docker/dockerfile:1
-# ccbox/rust - Rust + Node.js + Python + CCO
+# ccbox/rust - Rust + Node.js + clippy + rustfmt
 FROM rust:latest
 
 LABEL org.opencontainers.image.title="ccbox/rust"
@@ -216,9 +213,7 @@ ENV TZ="\${TZ}"
 
 ENV DEBIAN_FRONTEND=noninteractive
 ${NODE_INSTALL}${COMMON_TOOLS}
-${PYTHON_TOOLS_BASE}
 ${NODE_TOOLS_BASE}
-${CCO_PLUGIN_INSTALL}
 # Rust tools (clippy + rustfmt)
 RUN rustup component add clippy rustfmt
 ${ENTRYPOINT_SETUP}
@@ -227,7 +222,7 @@ ${ENTRYPOINT_SETUP}
 
 function javaDockerfile(): string {
   return `# syntax=docker/dockerfile:1
-# ccbox/java - Java (Temurin LTS) + Node.js + Python + CCO
+# ccbox/java - Java (Temurin LTS) + Node.js + Maven
 FROM eclipse-temurin:latest
 
 LABEL org.opencontainers.image.title="ccbox/java"
@@ -238,9 +233,7 @@ ENV TZ="\${TZ}"
 
 ENV DEBIAN_FRONTEND=noninteractive
 ${NODE_INSTALL}${COMMON_TOOLS}
-${PYTHON_TOOLS_BASE}
 ${NODE_TOOLS_BASE}
-${CCO_PLUGIN_INSTALL}
 # Maven (latest from Apache)
 RUN set -eux; \\
     MVN_VER=$(curl -sfL https://api.github.com/repos/apache/maven/releases/latest | jq -r .tag_name | sed 's/maven-//'); \\
@@ -252,8 +245,7 @@ ${ENTRYPOINT_SETUP}
 
 function webDockerfile(): string {
   return `# syntax=docker/dockerfile:1
-# ccbox/web - Node.js + pnpm + Python (fullstack)
-# Layered on ccbox/base for efficient caching
+# ccbox/web - Node.js + pnpm (fullstack)
 FROM ccbox/base
 
 LABEL org.opencontainers.image.title="ccbox/web"
@@ -311,6 +303,7 @@ USER node
 const DOCKERFILE_GENERATORS: Record<LanguageStack, () => string> = {
   [LanguageStack.MINIMAL]: minimalDockerfile,
   [LanguageStack.BASE]: baseDockerfile,
+  [LanguageStack.PYTHON]: pythonDockerfile,
   [LanguageStack.GO]: goDockerfile,
   [LanguageStack.RUST]: rustDockerfile,
   [LanguageStack.JAVA]: javaDockerfile,
@@ -377,10 +370,27 @@ if [[ "$(id -u)" == "0" ]]; then
     echo "[ccbox:WARN] Continuing anyway, but file ownership may be incorrect." >&2
 fi
 
-# CCO files are installed during 'ccbox build' (not at runtime)
-# This keeps container startup fast and predictable
+# CCO plugin installation (skip for bare mode and minimal stack)
 if [[ -n "$CCBOX_BARE_MODE" ]]; then
     _log "Bare mode: vanilla Claude Code (no CCO)"
+elif [[ "$CCBOX_STACK" == "minimal" ]]; then
+    _log "Minimal stack: vanilla Claude Code (no CCO)"
+else
+    # Install/update CCO plugin (ensures latest commit each session)
+    _log "Installing CCO plugin..."
+
+    # Marketplace: add if missing, update if exists
+    if claude plugin marketplace list 2>/dev/null | grep -q "cco"; then
+        claude plugin marketplace update cco 2>/dev/null || true
+    else
+        claude plugin marketplace add sungurerdim/ClaudeCodeOptimizer 2>/dev/null || true
+    fi
+
+    # Plugin: uninstall + reinstall (guarantees latest commit)
+    claude plugin uninstall cco 2>/dev/null || true
+    claude plugin install cco@cco 2>/dev/null || true
+
+    _log "CCO plugin ready"
 fi
 
 # Project .claude is mounted directly from host (persistent)
@@ -412,16 +422,10 @@ git config --global fetch.writeCommitGraph true 2>/dev/null || true
 git config --global gc.auto 0 2>/dev/null || true
 git config --global credential.helper 'cache --timeout=86400' 2>/dev/null || true
 
-# Create build temp directory if TMPDIR is set to project-local path
-# This allows build tools to use exec (unlike /tmp which has noexec)
-if [[ -n "$TMPDIR" && "$TMPDIR" == *".ccbox-tmp"* ]]; then
-    mkdir -p "$TMPDIR" 2>/dev/null || true
-    mkdir -p "$TMPDIR/.gradle" 2>/dev/null || true  # Gradle home
-    _log_verbose "Build temp directory: $TMPDIR"
-    if [[ -n "$CCBOX_EPHEMERAL_TMP" ]]; then
-        _log_verbose "Ephemeral mode: $TMPDIR will be deleted on exit"
-    fi
-fi
+# Create temp directory in cache (exec allowed, ephemeral tmpfs)
+mkdir -p /home/node/.cache/tmp 2>/dev/null || true
+mkdir -p /home/node/.cache/tmp/.gradle 2>/dev/null || true  # Gradle home
+_log_verbose "TMPDIR: /home/node/.cache/tmp"
 
 # Verify claude command exists
 if ! command -v claude &>/dev/null; then
@@ -445,36 +449,12 @@ else
     _log_verbose "Unrestricted mode: no resource limits"
 fi
 
-# Cleanup function for ephemeral tmp mode
-_cleanup_tmp() {
-    if [[ -n "$CCBOX_EPHEMERAL_TMP" && -n "$TMPDIR" && "$TMPDIR" == *".ccbox-tmp"* ]]; then
-        _log_verbose "Cleaning up ephemeral temp directory: $TMPDIR"
-        rm -rf "$TMPDIR" 2>/dev/null || true
-    fi
-}
-
 # Run Claude Code
-# In ephemeral mode: run normally, then cleanup
-# In persistent mode: exec for efficiency (no cleanup needed)
-if [[ -n "$CCBOX_EPHEMERAL_TMP" ]]; then
-    # Trap for cleanup on any exit (normal or signal)
-    trap _cleanup_tmp EXIT
-
-    if [[ -t 1 ]]; then
-        printf '\\e[?2026h' 2>/dev/null || true
-        $PRIORITY_CMD claude --dangerously-skip-permissions "$@"
-    else
-        stdbuf -oL -eL $PRIORITY_CMD claude --dangerously-skip-permissions "$@"
-    fi
-    # EXIT trap handles cleanup
+if [[ -t 1 ]]; then
+    printf '\\e[?2026h' 2>/dev/null || true
+    exec $PRIORITY_CMD claude --dangerously-skip-permissions "$@"
 else
-    # Persistent mode: use exec for efficiency
-    if [[ -t 1 ]]; then
-        printf '\\e[?2026h' 2>/dev/null || true
-        exec $PRIORITY_CMD claude --dangerously-skip-permissions "$@"
-    else
-        exec $PRIORITY_CMD stdbuf -oL -eL claude --dangerously-skip-permissions "$@"
-    fi
+    exec stdbuf -oL -eL $PRIORITY_CMD claude --dangerously-skip-permissions "$@"
 fi
 `;
 }
@@ -759,7 +739,6 @@ export function getDockerRunCmd(
     projectImage?: string;
     depsList?: DepsInfo[];
     unrestricted?: boolean;
-    ephemeralTmp?: boolean;
   } = {}
 ): string[] {
   const imageName = options.projectImage ?? getImageName(stack);
@@ -804,7 +783,7 @@ export function getDockerRunCmd(
   addUserMapping(cmd);
   addSecurityOptions(cmd);
   addDnsOptions(cmd);
-  addBuildEnv(cmd, dirName);
+  addBuildEnv(cmd);
 
   // Resource limits
   if (!options.unrestricted) {
@@ -823,10 +802,6 @@ export function getDockerRunCmd(
     cmd.push("-e", "CCBOX_UNRESTRICTED=1");
   }
 
-  if (options.ephemeralTmp) {
-    cmd.push("-e", "CCBOX_EPHEMERAL_TMP=1");
-  }
-
   if (!options.debugLogs) {
     cmd.push("--tmpfs", "/home/node/.claude/debug:rw,size=512m,mode=0777");
   }
@@ -836,6 +811,9 @@ export function getDockerRunCmd(
     ? `/home/node/${dirName}`  // bare mode: only project dir is persistent
     : `/home/node/${dirName}, /home/node/.claude`;
   cmd.push("-e", `CCBOX_PERSISTENT_PATHS=${persistentPaths}`);
+
+  // Pass stack info for CCO installation decision
+  cmd.push("-e", `CCBOX_STACK=${stack}`);
 
   addGitEnv(cmd, config);
 
@@ -979,12 +957,11 @@ function addDnsOptions(cmd: string[]): void {
   cmd.push("--dns-opt", "ndots:1", "--dns-opt", "timeout:1", "--dns-opt", "attempts:1");
 }
 
-function addBuildEnv(cmd: string[], dirName: string): void {
-  const { buildTmpDir } = CONTAINER_CONSTRAINTS;
-  const tmpPath = `/home/node/${dirName}/${buildTmpDir}`;
+function addBuildEnv(cmd: string[]): void {
+  // Use in-container tmpfs for temp files (exec allowed, no cross-device issues)
+  // /home/node/.cache is mounted as tmpfs without noexec
+  const tmpPath = "/home/node/.cache/tmp";
 
-  // Redirect temp directories to project-local path (exec allowed, persistent)
-  // This avoids /tmp:noexec issues while maintaining security
   cmd.push(
     // General temp (POSIX standard - used by most tools)
     "-e", `TMPDIR=${tmpPath}`,
@@ -999,9 +976,6 @@ function addBuildEnv(cmd: string[], dirName: string): void {
 
     // Go
     "-e", `GOTMPDIR=${tmpPath}`,         // Go compiler temp
-
-    // Rust (CARGO_TARGET_DIR defaults to ./target which is fine)
-    // Cargo respects TMPDIR for intermediate files
 
     // Java / Maven / Gradle
     "-e", `MAVEN_OPTS=-Djava.io.tmpdir=${tmpPath}`,  // Maven temp
