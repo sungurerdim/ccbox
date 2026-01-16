@@ -382,18 +382,25 @@ else
     # Use gosu if running as root (CI environments)
     if [[ "$(id -u)" == "0" ]]; then
         CLAUDE_CMD="gosu node claude"
+        _log "Running as root, using gosu for plugin commands"
     else
         CLAUDE_CMD="claude"
     fi
 
-    # Marketplace: add repo (idempotent - fails silently if exists)
-    $CLAUDE_CMD plugin marketplace add sungurerdim/ClaudeCodeOptimizer &>/dev/null || true
+    # Marketplace: add repo (may already exist)
+    if ! $CLAUDE_CMD plugin marketplace add sungurerdim/ClaudeCodeOptimizer 2>&1; then
+        _log "Marketplace add skipped (may already exist)"
+    fi
 
-    # Plugin: uninstall + reinstall (guarantees latest commit)
-    $CLAUDE_CMD plugin uninstall cco &>/dev/null || true
-    $CLAUDE_CMD plugin install cco@cco &>/dev/null || true
+    # Plugin: uninstall existing (ignore if not installed)
+    $CLAUDE_CMD plugin uninstall cco 2>&1 || _log "Plugin uninstall skipped (not installed)"
 
-    _log "CCO plugin ready"
+    # Plugin: install latest
+    if $CLAUDE_CMD plugin install cco@cco 2>&1; then
+        _log "CCO plugin installed successfully"
+    else
+        echo "[ccbox:WARN] CCO plugin installation failed" >&2
+    fi
 fi
 
 # Project .claude is mounted directly from host (persistent)
