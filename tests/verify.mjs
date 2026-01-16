@@ -10,11 +10,14 @@ import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir, homedir, platform } from "node:os";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
+
+// Helper for Windows-compatible ESM imports
+const importModule = (path) => import(pathToFileURL(path).href);
 
 // Colors
 const G = "\x1b[32m", R = "\x1b[31m", Y = "\x1b[33m", B = "\x1b[1m", D = "\x1b[2m", X = "\x1b[0m";
@@ -59,7 +62,7 @@ console.log(`\n${B}=== ccbox npm Comprehensive Test Suite ===${X}\n`);
 // ════════════════════════════════════════════════════════════════════════════════
 console.log(`${B}[1/9] errors.ts${X}`);
 
-const errors = await import(join(ROOT, "dist/errors.js"));
+const errors = await importModule(join(ROOT, "dist/errors.js"));
 
 test("CCBoxError extends Error", () => {
   const e = new errors.CCBoxError("test");
@@ -126,7 +129,7 @@ test("Error stack trace captured", () => {
 // ════════════════════════════════════════════════════════════════════════════════
 console.log(`\n${B}[2/9] constants.ts${X}`);
 
-const constants = await import(join(ROOT, "dist/constants.js"));
+const constants = await importModule(join(ROOT, "dist/constants.js"));
 
 test("VERSION is string", () => typeof constants.VERSION === "string" && constants.VERSION.length > 0);
 test("DOCKER_COMMAND_TIMEOUT = 30000", () => constants.DOCKER_COMMAND_TIMEOUT === 30000);
@@ -155,7 +158,7 @@ console.log(`\n${B}[3/9] config.ts${X}`);
 
 const { LanguageStack, STACK_INFO, STACK_DEPENDENCIES,
         createConfig, validateSafePath, getClaudeConfigDir, getImageName,
-        getContainerName, parseStack, getStackValues } = await import(join(ROOT, "dist/config.js"));
+        getContainerName, parseStack, getStackValues } = await importModule(join(ROOT, "dist/config.js"));
 
 // LanguageStack enum
 test("LanguageStack has 8 values", () => Object.values(LanguageStack).length === 8);
@@ -207,6 +210,9 @@ test("validateSafePath rejects outside home", () => {
 });
 
 test("validateSafePath rejects symlink", () => {
+  // Skip on Windows - symlink requires admin privileges
+  if (platform() === "win32") return "skip";
+
   const testDir = join(tmpdir(), `ccbox-symlink-test-${Date.now()}`);
   const linkPath = join(testDir, "link");
   const targetPath = join(testDir, "target");
@@ -273,7 +279,7 @@ test("getStackValues returns all stacks", () => {
 // ════════════════════════════════════════════════════════════════════════════════
 console.log(`\n${B}[4/9] detector.ts${X}`);
 
-const { detectProjectType } = await import(join(ROOT, "dist/detector.js"));
+const { detectProjectType } = await importModule(join(ROOT, "dist/detector.js"));
 const testDir = join(tmpdir(), "ccbox-test-" + Date.now());
 mkdirSync(testDir, { recursive: true });
 
@@ -303,7 +309,7 @@ test("Go + Java -> full", () => testStack("gojava", { "go.mod": "module t", "pom
 // ════════════════════════════════════════════════════════════════════════════════
 console.log(`\n${B}[5/9] deps.ts${X}`);
 
-const { detectDependencies, getInstallCommands } = await import(join(ROOT, "dist/deps.js"));
+const { detectDependencies, getInstallCommands } = await importModule(join(ROOT, "dist/deps.js"));
 
 function testDep(name, files, expected, checkProps = {}) {
   const dir = join(testDir, "deps-" + name);
@@ -398,7 +404,7 @@ test("detectDependencies empty dir", () => {
 // ════════════════════════════════════════════════════════════════════════════════
 console.log(`\n${B}[6/9] paths.ts${X}`);
 
-const paths = await import(join(ROOT, "dist/paths.js"));
+const paths = await importModule(join(ROOT, "dist/paths.js"));
 
 // isWindowsPath
 test("isWindowsPath C:/", () => paths.isWindowsPath("C:/Users/test"));
@@ -578,7 +584,7 @@ test("invalid stack rejected", () => {
 // ════════════════════════════════════════════════════════════════════════════════
 console.log(`\n${B}[8/9] docker.ts${X}`);
 
-const docker = await import(join(ROOT, "dist/docker.js"));
+const docker = await importModule(join(ROOT, "dist/docker.js"));
 
 test("safeDockerRun is function", () => typeof docker.safeDockerRun === "function");
 test("checkDockerStatus is function", () => typeof docker.checkDockerStatus === "function");
@@ -598,7 +604,7 @@ test("ERR_DOCKER_NOT_RUNNING constant", () => docker.ERR_DOCKER_NOT_RUNNING === 
 // ════════════════════════════════════════════════════════════════════════════════
 console.log(`\n${B}[9/9] utils.ts${X}`);
 
-const utils = await import(join(ROOT, "dist/utils.js"));
+const utils = await importModule(join(ROOT, "dist/utils.js"));
 
 test("checkDocker is function", () => typeof utils.checkDocker === "function");
 test("getGitConfig is async function", () => typeof utils.getGitConfig === "function");
@@ -609,7 +615,7 @@ test("ERR_DOCKER_NOT_RUNNING constant", () => utils.ERR_DOCKER_NOT_RUNNING === "
 // ════════════════════════════════════════════════════════════════════════════════
 console.log(`\n${B}[10/12] generator.ts${X}`);
 
-const generator = await import(join(ROOT, "dist/generator.js"));
+const generator = await importModule(join(ROOT, "dist/generator.js"));
 
 test("generateDockerfile is function", () => typeof generator.generateDockerfile === "function");
 test("generateEntrypoint is function", () => typeof generator.generateEntrypoint === "function");
@@ -713,7 +719,7 @@ test("buildClaudeArgs with multi-byte unicode prompt", () => {
 // ════════════════════════════════════════════════════════════════════════════════
 console.log(`\n${B}[11/12] build.ts${X}`);
 
-const build = await import(join(ROOT, "dist/build.js"));
+const build = await importModule(join(ROOT, "dist/build.js"));
 
 test("buildImage is function", () => typeof build.buildImage === "function");
 test("getProjectImageName is function", () => typeof build.getProjectImageName === "function");
@@ -737,7 +743,7 @@ test("getProjectImageName sanitizes name", () => {
 // ════════════════════════════════════════════════════════════════════════════════
 console.log(`\n${B}[12/12] cleanup.ts${X}`);
 
-const cleanup = await import(join(ROOT, "dist/cleanup.js"));
+const cleanup = await importModule(join(ROOT, "dist/cleanup.js"));
 
 test("cleanupCcboxDanglingImages is function", () => typeof cleanup.cleanupCcboxDanglingImages === "function");
 test("pruneStaleResources is function", () => typeof cleanup.pruneStaleResources === "function");
