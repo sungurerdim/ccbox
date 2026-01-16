@@ -387,30 +387,45 @@ else
     # Note: Container should be started with --user flag (ccbox CLI does this)
     _log "Installing CCO plugin..."
 
+    # Capture output for debugging
+    CCO_LOG=""
+
     # Step 1: Uninstall existing plugin (only if installed)
-    if claude plugin list 2>/dev/null | grep -q "cco@ClaudeCodeOptimizer"; then
+    if claude plugin list 2>&1 | grep -q "cco@ClaudeCodeOptimizer"; then
         _log "Removing existing CCO plugin..."
-        claude plugin uninstall cco@ClaudeCodeOptimizer >/dev/null 2>&1 || true
+        CCO_LOG=$(claude plugin uninstall cco@ClaudeCodeOptimizer 2>&1) || true
+        _log_verbose "Uninstall output: $CCO_LOG"
     fi
 
     # Step 2: Remove marketplace (only if present)
-    if claude plugin marketplace list 2>/dev/null | grep -q "ClaudeCodeOptimizer"; then
+    if claude plugin marketplace list 2>&1 | grep -q "ClaudeCodeOptimizer"; then
         _log "Removing existing marketplace..."
-        claude plugin marketplace remove ClaudeCodeOptimizer >/dev/null 2>&1 || true
+        CCO_LOG=$(claude plugin marketplace remove ClaudeCodeOptimizer 2>&1) || true
+        _log_verbose "Marketplace remove output: $CCO_LOG"
     fi
 
     # Step 3: Add marketplace repo with full URL
     _log "Adding CCO marketplace..."
-    if ! claude plugin marketplace add https://github.com/sungurerdim/ClaudeCodeOptimizer >/dev/null 2>&1; then
-        _log_verbose "Marketplace already exists or add failed, continuing..."
+    CCO_LOG=$(claude plugin marketplace add https://github.com/sungurerdim/ClaudeCodeOptimizer 2>&1)
+    MARKETPLACE_EXIT=$?
+    if [[ $MARKETPLACE_EXIT -ne 0 ]]; then
+        if echo "$CCO_LOG" | grep -q "already"; then
+            _log_verbose "Marketplace already exists"
+        else
+            echo "[ccbox:WARN] Marketplace add failed (exit $MARKETPLACE_EXIT): $CCO_LOG" >&2
+        fi
+    else
+        _log "Marketplace added successfully"
     fi
 
     # Step 4: Install plugin
     _log "Installing CCO plugin..."
-    if claude plugin install cco@ClaudeCodeOptimizer >/dev/null 2>&1; then
+    CCO_LOG=$(claude plugin install cco@ClaudeCodeOptimizer 2>&1)
+    INSTALL_EXIT=$?
+    if [[ $INSTALL_EXIT -eq 0 ]]; then
         _log "CCO plugin ready"
     else
-        echo "[ccbox:WARN] CCO plugin installation failed" >&2
+        echo "[ccbox:WARN] CCO plugin installation failed (exit $INSTALL_EXIT): $CCO_LOG" >&2
     fi
 
     # Step 5: Fix plugin paths for host compatibility

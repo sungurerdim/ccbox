@@ -48,26 +48,31 @@ export async function buildImage(stack: LanguageStack): Promise<boolean> {
     DOCKER_BUILDKIT: "1",
   };
 
+  // Build args: only use --pull for stacks with external base images (no ccbox dependency)
+  // Stacks with ccbox dependencies (base, python, web, full) use local images
+  const buildArgs = [
+    "build",
+    "--output",
+    `type=image,name=${imageName},compression=zstd,compression-level=3`,
+    "-f",
+    join(buildDir, "Dockerfile"),
+    "--no-cache",
+    "--progress=auto",
+  ];
+
+  // Only pull for stacks with external base images (minimal, go, rust, java)
+  if (dependency === null) {
+    buildArgs.push("--pull");
+  }
+
+  buildArgs.push(buildDir);
+
   try {
-    await execa(
-      "docker",
-      [
-        "build",
-        "--output",
-        `type=image,name=${imageName},compression=zstd,compression-level=3`,
-        "-f",
-        join(buildDir, "Dockerfile"),
-        "--no-cache",
-        "--pull",
-        "--progress=auto",
-        buildDir,
-      ],
-      {
-        stdio: "inherit",
-        env,
-        reject: true,
-      } as ExecaOptions
-    );
+    await execa("docker", buildArgs, {
+      stdio: "inherit",
+      env,
+      reject: true,
+    } as ExecaOptions);
 
     console.log(chalk.green(`Built ${imageName}`));
 
@@ -75,8 +80,19 @@ export async function buildImage(stack: LanguageStack): Promise<boolean> {
     await cleanupCcboxDanglingImages();
 
     return true;
-  } catch {
+  } catch (error: unknown) {
     console.log(chalk.red(`Failed to build ${imageName}`));
+    // Show detailed error for debugging
+    if (error instanceof Error) {
+      const execaError = error as { stderr?: string; shortMessage?: string };
+      if (execaError.stderr) {
+        console.log(chalk.dim(`Error details: ${execaError.stderr.slice(0, 500)}`));
+      } else if (execaError.shortMessage) {
+        console.log(chalk.dim(`Error: ${execaError.shortMessage}`));
+      } else {
+        console.log(chalk.dim(`Error: ${error.message}`));
+      }
+    }
     return false;
   }
 }
@@ -140,9 +156,10 @@ export async function buildProjectImage(
   };
 
   try {
+    // Note: no --pull flag since we're building on top of local ccbox images
     await execa(
       "docker",
-      ["build", "-t", imageName, "-f", dockerfilePath, "--no-cache", "--pull", "--progress=auto", projectPath],
+      ["build", "-t", imageName, "-f", dockerfilePath, "--no-cache", "--progress=auto", projectPath],
       {
         stdio: "inherit",
         env,
@@ -153,8 +170,19 @@ export async function buildProjectImage(
 
     console.log(chalk.green(`Built ${imageName}`));
     return imageName;
-  } catch {
+  } catch (error: unknown) {
     console.log(chalk.red(`Failed to build ${imageName}`));
+    // Show detailed error for debugging
+    if (error instanceof Error) {
+      const execaError = error as { stderr?: string; shortMessage?: string };
+      if (execaError.stderr) {
+        console.log(chalk.dim(`Error details: ${execaError.stderr.slice(0, 500)}`));
+      } else if (execaError.shortMessage) {
+        console.log(chalk.dim(`Error: ${execaError.shortMessage}`));
+      } else {
+        console.log(chalk.dim(`Error: ${error.message}`));
+      }
+    }
     return null;
   }
 }
