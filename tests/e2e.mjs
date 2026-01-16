@@ -173,7 +173,7 @@ await testAsync("Build minimal stack image", async () => {
   if (!DOCKER_AVAILABLE) return "skip";
 
   console.log(`${D}  Building minimal image (this may take a few minutes)...${X}`);
-  const { stdout, code } = cli("-s minimal -b -y .", { timeout: 600000 });
+  const { stdout, code } = cli("-s minimal -b -y", { timeout: 600000 });
 
   if (code !== 0) {
     console.log(`${D}  Build output: ${stdout.slice(0, 500)}${X}`);
@@ -203,7 +203,7 @@ await testAsync("Build base stack image", async () => {
   if (minimalCheck !== 0) return "skip";
 
   console.log(`${D}  Building base image...${X}`);
-  const { stdout, code } = cli("-s base -b -y .", { timeout: 600000 });
+  const { stdout, code } = cli("-s base -b -y", { timeout: 600000 });
 
   if (code !== 0) {
     console.log(`${D}  Build output: ${stdout.slice(0, 500)}${X}`);
@@ -335,14 +335,14 @@ console.log(`\n${B}[4/4] Cleanup Operations${X}`);
 test("clean command runs without error", () => {
   if (!DOCKER_AVAILABLE) return "skip";
 
-  const { code } = cli("clean -y");
+  const { code } = cli("clean -f");
   return code === 0;
 });
 
 test("prune command runs without error", () => {
   if (!DOCKER_AVAILABLE) return "skip";
 
-  const { code } = cli("prune -y");
+  const { code } = cli("prune -f");
   return code === 0;
 });
 
