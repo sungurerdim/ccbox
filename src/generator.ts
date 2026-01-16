@@ -377,26 +377,19 @@ elif [[ "$CCBOX_STACK" == "minimal" ]]; then
     _log "Minimal stack: vanilla Claude Code (no CCO)"
 else
     # Install/update CCO plugin (ensures latest commit each session)
+    # Note: Container should be started with --user flag (ccbox CLI does this)
     _log "Installing CCO plugin..."
 
-    # Use gosu if running as root (CI environments)
-    if [[ "$(id -u)" == "0" ]]; then
-        CLAUDE_CMD="gosu node claude"
-        _log "Running as root, using gosu for plugin commands"
-    else
-        CLAUDE_CMD="claude"
-    fi
-
     # Marketplace: add repo (may already exist)
-    if ! $CLAUDE_CMD plugin marketplace add sungurerdim/ClaudeCodeOptimizer 2>&1; then
+    if ! claude plugin marketplace add sungurerdim/ClaudeCodeOptimizer 2>&1; then
         _log "Marketplace add skipped (may already exist)"
     fi
 
     # Plugin: uninstall existing (ignore if not installed)
-    $CLAUDE_CMD plugin uninstall cco 2>&1 || _log "Plugin uninstall skipped (not installed)"
+    claude plugin uninstall cco 2>&1 || _log "Plugin uninstall skipped (not installed)"
 
     # Plugin: install latest
-    if $CLAUDE_CMD plugin install cco@cco 2>&1; then
+    if claude plugin install cco@cco 2>&1; then
         _log "CCO plugin installed successfully"
     else
         echo "[ccbox:WARN] CCO plugin installation failed" >&2
