@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Expanded stack system**: 20 language stacks (up from 7)
+  - Core stacks (11): base, python, web, go, rust, java, cpp, dotnet, swift, dart, lua
+  - Combined stacks (4): jvm, functional, scripting, systems
+  - Use-case stacks (5): data, ai, mobile, game, fullstack
+- **Efficient image layering**: Stacks build on parent images for disk efficiency
+  - `base` → python, web, cpp, dotnet, swift, dart, lua, functional, scripting
+  - `python` → data, ai
+  - `web` → fullstack
+  - `cpp` → systems, game
+  - `dart` → mobile
+  - `java` → jvm
+- **Claude Code native binary**: Updated installation to use official native binary
+  - No Node.js/Bun dependency in container
+  - Binary moved to `/usr/local/bin` for non-root access
+- **TypeScript detection**: Added tsconfig.json to language patterns
+
+### Changed
+
+- **Native binary distribution**: Switched from npm to standalone binaries
+  - No more Node.js dependency for end users
+  - Direct download via `curl | bash` (Unix) or `irm | iex` (Windows)
+  - Cross-platform binaries: Linux (x64/arm64), macOS (x64/arm64), Windows (x64)
+- **Base image**: Changed from `node:lts-slim` to `debian:bookworm-slim`
+- **Build system**: Migrated from TypeScript/tsc to Bun
+  - `bun build --compile` for standalone executables
+  - Faster development with `bun run dev`
+  - TypeScript executed directly without compilation step
+- **CI/CD**: GitHub Actions workflow updated for Bun builds
+- **Tests**: Test suite updated to use Bun runtime
+
+### Removed
+
+- **`full` stack**: Replaced with use-case specific stacks (ai, mobile, game, fullstack)
+- npm package distribution (now native binary only)
+- `postinstall` script (path normalization now runs at startup)
+- Node.js runtime dependency in base image
+
 ## [1.0.0] - 2025-01-15
 
 ### Added
@@ -58,6 +99,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - TypeScript rewrite (previously Python)
 - CLI framework: Commander.js
-- Package manager: npm
+- Runtime: Bun (native binary)
 
+[Unreleased]: https://github.com/sungurerdim/ccbox/compare/v1.0.0...HEAD
 [1.0.0]: https://github.com/sungurerdim/ccbox/releases/tag/v1.0.0

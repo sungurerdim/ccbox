@@ -2,17 +2,64 @@
 
 Run Claude Code in isolated Docker containers. One command, zero configuration.
 
+## Installation
+
+<details>
+<summary><b>macOS</b></summary>
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sungurerdim/ccbox/main/install.sh | bash
+```
+
+Or with Homebrew:
+```bash
+brew install ccbox
+```
+
+</details>
+
+<details>
+<summary><b>Linux</b></summary>
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sungurerdim/ccbox/main/install.sh | bash
+```
+
+</details>
+
+<details>
+<summary><b>Windows</b></summary>
+
+PowerShell:
+```powershell
+irm https://raw.githubusercontent.com/sungurerdim/ccbox/main/install.ps1 | iex
+```
+
+Or with WinGet:
+```bash
+winget install ccbox
+```
+
+</details>
+
+<details>
+<summary><b>WSL</b></summary>
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sungurerdim/ccbox/main/install.sh | bash
+```
+
+</details>
+
+**Requirements:** Docker Desktop or Docker Engine
+
 ## Quick Start
 
 ```bash
-npm install -g ccbox             # Install
-cd your-project && ccbox         # Run (interactive)
-ccbox -y                         # Run (unattended)
-ccbox --bare                     # Run vanilla Claude Code (no CCO)
-ccbox -p "fix the tests"         # Run with prompt (non-interactive)
+cd your-project && ccbox     # Run (interactive)
+ccbox -y                     # Run (unattended)
+ccbox -p "fix the tests"     # Run with prompt (non-interactive)
 ```
-
-**Requirements:** Docker Desktop or Docker Engine
 
 ## Why ccbox?
 
@@ -29,7 +76,7 @@ ccbox -p "fix the tests"         # Run with prompt (non-interactive)
 
 | Aspect | Claude Code CLI | ccbox |
 |--------|-----------------|-------|
-| **Installation** | `npm install -g @anthropic-ai/claude-code` | `npm install -g ccbox` |
+| **Installation** | `claude install` | `curl ... \| bash` |
 | **File Access** | Full system access | Only current project directory |
 | **Permission Prompts** | Every tool use requires approval | Bypass mode (container is sandbox) |
 | **System Impact** | Can modify any file | Isolated - nothing persists outside |
@@ -40,15 +87,44 @@ ccbox -p "fix the tests"         # Run with prompt (non-interactive)
 
 ## Language Stacks
 
-| Stack | Includes | Size |
-|-------|----------|------|
-| `minimal` | Node.js, Python, basic tools | ~400MB |
-| `base` | + lint/test tools, CCO | ~450MB |
-| `go` | Go + golangci-lint | ~650MB |
-| `rust` | Rust + clippy + rustfmt | ~850MB |
-| `java` | JDK + Maven/Gradle | ~750MB |
-| `web` | Node.js + Python fullstack | ~500MB |
-| `full` | All languages | ~1350MB |
+ccbox supports 20 language stacks organized in 3 categories. Stacks are built on top of each other for efficient layering.
+
+### Core Stacks
+
+| Stack | Includes | Size | Base |
+|-------|----------|------|------|
+| `base` | Claude Code only (vanilla) | ~200MB | debian:slim |
+| `python` | Python + uv + ruff + pytest + mypy | ~350MB | base |
+| `web` | Node.js + TypeScript + eslint + vitest | ~400MB | base |
+| `go` | Go + golangci-lint | ~550MB | golang:latest |
+| `rust` | Rust + clippy + rustfmt | ~700MB | rust:latest |
+| `java` | JDK + Maven + Gradle | ~600MB | temurin:latest |
+| `cpp` | C++ + CMake + Clang + Conan | ~450MB | base |
+| `dotnet` | .NET SDK + C# + F# | ~500MB | base |
+| `swift` | Swift | ~500MB | base |
+| `dart` | Dart SDK | ~300MB | base |
+| `lua` | Lua + LuaRocks | ~250MB | base |
+
+### Combined Stacks
+
+| Stack | Includes | Size | Base |
+|-------|----------|------|------|
+| `jvm` | Java + Scala + Clojure + Kotlin | ~900MB | java |
+| `functional` | Haskell + OCaml + Elixir/Erlang | ~900MB | base |
+| `scripting` | Ruby + PHP + Perl | ~450MB | base |
+| `systems` | C++ + Zig + Nim | ~550MB | cpp |
+
+### Use-Case Stacks
+
+| Stack | Includes | Size | Base |
+|-------|----------|------|------|
+| `data` | Python + R + Julia (data science) | ~800MB | python |
+| `ai` | Python + Jupyter + PyTorch + TensorFlow | ~2500MB | python |
+| `mobile` | Dart + Flutter SDK + Android tools | ~1500MB | dart |
+| `game` | C++ + SDL2 + Lua + OpenGL | ~600MB | cpp |
+| `fullstack` | Node.js + Python + DB clients | ~700MB | web |
+
+> **Auto-detection**: ccbox automatically detects your project type and recommends the appropriate stack based on configuration files (package.json, Cargo.toml, go.mod, etc.)
 
 ## Commands
 
@@ -70,12 +146,13 @@ ccbox prune [-f]         # Deep clean ccbox resources
 | `-p, --prompt <text>` | Initial prompt (non-interactive) |
 | `-m, --model <name>` | Model (opus/sonnet/haiku) |
 | `-q, --quiet` | Quiet mode |
-| `--bare` | Vanilla mode (no CCO) |
+| `--fresh` | Fresh mode (auth only, clean slate) |
 | `--deps` | Install all dependencies |
 | `--deps-prod` | Install production deps only |
 | `--no-deps` | Skip dependency installation |
 | `-d` | Debug mode (entrypoint logs) |
 | `-dd` | Verbose debug (+ stream output) |
+| `-U, --unrestricted` | Remove CPU/priority limits |
 
 ## Security
 
@@ -91,12 +168,74 @@ ccbox provides strong isolation:
 
 ## How It Works
 
-1. Detects project type (package.json, Cargo.toml, go.mod, etc.)
-2. Recommends appropriate stack
-3. Builds Docker image with Claude Code
-4. Mounts project directory
-5. Forwards Git config and Claude credentials
-6. Runs interactive Claude Code session
+1. **Detection**: Analyzes project files (package.json, Cargo.toml, go.mod, pyproject.toml, etc.)
+2. **Stack Selection**: Recommends appropriate stack based on detected languages
+3. **Image Building**: Builds Docker image with efficient layering (parent stacks reused)
+4. **Dependency Installation**: Optionally installs project dependencies during image build
+5. **Container Launch**: Mounts project directory, forwards Git config and Claude credentials
+6. **Interactive Session**: Runs Claude Code with bypass permissions (safe in container)
+
+### Image Layering
+
+```
+debian:bookworm-slim
+    └── base (Claude Code)
+        ├── python → data, ai
+        ├── web → fullstack
+        ├── cpp → systems, game
+        ├── dart → mobile
+        └── functional, scripting, dotnet, swift, lua
+
+golang:latest → go
+rust:latest → rust
+eclipse-temurin:latest → java → jvm
+```
+
+Images are cached locally. Subsequent runs are instant.
+
+## Uninstall
+
+<details>
+<summary><b>macOS / Linux / WSL</b></summary>
+
+```bash
+rm -f ~/.local/bin/ccbox
+ccbox clean -f  # Remove Docker images (optional)
+```
+
+</details>
+
+<details>
+<summary><b>Windows</b></summary>
+
+```powershell
+Remove-Item "$HOME\.local\bin\ccbox.exe"
+ccbox clean -f  # Remove Docker images (optional)
+```
+
+</details>
+
+## Development
+
+```bash
+# Install Bun
+curl -fsSL https://bun.sh/install | bash
+
+# Clone and setup
+git clone https://github.com/sungurerdim/ccbox.git
+cd ccbox
+bun install
+
+# Development
+bun run dev              # Run from source
+bun run typecheck        # TypeScript check
+bun run lint             # ESLint
+bun run test             # Run tests
+
+# Build
+bun run build:binary     # Build for current platform
+bun run build:binary:all # Build for all platforms
+```
 
 ## License
 

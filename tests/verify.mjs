@@ -1,6 +1,6 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
- * Comprehensive Test Suite for ccbox npm
+ * Comprehensive Test Suite for ccbox
  *
  * Covers: errors, constants, config, detector, paths, deps, docker, utils, cleanup
  * Edge cases: empty inputs, boundary values, invalid inputs, error handling
@@ -16,7 +16,7 @@ import { dirname } from "node:path";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
 
-// Helper for Windows-compatible ESM imports
+// Helper for ESM imports - works with both Bun and Node
 const importModule = (path) => import(pathToFileURL(path).href);
 
 // Colors
@@ -48,21 +48,21 @@ function test(name, fn) {
 
 function cli(args) {
   try {
-    const stdout = execSync(`node ${ROOT}/dist/cli.js ${args}`, {
+    const stdout = execSync(`bun run ${ROOT}/src/cli.ts ${args}`, {
       encoding: "utf8", timeout: 30000, env: { ...process.env, NO_COLOR: "1" }
     });
     return { stdout, code: 0 };
   } catch (e) { return { stdout: e.stdout || "", stderr: e.stderr || "", code: e.status || 1 }; }
 }
 
-console.log(`\n${B}=== ccbox npm Comprehensive Test Suite ===${X}\n`);
+console.log(`\n${B}=== ccbox Comprehensive Test Suite ===${X}\n`);
 
 // ════════════════════════════════════════════════════════════════════════════════
 // ERRORS MODULE
 // ════════════════════════════════════════════════════════════════════════════════
 console.log(`${B}[1/9] errors.ts${X}`);
 
-const errors = await importModule(join(ROOT, "dist/errors.js"));
+const errors = await importModule(join(ROOT, "src/errors.ts"));
 
 test("CCBoxError extends Error", () => {
   const e = new errors.CCBoxError("test");
@@ -129,7 +129,7 @@ test("Error stack trace captured", () => {
 // ════════════════════════════════════════════════════════════════════════════════
 console.log(`\n${B}[2/9] constants.ts${X}`);
 
-const constants = await importModule(join(ROOT, "dist/constants.js"));
+const constants = await importModule(join(ROOT, "src/constants.ts"));
 
 test("VERSION is string", () => typeof constants.VERSION === "string" && constants.VERSION.length > 0);
 test("DOCKER_COMMAND_TIMEOUT = 30000", () => constants.DOCKER_COMMAND_TIMEOUT === 30000);
@@ -158,17 +158,20 @@ console.log(`\n${B}[3/9] config.ts${X}`);
 
 const { LanguageStack, STACK_INFO, STACK_DEPENDENCIES,
         createConfig, validateSafePath, getClaudeConfigDir, getImageName,
-        getContainerName, parseStack, getStackValues } = await importModule(join(ROOT, "dist/config.js"));
+        getContainerName, parseStack, getStackValues } = await importModule(join(ROOT, "src/config.ts"));
 
-// LanguageStack enum
-test("LanguageStack has 8 values", () => Object.values(LanguageStack).length === 8);
-test("LanguageStack.MINIMAL = minimal", () => LanguageStack.MINIMAL === "minimal");
+// LanguageStack enum (20 stacks: 11 core + 4 combined + 5 use-case)
+test("LanguageStack has 20 values", () => Object.values(LanguageStack).length === 20);
 test("LanguageStack.BASE = base", () => LanguageStack.BASE === "base");
 test("LanguageStack.GO = go", () => LanguageStack.GO === "go");
 test("LanguageStack.RUST = rust", () => LanguageStack.RUST === "rust");
 test("LanguageStack.JAVA = java", () => LanguageStack.JAVA === "java");
 test("LanguageStack.WEB = web", () => LanguageStack.WEB === "web");
-test("LanguageStack.FULL = full", () => LanguageStack.FULL === "full");
+test("LanguageStack.PYTHON = python", () => LanguageStack.PYTHON === "python");
+test("LanguageStack.CPP = cpp", () => LanguageStack.CPP === "cpp");
+test("LanguageStack.FUNCTIONAL = functional", () => LanguageStack.FUNCTIONAL === "functional");
+test("LanguageStack.SCRIPTING = scripting", () => LanguageStack.SCRIPTING === "scripting");
+test("LanguageStack.AI = ai", () => LanguageStack.AI === "ai");
 
 // STACK_INFO
 test("STACK_INFO has all stacks", () =>
@@ -177,16 +180,18 @@ test("STACK_INFO has descriptions", () =>
   Object.values(STACK_INFO).every(s => s.description && s.description.length > 0));
 test("STACK_INFO has valid sizes", () =>
   Object.values(STACK_INFO).every(s => s.sizeMB > 0));
-test("STACK_INFO.minimal.sizeMB = 300", () => STACK_INFO.minimal.sizeMB === 300);
-test("STACK_INFO.full.sizeMB = 1300", () => STACK_INFO.full.sizeMB === 1300);
+test("STACK_INFO.base.sizeMB = 200", () => STACK_INFO.base.sizeMB === 200);
+test("STACK_INFO.ai.sizeMB = 2500", () => STACK_INFO.ai.sizeMB === 2500);
 
 // STACK_DEPENDENCIES
 test("STACK_DEPENDENCIES has all stacks", () =>
   Object.values(LanguageStack).every(s => s in STACK_DEPENDENCIES));
-test("STACK_DEPENDENCIES.minimal = null", () => STACK_DEPENDENCIES.minimal === null);
-test("STACK_DEPENDENCIES.base = minimal", () => STACK_DEPENDENCIES.base === LanguageStack.MINIMAL);
+test("STACK_DEPENDENCIES.base = null", () => STACK_DEPENDENCIES.base === null);
 test("STACK_DEPENDENCIES.web = base", () => STACK_DEPENDENCIES.web === LanguageStack.BASE);
 test("STACK_DEPENDENCIES.go = null", () => STACK_DEPENDENCIES.go === null);
+test("STACK_DEPENDENCIES.python = base", () => STACK_DEPENDENCIES.python === LanguageStack.BASE);
+test("STACK_DEPENDENCIES.ai = python", () => STACK_DEPENDENCIES.ai === LanguageStack.PYTHON);
+test("STACK_DEPENDENCIES.functional = base", () => STACK_DEPENDENCIES.functional === LanguageStack.BASE);
 
 // createConfig
 test("createConfig returns valid config", () => {
@@ -271,7 +276,7 @@ test("parseStack returns undefined for invalid", () =>
 // getStackValues
 test("getStackValues returns all stacks", () => {
   const values = getStackValues();
-  return values.length === 8 && values.includes("base") && values.includes("full");
+  return values.length === 20 && values.includes("base") && values.includes("ai") && values.includes("functional");
 });
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -279,7 +284,7 @@ test("getStackValues returns all stacks", () => {
 // ════════════════════════════════════════════════════════════════════════════════
 console.log(`\n${B}[4/9] detector.ts${X}`);
 
-const { detectProjectType } = await importModule(join(ROOT, "dist/detector.js"));
+const { detectProjectType } = await importModule(join(ROOT, "src/detector.ts"));
 const testDir = join(tmpdir(), "ccbox-test-" + Date.now());
 mkdirSync(testDir, { recursive: true });
 
@@ -294,22 +299,23 @@ function testStack(name, files, expected, expectedLangs = null) {
 }
 
 test("Empty dir -> base", () => testStack("empty", { ".gitkeep": "" }, "base", []));
-test("Python -> base", () => testStack("py", { "main.py": "print(1)", "requirements.txt": "requests" }, "base", ["python", "node"].filter(x => x === "python")));
-test("Node -> base", () => testStack("node", { "index.js": "console.log(1)", "package.json": '{"name":"t"}' }, "base"));
+test("Python -> python", () => testStack("py", { "main.py": "print(1)", "requirements.txt": "requests" }, "python", ["python"]));
+test("Node -> web", () => testStack("node", { "index.js": "console.log(1)", "package.json": '{"name":"t"}' }, "web", ["node"]));
+test("TypeScript -> web", () => testStack("ts", { "index.ts": "console.log(1)", "tsconfig.json": '{}' }, "web", ["typescript"]));
 test("Go -> go", () => testStack("go", { "main.go": "package main", "go.mod": "module t\ngo 1.21" }, "go", ["go"]));
 test("Rust -> rust", () => testStack("rust", { "main.rs": "fn main(){}", "Cargo.toml": '[package]\nname="t"' }, "rust", ["rust"]));
 test("Java Maven -> java", () => testStack("java", { "Main.java": "class M{}", "pom.xml": "<p/>" }, "java", ["java"]));
 test("Java Gradle -> java", () => testStack("gradle", { "App.java": "class A{}", "build.gradle": "plugins{}" }, "java", ["java"]));
 test("Node + Python -> web", () => testStack("fullstack", { "package.json": '{"name":"t"}', "requirements.txt": "flask" }, "web", ["python", "node"]));
-test("Go + Rust -> full", () => testStack("multi", { "go.mod": "module t\ngo 1.21", "Cargo.toml": '[package]\nname="t"' }, "full", ["go", "rust"]));
-test("Go + Java -> full", () => testStack("gojava", { "go.mod": "module t", "pom.xml": "<p/>" }, "full", ["go", "java"]));
+test("Ruby -> scripting", () => testStack("ruby", { "Gemfile": 'source "https://rubygems.org"' }, "scripting", ["ruby"]));
+test("Elixir -> functional", () => testStack("elixir", { "mix.exs": "defmodule Test do end" }, "functional", ["elixir"]));
 
 // ════════════════════════════════════════════════════════════════════════════════
 // DEPS MODULE
 // ════════════════════════════════════════════════════════════════════════════════
 console.log(`\n${B}[5/9] deps.ts${X}`);
 
-const { detectDependencies, getInstallCommands } = await importModule(join(ROOT, "dist/deps.js"));
+const { detectDependencies, getInstallCommands } = await importModule(join(ROOT, "src/deps.ts"));
 
 function testDep(name, files, expected, checkProps = {}) {
   const dir = join(testDir, "deps-" + name);
@@ -404,7 +410,7 @@ test("detectDependencies empty dir", () => {
 // ════════════════════════════════════════════════════════════════════════════════
 console.log(`\n${B}[6/9] paths.ts${X}`);
 
-const paths = await importModule(join(ROOT, "dist/paths.js"));
+const paths = await importModule(join(ROOT, "src/paths.ts"));
 
 // isWindowsPath
 test("isWindowsPath C:/", () => paths.isWindowsPath("C:/Users/test"));
@@ -547,7 +553,7 @@ test("validateFilePath rejects directory", () => {
 // ════════════════════════════════════════════════════════════════════════════════
 // CLI COMMANDS
 // ════════════════════════════════════════════════════════════════════════════════
-console.log(`\n${B}[7/9] CLI Commands${X}`);
+console.log(`\n${B}[7/12] CLI Commands${X}`);
 
 test("--version outputs version", () => {
   const { stdout, code } = cli("--version");
@@ -566,12 +572,12 @@ test("--help shows all commands", () => {
 
 test("--help shows all options", () => {
   const { stdout } = cli("--help");
-  return ["-y", "-s", "-b", "--path", "-C", "--bare", "-d", "-p", "-m", "-q", "-U"].every(o => stdout.includes(o));
+  return ["-y", "-s", "-b", "--path", "-C", "--fresh", "-d", "-p", "-m", "-q", "-U"].every(o => stdout.includes(o));
 });
 
 test("stacks command lists all stacks", () => {
   const { stdout } = cli("stacks");
-  return ["minimal", "base", "go", "rust", "java", "web", "full"].every(s => stdout.toLowerCase().includes(s));
+  return ["base", "python", "go", "rust", "java", "web", "ai", "functional", "scripting"].every(s => stdout.toLowerCase().includes(s));
 });
 
 test("invalid stack rejected", () => {
@@ -582,9 +588,9 @@ test("invalid stack rejected", () => {
 // ════════════════════════════════════════════════════════════════════════════════
 // DOCKER MODULE
 // ════════════════════════════════════════════════════════════════════════════════
-console.log(`\n${B}[8/9] docker.ts${X}`);
+console.log(`\n${B}[8/12] docker.ts${X}`);
 
-const docker = await importModule(join(ROOT, "dist/docker.js"));
+const docker = await importModule(join(ROOT, "src/docker.ts"));
 
 test("safeDockerRun is function", () => typeof docker.safeDockerRun === "function");
 test("checkDockerStatus is function", () => typeof docker.checkDockerStatus === "function");
@@ -602,9 +608,9 @@ test("ERR_DOCKER_NOT_RUNNING constant", () => docker.ERR_DOCKER_NOT_RUNNING === 
 // ════════════════════════════════════════════════════════════════════════════════
 // UTILS MODULE
 // ════════════════════════════════════════════════════════════════════════════════
-console.log(`\n${B}[9/9] utils.ts${X}`);
+console.log(`\n${B}[9/12] utils.ts${X}`);
 
-const utils = await importModule(join(ROOT, "dist/utils.js"));
+const utils = await importModule(join(ROOT, "src/utils.ts"));
 
 test("checkDocker is function", () => typeof utils.checkDocker === "function");
 test("getGitConfig is async function", () => typeof utils.getGitConfig === "function");
@@ -615,7 +621,7 @@ test("ERR_DOCKER_NOT_RUNNING constant", () => utils.ERR_DOCKER_NOT_RUNNING === "
 // ════════════════════════════════════════════════════════════════════════════════
 console.log(`\n${B}[10/12] generator.ts${X}`);
 
-const generator = await importModule(join(ROOT, "dist/generator.js"));
+const generator = await importModule(join(ROOT, "src/generator.ts"));
 
 test("generateDockerfile is function", () => typeof generator.generateDockerfile === "function");
 test("generateEntrypoint is function", () => typeof generator.generateEntrypoint === "function");
@@ -629,8 +635,8 @@ test("buildClaudeArgs is function", () => typeof generator.buildClaudeArgs === "
 test("getDockerRunCmd is function", () => typeof generator.getDockerRunCmd === "function");
 
 // generateDockerfile produces valid content
-test("generateDockerfile(minimal) returns Dockerfile", () => {
-  const df = generator.generateDockerfile(LanguageStack.MINIMAL);
+test("generateDockerfile(base) returns Dockerfile", () => {
+  const df = generator.generateDockerfile(LanguageStack.BASE);
   return df.includes("FROM") && df.includes("node") && df.length > 100;
 });
 
@@ -719,7 +725,7 @@ test("buildClaudeArgs with multi-byte unicode prompt", () => {
 // ════════════════════════════════════════════════════════════════════════════════
 console.log(`\n${B}[11/12] build.ts${X}`);
 
-const build = await importModule(join(ROOT, "dist/build.js"));
+const build = await importModule(join(ROOT, "src/build.ts"));
 
 test("buildImage is function", () => typeof build.buildImage === "function");
 test("getProjectImageName is function", () => typeof build.getProjectImageName === "function");
@@ -743,7 +749,7 @@ test("getProjectImageName sanitizes name", () => {
 // ════════════════════════════════════════════════════════════════════════════════
 console.log(`\n${B}[12/12] cleanup.ts${X}`);
 
-const cleanup = await importModule(join(ROOT, "dist/cleanup.js"));
+const cleanup = await importModule(join(ROOT, "src/cleanup.ts"));
 
 test("cleanupCcboxDanglingImages is function", () => typeof cleanup.cleanupCcboxDanglingImages === "function");
 test("pruneStaleResources is function", () => typeof cleanup.pruneStaleResources === "function");
@@ -786,5 +792,5 @@ if (failed > 0) {
   process.exit(1);
 } else {
   console.log(`${G}All comprehensive tests passed!${X}`);
-  console.log(`${G}Coverage: errors, constants, config, detector, deps, paths, CLI, docker, utils${X}`);
+  console.log(`${G}Coverage: errors, constants, config, detector, deps, paths, CLI, docker, utils, generator, build, cleanup${X}`);
 }

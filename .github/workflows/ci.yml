@@ -15,17 +15,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: 20
-          cache: 'npm'
+          bun-version: latest
 
       - name: Install & Build & Test
         run: |
-          npm ci
-          npm run build
-          npm run typecheck
-          npm test
-          npm run test:e2e
+          bun install
+          bun run typecheck
+          bun run lint
+          bun test
         timeout-minutes: 15

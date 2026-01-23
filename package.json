@@ -3,27 +3,18 @@
   "version": "1.0.0",
   "description": "Secure Docker sandbox for Claude Code CLI",
   "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "bin": {
-    "ccbox": "dist/cli.js"
-  },
-  "files": [
-    "dist",
-    "src/scripts"
-  ],
-  "engines": {
-    "node": ">=18.0.0"
-  },
+  "private": true,
+  "packageManager": "bun",
   "scripts": {
-    "build": "tsc",
-    "dev": "tsx src/cli.ts",
-    "test": "node tests/verify.mjs",
-    "test:e2e": "node tests/e2e.mjs",
-    "test:all": "npm test && npm run test:e2e",
+    "dev": "bun run src/cli.ts",
+    "build": "bun build src/cli.ts --outfile dist/ccbox.js --target bun --minify",
+    "build:binary": "bun run scripts/build.ts",
+    "build:binary:all": "bun run scripts/build.ts --all",
+    "test": "bun tests/verify.mjs",
+    "test:e2e": "bun tests/e2e.mjs",
+    "test:all": "bun tests/verify.mjs && bun tests/e2e.mjs",
     "lint": "eslint src",
-    "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run build && npm run typecheck && npm test"
+    "typecheck": "tsc --noEmit"
   },
   "keywords": [
     "claude",
@@ -52,6 +43,7 @@
     "globby": "^14.1.0"
   },
   "devDependencies": {
+    "@types/bun": "^1.2.9",
     "@types/node": "^22.13.1",
     "@typescript-eslint/eslint-plugin": "^8.53.0",
     "@typescript-eslint/parser": "^8.53.0",

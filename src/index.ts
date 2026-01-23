@@ -1,7 +1,7 @@
 /**
  * ccbox - Run Claude Code in isolated Docker containers.
  *
- * This is the main entry point for the ccbox npm package.
+ * This is the main entry point for the ccbox library.
  */
 
 // Re-export main types and functions

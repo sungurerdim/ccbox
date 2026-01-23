@@ -79,7 +79,7 @@ async function diagnoseContainerFailure(returncode: number, projectName: string)
   // Generic error with exit code
   if (returncode !== 0) {
     console.log(chalk.yellow(`Container exited with code ${returncode}`));
-    console.log(chalk.dim("Run with --debug-logs to preserve logs for investigation"));
+    console.log(chalk.dim("Logs are preserved by default for investigation"));
   }
 }
 
@@ -92,8 +92,8 @@ async function executeContainer(
   projectName: string,
   stack: LanguageStack,
   options: {
-    bare?: boolean;
-    debugLogs?: boolean;
+    fresh?: boolean;
+    ephemeralLogs?: boolean;
     debug?: number;
     prompt?: string;
     model?: string;
@@ -105,8 +105,8 @@ async function executeContainer(
   } = {}
 ): Promise<void> {
   const {
-    bare = false,
-    debugLogs = false,
+    fresh = false,
+    ephemeralLogs = false,
     debug = 0,
     prompt,
     model,
@@ -121,8 +121,8 @@ async function executeContainer(
   console.log();
 
   const cmd = getDockerRunCmd(config, projectPath, projectName, stack, {
-    bare,
-    debugLogs,
+    fresh,
+    ephemeralLogs,
     debug,
     prompt,
     model,
@@ -138,12 +138,24 @@ async function executeContainer(
 
   let returncode = 0;
   try {
-    // Note: Sleep inhibition is skipped in npm version (can be added later)
+    // Note: Sleep inhibition is skipped for now (can be added later)
     const result = await execa("docker", cmd.slice(1), {
-      stdio: [stdin, "inherit", "inherit"],
+      stdio: [stdin, "inherit", "pipe"],
       env: getDockerEnv(),
       reject: false,
     } as ExecaOptions);
+
+    // Filter known harmless warnings from stderr and pass the rest through
+    const stderr = String(result.stderr ?? "");
+    const filteredStderr = stderr
+      .split("\n")
+      .filter((line) => !line.includes("memory swappiness") && !line.includes("Memory swappiness"))
+      .join("\n")
+      .trim();
+    if (filteredStderr) {
+      process.stderr.write(filteredStderr + "\n");
+    }
+
     returncode = result.exitCode ?? 0;
   } catch (error) {
     const err = error as { exitCode?: number };
@@ -168,8 +180,8 @@ async function tryRunExistingImage(
   stack: LanguageStack,
   buildOnly: boolean,
   options: {
-    bare?: boolean;
-    debugLogs?: boolean;
+    fresh?: boolean;
+    ephemeralLogs?: boolean;
     debug?: number;
     prompt?: string;
     model?: string;
@@ -194,7 +206,7 @@ async function tryRunExistingImage(
   }
 
   // Detect deps for cache mounts (no prompt)
-  const depsList = !options.bare ? detectDependencies(projectPath) : [];
+  const depsList = !options.fresh ? detectDependencies(projectPath) : [];
 
   await executeContainer(config, projectPath, projectName, stack, {
     ...options,
@@ -216,8 +228,8 @@ async function buildAndRun(
   resolvedDepsMode: DepsMode,
   buildOnly: boolean,
   options: {
-    bare?: boolean;
-    debugLogs?: boolean;
+    fresh?: boolean;
+    ephemeralLogs?: boolean;
     debug?: number;
     prompt?: string;
     model?: string;
@@ -238,7 +250,7 @@ async function buildAndRun(
     console.log();
   }
 
-  // Ensure stack image is ready
+  // Ensure stack image is ready (CCO plugin installed during build)
   if (!(await ensureImageReady(selectedStack, false))) {
     process.exit(1);
   }
@@ -278,8 +290,8 @@ export async function run(
   buildOnly: boolean,
   path: string,
   options: {
-    bare?: boolean;
-    debugLogs?: boolean;
+    fresh?: boolean;
+    ephemeralLogs?: boolean;
     depsMode?: string;
     debug?: number;
     prompt?: string;
@@ -292,8 +304,8 @@ export async function run(
   } = {}
 ): Promise<void> {
   const {
-    bare = false,
-    debugLogs = false,
+    fresh = false,
+    ephemeralLogs = false,
     depsMode,
     debug = 0,
     prompt,
@@ -333,8 +345,8 @@ export async function run(
   // Phase 1: Try existing project image (skip prompts if found)
   if (
     await tryRunExistingImage(config, projectPath, projectName, initialStack, buildOnly, {
-      bare,
-      debugLogs,
+      fresh,
+      ephemeralLogs,
       debug,
       prompt,
       model,
@@ -349,7 +361,7 @@ export async function run(
   // Phase 2: No project image - prompt for deps, then stack
 
   // Detect dependencies
-  const depsList = !bare ? detectDependencies(projectPath) : [];
+  const depsList = !fresh ? detectDependencies(projectPath) : [];
   let resolvedDepsMode: DepsMode = "skip";
 
   // Prompt for deps first (before stack selection)
@@ -380,8 +392,8 @@ export async function run(
 
   // Phase 3: Build and run
   await buildAndRun(config, projectPath, projectName, selectedStack, depsList, resolvedDepsMode, buildOnly, {
-    bare,
-    debugLogs,
+    fresh,
+    ephemeralLogs,
     debug,
     prompt,
     model,

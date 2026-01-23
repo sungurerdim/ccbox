@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * End-to-End Test Suite for ccbox
  *
@@ -80,7 +80,7 @@ async function testAsync(name, fn) {
 
 function cli(args, options = {}) {
   try {
-    const stdout = execSync(`node ${ROOT}/dist/cli.js ${args}`, {
+    const stdout = execSync(`bun run ${ROOT}/src/cli.ts ${args}`, {
       encoding: "utf8",
       timeout: options.timeout || 60000,
       env: { ...process.env, NO_COLOR: "1" },

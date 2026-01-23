@@ -1,3 +1,4 @@
+/* eslint-disable no-useless-escape -- Dockerfile templates require \$ escapes for shell variables */
 /**
  * Docker file generation for ccbox.
  *
@@ -26,43 +27,72 @@ import { resolveForDocker } from "./paths.js";
 
 // Container constraints (SSOT - used for both docker run and prompt generation)
 const CONTAINER_CONSTRAINTS = {
-  tmpOptions: "noexec,nosuid",           // /tmp mount flags
   pidsLimit: DEFAULT_PIDS_LIMIT,         // from constants.ts
   capDrop: "ALL",                        // Linux capabilities
-  ephemeralPaths: ["/tmp", "/var/tmp", "~/.npm", "~/.cache"],
+  ephemeralPaths: ["/tmp", "/var/tmp", "~/.cache"],
 } as const;
 
 /** Generate container awareness prompt with current constraints. */
 function buildContainerAwarenessPrompt(persistentPaths: string): string {
-  const { pidsLimit, capDrop, ephemeralPaths } = CONTAINER_CONSTRAINTS;
+  const { pidsLimit } = CONTAINER_CONSTRAINTS;
+
+  // Detect host OS for better guidance
+  const hostOS = platform() === "win32" ? "Windows" : platform() === "darwin" ? "macOS" : "Linux";
 
   return `
-You are running inside a ccbox Docker container with an isolated filesystem.
+[CCBOX CONTAINER ENVIRONMENT]
 
-PERSISTENT directories (mounted from host, survive container exit):
-  ${persistentPaths}
+You are in an isolated Linux container (Debian). The host is ${hostOS}.
 
-EPHEMERAL (DELETED on exit): ${ephemeralPaths.join(", ")}, and everything else
+CRITICAL RULES:
+1. This is LINUX - use bash syntax, forward slashes, no Windows commands
+2. Only ${persistentPaths} persist - everything else is deleted on exit
+3. No Docker/systemd/GUI available - container has limited capabilities
 
-Container constraints:
-- /tmp has noexec, but $TMPDIR points to ~/.cache/tmp (exec allowed)
-- Process limit: ${pidsLimit} PIDs max (avoid excessive parallelism)
-- Capabilities dropped: ${capDrop} (no Docker-in-docker)
+COMMAND PATTERNS (use these, they work correctly):
+  git -C /path status              # NOT: cd /path && git status
+  npm --prefix /path install       # NOT: cd /path && npm install
+  python3 /path/script.py          # absolute paths always work
+  rg "pattern" /path               # ripgrep for fast search
 
-Best practices:
-- Run builds normally: npm install, pip install, go build, cargo build all work
-- node_modules/, venv/, target/ persist in project directory
+${hostOS === "Windows" ? `WINDOWS HOST: Paths are auto-translated (D:\\\\GitHub\\\\x → /d/GitHub/x)
+  NEVER use: cd /d, backslashes, cmd.exe syntax, PowerShell commands
+` : ""}
+FILESYSTEM:
+  PERSISTENT: ${persistentPaths}
+    → project files, node_modules/, venv/, target/, .git/ all saved
+  EPHEMERAL: /tmp, /root, /etc, /usr, apt packages, global installs
+    → lost on exit, use project-local alternatives
+
+AVAILABLE TOOLS:
+  git, gh (GitHub CLI), curl, wget, ssh, jq, yq, rg (ripgrep), fd
+  python3, pip3, gcc, make + stack-specific tools (node, cargo, go, etc.)
+
+LIMITATIONS:
+  ✗ docker, docker-compose, podman (no Docker-in-Docker)
+  ✗ systemctl, service (no init system)
+  ✗ npm -g, pip install --user (use local: npm install, pip install -t)
+  ✗ apt install (lost on exit - most tools pre-installed)
+  △ /tmp has noexec - use $TMPDIR for executable temp files
+  △ Max ${pidsLimit} processes - avoid excessive parallelism
+
+WHEN SOMETHING FAILS:
+  - Path error? Use absolute Linux paths, check translation
+  - Command not found? Try: which <cmd>, or use npx/pipx
+  - Permission denied? You're 'node' user, not root
+  - Can't install? Check if pre-installed or use project-local install
 `.trim();
 }
 
 // Common system packages (minimal - matches original)
 const COMMON_TOOLS = `
-# Ensure node user exists (idempotent - node:lts-slim has it, others don't)
-RUN id -u node &>/dev/null || useradd -m -s /bin/bash -u 1000 node
+# Ensure node user exists (idempotent - create if missing)
+RUN groupadd -g 1000 node 2>/dev/null || true && \\
+    useradd -m -s /bin/bash -u 1000 -g 1000 node 2>/dev/null || true
 
 # System packages (minimal but complete)
 RUN apt-get update && apt-get install -y --no-install-recommends \\
-    git curl ca-certificates bash \\
+    git curl ca-certificates bash gcc libc6-dev \\
     python3 python3-pip python3-venv python-is-python3 \\
     ripgrep jq procps openssh-client locales \\
     fd-find gh gosu \\
@@ -84,23 +114,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \\
     && rm -rf /usr/share/doc/* /usr/share/man/* /var/log/* \\
     && find /usr/share/locale -mindepth 1 -maxdepth 1 ! -name 'en*' -exec rm -rf {} +
 
+# Cross-platform path compatibility (Windows/macOS/Linux host paths)
+# Windows: /{a..z} (all drive letters)  macOS: /Users  Linux: /home already exists
+RUN bash -c 'mkdir -p /{a..z} /Users && chown node:node /{a..z} /Users'
+
 # Locale and performance environment
 ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \\
-    # Node.js performance: disable npm funding/update checks, increase GC efficiency
+    # Bun/Node.js: production mode for optimized behavior
     NODE_ENV=production \\
-    NPM_CONFIG_FUND=false \\
-    NPM_CONFIG_UPDATE_NOTIFIER=false \\
     # Git performance: disable advice messages, use parallel index
     GIT_ADVICE=0 \\
     GIT_INDEX_THREADS=0
 `;
 
-// Node.js installation snippet for non-node base images
-const NODE_INSTALL = `
-# Node.js (current)
-RUN curl -fsSL https://deb.nodesource.com/setup_current.x | bash - \\
-    && apt-get install -y --no-install-recommends nodejs \\
-    && rm -rf /var/lib/apt/lists/*
+// LD_PRELOAD path mapping library build
+const PATH_MAP_BUILD = `
+# Build LD_PRELOAD path mapping library (host path -> container path translation)
+COPY pathmap.c /tmp/pathmap.c
+RUN gcc -shared -fPIC -O2 -o /usr/local/lib/ccbox-pathmap.so /tmp/pathmap.c -ldl \\
+    && rm /tmp/pathmap.c
 `;
 
 // Python dev tools (without CCO)
@@ -120,21 +152,16 @@ RUN uv tool install ruff && uv tool install mypy && uv tool install pytest \\
 ENV PATH="/root/.local/bin:$PATH" PYTHONDONTWRITEBYTECODE=1
 `;
 
-// Claude Code + Node.js dev tools
-const NODE_TOOLS_BASE = `
-# Node.js dev tools (typescript, eslint, vitest) + Claude Code - latest versions
-RUN npm config set fund false \\
-    && npm config set update-notifier false \\
-    && npm config set progress false \\
-    && npm config set audit false \\
-    && npm config set loglevel warn \\
-    && npm config set fetch-retries 5 \\
-    && npm config set fetch-retry-mintimeout 20000 \\
-    && npm config set prefer-offline true \\
-    && npm install -g typescript eslint vitest @anthropic-ai/claude-code --force \\
-    && npm cache clean --force
+// Claude Code native binary installation
+// Install as root, then move to system-wide location for non-root access
+const CLAUDE_CODE_INSTALL = `
+# Claude Code (native binary - official installation)
+# Install first, then move to /usr/local/bin for non-root user access
+RUN curl -fsSL https://claude.ai/install.sh | bash -s latest \\
+    && mv /root/.local/bin/claude /usr/local/bin/claude \\
+    && chmod 755 /usr/local/bin/claude \\
+    && rm -rf /root/.local/share/claude
 `;
-
 
 // Entrypoint setup
 const ENTRYPOINT_SETUP = `
@@ -149,12 +176,12 @@ ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 `;
 
 // Dockerfile generators for each stack
-function minimalDockerfile(): string {
+function baseDockerfile(): string {
   return `# syntax=docker/dockerfile:1
-# ccbox/minimal - Node.js + Claude Code (no Python dev tools)
-FROM node:lts-slim
+# ccbox/base - Claude Code (default)
+FROM debian:bookworm-slim
 
-LABEL org.opencontainers.image.title="ccbox/minimal"
+LABEL org.opencontainers.image.title="ccbox/base"
 
 # Timezone passthrough from host
 ARG TZ=UTC
@@ -162,18 +189,9 @@ ENV TZ="\${TZ}"
 
 ENV DEBIAN_FRONTEND=noninteractive
 ${COMMON_TOOLS}
-${NODE_TOOLS_BASE}
+${PATH_MAP_BUILD}
+${CLAUDE_CODE_INSTALL}
 ${ENTRYPOINT_SETUP}
-`;
-}
-
-function baseDockerfile(): string {
-  // base is now same as minimal (CCO installation requires manual setup)
-  return `# syntax=docker/dockerfile:1
-# ccbox/base - default stack (alias for minimal)
-FROM ccbox/minimal
-
-LABEL org.opencontainers.image.title="ccbox/base"
 `;
 }
 
@@ -189,7 +207,7 @@ ${PYTHON_TOOLS_BASE}
 
 function goDockerfile(): string {
   return `# syntax=docker/dockerfile:1
-# ccbox/go - Go + Node.js + golangci-lint
+# ccbox/go - Go + Claude Code + golangci-lint
 FROM golang:latest
 
 LABEL org.opencontainers.image.title="ccbox/go"
@@ -199,8 +217,9 @@ ARG TZ=UTC
 ENV TZ="\${TZ}"
 
 ENV DEBIAN_FRONTEND=noninteractive
-${NODE_INSTALL}${COMMON_TOOLS}
-${NODE_TOOLS_BASE}
+${COMMON_TOOLS}
+${PATH_MAP_BUILD}
+${CLAUDE_CODE_INSTALL}
 # golangci-lint (latest)
 RUN curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b /usr/local/bin
 ${ENTRYPOINT_SETUP}
@@ -209,7 +228,7 @@ ${ENTRYPOINT_SETUP}
 
 function rustDockerfile(): string {
   return `# syntax=docker/dockerfile:1
-# ccbox/rust - Rust + Node.js + clippy + rustfmt
+# ccbox/rust - Rust + Claude Code + clippy + rustfmt
 FROM rust:latest
 
 LABEL org.opencontainers.image.title="ccbox/rust"
@@ -219,8 +238,9 @@ ARG TZ=UTC
 ENV TZ="\${TZ}"
 
 ENV DEBIAN_FRONTEND=noninteractive
-${NODE_INSTALL}${COMMON_TOOLS}
-${NODE_TOOLS_BASE}
+${COMMON_TOOLS}
+${PATH_MAP_BUILD}
+${CLAUDE_CODE_INSTALL}
 # Rust tools (clippy + rustfmt)
 RUN rustup component add clippy rustfmt
 ${ENTRYPOINT_SETUP}
@@ -229,7 +249,7 @@ ${ENTRYPOINT_SETUP}
 
 function javaDockerfile(): string {
   return `# syntax=docker/dockerfile:1
-# ccbox/java - Java (Temurin LTS) + Node.js + Maven
+# ccbox/java - Java (Temurin LTS) + Claude Code + Maven
 FROM eclipse-temurin:latest
 
 LABEL org.opencontainers.image.title="ccbox/java"
@@ -239,8 +259,9 @@ ARG TZ=UTC
 ENV TZ="\${TZ}"
 
 ENV DEBIAN_FRONTEND=noninteractive
-${NODE_INSTALL}${COMMON_TOOLS}
-${NODE_TOOLS_BASE}
+${COMMON_TOOLS}
+${PATH_MAP_BUILD}
+${CLAUDE_CODE_INSTALL}
 # Maven (latest from Apache)
 RUN set -eux; \\
     MVN_VER=$(curl -sfL https://api.github.com/repos/apache/maven/releases/latest | jq -r .tag_name | sed 's/maven-//'); \\
@@ -252,76 +273,357 @@ ${ENTRYPOINT_SETUP}
 
 function webDockerfile(): string {
   return `# syntax=docker/dockerfile:1
-# ccbox/web - Node.js + pnpm (fullstack)
+# ccbox/web - Node.js + TypeScript + test tools (fullstack)
 FROM ccbox/base
 
 LABEL org.opencontainers.image.title="ccbox/web"
 
-# pnpm (latest)
-RUN npm install -g pnpm --force && npm cache clean --force
+# Node.js LTS (for npm-based projects)
+RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - \\
+    && apt-get install -y --no-install-recommends nodejs \\
+    && rm -rf /var/lib/apt/lists/*
+
+# pnpm (via corepack)
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+# Node.js/TypeScript dev tools (typescript, eslint, vitest)
+RUN npm install -g typescript eslint vitest @types/node \\
+    && npm cache clean --force
 `;
 }
 
-function fullDockerfile(): string {
+// ══════════════════════════════════════════════════════════════════════════════
+// Extended Stack Dockerfiles
+// ══════════════════════════════════════════════════════════════════════════════
+
+function jvmDockerfile(): string {
   return `# syntax=docker/dockerfile:1
-# ccbox/full - All languages (Go + Rust + Java + pnpm)
-# Layered on ccbox/base for efficient caching
+# ccbox/jvm - Java + Scala + Clojure + Kotlin
+FROM ccbox/java
+
+LABEL org.opencontainers.image.title="ccbox/jvm"
+
+# Scala (sbt)
+RUN curl -fsSL "https://github.com/sbt/sbt/releases/download/v1.10.11/sbt-1.10.11.tgz" | tar -xz -C /opt \\
+    && ln -s /opt/sbt/bin/sbt /usr/local/bin/sbt
+
+# Clojure CLI
+RUN curl -fsSL https://download.clojure.org/install/linux-install.sh | bash
+
+# Kotlin compiler
+RUN KOTLIN_VER=\$(curl -sfL https://api.github.com/repos/JetBrains/kotlin/releases/latest | jq -r .tag_name | sed 's/v//') \\
+    && curl -fsSL "https://github.com/JetBrains/kotlin/releases/download/v\${KOTLIN_VER}/kotlin-compiler-\${KOTLIN_VER}.zip" -o /tmp/kotlin.zip \\
+    && unzip -q /tmp/kotlin.zip -d /opt && rm /tmp/kotlin.zip \\
+    && ln -s /opt/kotlinc/bin/kotlin /usr/local/bin/kotlin \\
+    && ln -s /opt/kotlinc/bin/kotlinc /usr/local/bin/kotlinc
+`;
+}
+
+function dotnetDockerfile(): string {
+  return `# syntax=docker/dockerfile:1
+# ccbox/dotnet - .NET SDK
 FROM ccbox/base
 
-LABEL org.opencontainers.image.title="ccbox/full"
+LABEL org.opencontainers.image.title="ccbox/dotnet"
 
-USER root
+# .NET SDK (latest LTS)
+RUN curl -fsSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel LTS --install-dir /usr/share/dotnet \\
+    && ln -s /usr/share/dotnet/dotnet /usr/local/bin/dotnet
+ENV DOTNET_ROOT=/usr/share/dotnet
+ENV DOTNET_CLI_TELEMETRY_OPTOUT=1
+`;
+}
 
-# Go (latest) + golangci-lint - auto-detect architecture
-RUN set -eux; \\
-    GO_ARCH=$(dpkg --print-architecture); \\
-    GO_VER=$(curl -fsSL https://go.dev/VERSION?m=text | head -1); \\
-    curl -fsSL "https://go.dev/dl/\${GO_VER}.linux-\${GO_ARCH}.tar.gz" | tar -C /usr/local -xzf -; \\
-    curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b /usr/local/bin
-ENV PATH=$PATH:/usr/local/go/bin GOPATH=/home/node/go
-ENV PATH=$PATH:$GOPATH/bin
+function swiftDockerfile(): string {
+  return `# syntax=docker/dockerfile:1
+# ccbox/swift - Swift
+FROM ccbox/base
 
-# Rust (latest) + clippy + rustfmt - install for node user
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \\
-    && /root/.cargo/bin/rustup component add clippy rustfmt
-ENV PATH="/root/.cargo/bin:$PATH"
+LABEL org.opencontainers.image.title="ccbox/swift"
 
-# Java (Temurin LTS) + Maven - auto-detect architecture
-RUN set -eux; \\
-    JAVA_ARCH=$(dpkg --print-architecture | sed 's/amd64/x64/;s/arm64/aarch64/'); \\
-    TEMURIN_VER=$(curl -sfL "https://api.adoptium.net/v3/info/available_releases" | jq -r '.most_recent_lts'); \\
-    curl -sfL "https://api.adoptium.net/v3/binary/latest/\${TEMURIN_VER}/ga/linux/\${JAVA_ARCH}/jdk/hotspot/normal/eclipse" -o /tmp/jdk.tar.gz; \\
-    mkdir -p /usr/lib/jvm && tar -xzf /tmp/jdk.tar.gz -C /usr/lib/jvm; \\
-    ln -s /usr/lib/jvm/jdk-* /usr/lib/jvm/temurin; \\
-    MVN_VER=$(curl -sfL https://api.github.com/repos/apache/maven/releases/latest | jq -r .tag_name | sed 's/maven-//'); \\
-    curl -sfL "https://archive.apache.org/dist/maven/maven-3/\${MVN_VER}/binaries/apache-maven-\${MVN_VER}-bin.tar.gz" | tar -xz -C /opt; \\
-    ln -s /opt/apache-maven-\${MVN_VER}/bin/mvn /usr/local/bin/mvn; \\
-    rm -f /tmp/jdk.tar.gz
-ENV JAVA_HOME=/usr/lib/jvm/temurin PATH=$JAVA_HOME/bin:$PATH
+# Swift (official release)
+RUN SWIFT_ARCH=\$(dpkg --print-architecture | sed 's/amd64/x86_64/;s/arm64/aarch64/') \\
+    && SWIFT_VER=\$(curl -sfL https://api.github.com/repos/swiftlang/swift/releases/latest | jq -r .tag_name | sed 's/swift-//;s/-RELEASE//') \\
+    && curl -fsSL "https://download.swift.org/swift-\${SWIFT_VER}-release/ubuntu2204/swift-\${SWIFT_VER}-RELEASE/swift-\${SWIFT_VER}-RELEASE-ubuntu22.04.tar.gz" | tar -xz -C /opt \\
+    && ln -s /opt/swift-\${SWIFT_VER}-RELEASE-ubuntu22.04/usr/bin/swift /usr/local/bin/swift \\
+    && ln -s /opt/swift-\${SWIFT_VER}-RELEASE-ubuntu22.04/usr/bin/swiftc /usr/local/bin/swiftc
+`;
+}
 
-# pnpm (latest)
-RUN npm install -g pnpm --force && npm cache clean --force
+function dartDockerfile(): string {
+  return `# syntax=docker/dockerfile:1
+# ccbox/dart - Dart + Flutter CLI
+FROM ccbox/base
 
-USER node
+LABEL org.opencontainers.image.title="ccbox/dart"
+
+# Dart SDK
+RUN DART_ARCH=\$(dpkg --print-architecture) \\
+    && curl -fsSL "https://storage.googleapis.com/dart-archive/channels/stable/release/latest/sdk/dartsdk-linux-\${DART_ARCH}-release.zip" -o /tmp/dart.zip \\
+    && unzip -q /tmp/dart.zip -d /opt && rm /tmp/dart.zip
+ENV PATH="/opt/dart-sdk/bin:$PATH"
+`;
+}
+
+function luaDockerfile(): string {
+  return `# syntax=docker/dockerfile:1
+# ccbox/lua - Lua + LuaRocks
+FROM ccbox/base
+
+LABEL org.opencontainers.image.title="ccbox/lua"
+
+# Lua + LuaRocks
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+    lua5.4 liblua5.4-dev luarocks \\
+    && rm -rf /var/lib/apt/lists/*
+`;
+}
+
+function cppDockerfile(): string {
+  return `# syntax=docker/dockerfile:1
+# ccbox/cpp - C++ + CMake + build tools
+FROM ccbox/base
+
+LABEL org.opencontainers.image.title="ccbox/cpp"
+
+# C++ toolchain + CMake + Ninja
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+    build-essential cmake ninja-build clang clang-format clang-tidy \\
+    && rm -rf /var/lib/apt/lists/*
+
+# Conan (C++ package manager)
+RUN pip3 install --break-system-packages conan
+`;
+}
+
+function dataDockerfile(): string {
+  return `# syntax=docker/dockerfile:1
+# ccbox/data - Python + R + Julia (data science)
+# Extends python stack - includes uv, ruff, pytest, mypy
+FROM ccbox/python
+
+LABEL org.opencontainers.image.title="ccbox/data"
+
+# R + common packages
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+    r-base r-base-dev \\
+    && rm -rf /var/lib/apt/lists/*
+
+# Julia
+RUN JULIA_ARCH=\$(dpkg --print-architecture | sed 's/amd64/x64/;s/arm64/aarch64/') \\
+    && JULIA_VER=\$(curl -sfL https://api.github.com/repos/JuliaLang/julia/releases/latest | jq -r .tag_name | sed 's/v//') \\
+    && JULIA_MINOR=\$(echo \$JULIA_VER | cut -d. -f1-2) \\
+    && curl -fsSL "https://julialang-s3.julialang.org/bin/linux/\${JULIA_ARCH}/\${JULIA_MINOR}/julia-\${JULIA_VER}-linux-\${JULIA_ARCH}.tar.gz" | tar -xz -C /opt \\
+    && ln -s /opt/julia-\${JULIA_VER}/bin/julia /usr/local/bin/julia
+`;
+}
+
+function systemsDockerfile(): string {
+  return `# syntax=docker/dockerfile:1
+# ccbox/systems - C++ + Zig + Nim (systems programming)
+# Extends cpp stack - includes CMake, Clang, Conan
+FROM ccbox/cpp
+
+LABEL org.opencontainers.image.title="ccbox/systems"
+
+# Zig
+RUN ZIG_ARCH=\$(dpkg --print-architecture | sed 's/amd64/x86_64/;s/arm64/aarch64/') \\
+    && ZIG_VER=\$(curl -sfL https://ziglang.org/download/index.json | jq -r '.master.version') \\
+    && curl -fsSL "https://ziglang.org/builds/zig-linux-\${ZIG_ARCH}-\${ZIG_VER}.tar.xz" | tar -xJ -C /opt \\
+    && ln -s /opt/zig-linux-\${ZIG_ARCH}-\${ZIG_VER}/zig /usr/local/bin/zig
+
+# Nim
+RUN curl -fsSL https://nim-lang.org/choosenim/init.sh | sh -s -- -y \\
+    && ln -s /root/.nimble/bin/nim /usr/local/bin/nim \\
+    && ln -s /root/.nimble/bin/nimble /usr/local/bin/nimble
+`;
+}
+
+function functionalDockerfile(): string {
+  return `# syntax=docker/dockerfile:1
+# ccbox/functional - Haskell + OCaml + Elixir/Erlang
+FROM ccbox/base
+
+LABEL org.opencontainers.image.title="ccbox/functional"
+
+# GHCup (manages GHC, Stack, Cabal for Haskell)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | \\
+    BOOTSTRAP_HASKELL_NONINTERACTIVE=1 BOOTSTRAP_HASKELL_MINIMAL=1 sh \\
+    && /root/.ghcup/bin/ghcup install ghc --set \\
+    && /root/.ghcup/bin/ghcup install cabal --set \\
+    && /root/.ghcup/bin/ghcup install stack --set
+ENV PATH="/root/.ghcup/bin:/root/.cabal/bin:/root/.local/bin:$PATH"
+
+# opam (OCaml package manager)
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+    opam bubblewrap \\
+    && rm -rf /var/lib/apt/lists/* \\
+    && opam init --disable-sandboxing --auto-setup -y \\
+    && opam install dune -y
+
+# Erlang + Elixir
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+    erlang elixir \\
+    && rm -rf /var/lib/apt/lists/* \\
+    && mix local.hex --force && mix local.rebar --force
+`;
+}
+
+function scriptingDockerfile(): string {
+  return `# syntax=docker/dockerfile:1
+# ccbox/scripting - Ruby + PHP + Perl (web backends)
+FROM ccbox/base
+
+LABEL org.opencontainers.image.title="ccbox/scripting"
+
+# Ruby + Bundler
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+    ruby ruby-dev ruby-bundler \\
+    && rm -rf /var/lib/apt/lists/* \\
+    && gem install bundler --no-document
+
+# PHP + common extensions + Composer
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+    php php-cli php-common php-curl php-json php-mbstring php-xml php-zip \\
+    && rm -rf /var/lib/apt/lists/* \\
+    && curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+
+# Perl + cpanminus
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+    perl cpanminus liblocal-lib-perl \\
+    && rm -rf /var/lib/apt/lists/*
+`;
+}
+
+function aiDockerfile(): string {
+  return `# syntax=docker/dockerfile:1
+# ccbox/ai - Python + Jupyter + PyTorch + TensorFlow (ML/AI)
+# Extends python stack - includes uv, ruff, pytest, mypy
+FROM ccbox/python
+
+LABEL org.opencontainers.image.title="ccbox/ai"
+
+# Jupyter + core ML libraries
+# Using uv for faster installation
+RUN uv pip install --system \\
+    jupyter jupyterlab notebook \\
+    numpy pandas scipy matplotlib seaborn \\
+    scikit-learn \\
+    && python -m compileall -q /usr/local/lib/python*/dist-packages 2>/dev/null || true
+
+# PyTorch (CPU version - GPU requires nvidia-docker)
+RUN uv pip install --system torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+
+# TensorFlow (CPU version)
+RUN uv pip install --system tensorflow
+`;
+}
+
+function mobileDockerfile(): string {
+  return `# syntax=docker/dockerfile:1
+# ccbox/mobile - Dart + Flutter SDK + Android tools
+# Extends dart stack - includes Dart SDK
+FROM ccbox/dart
+
+LABEL org.opencontainers.image.title="ccbox/mobile"
+
+# Flutter SDK
+RUN git clone https://github.com/flutter/flutter.git -b stable /opt/flutter --depth 1 \\
+    && /opt/flutter/bin/flutter precache \\
+    && /opt/flutter/bin/flutter config --no-analytics
+ENV PATH="/opt/flutter/bin:$PATH"
+
+# Android command-line tools (for flutter doctor)
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+    openjdk-17-jdk-headless \\
+    && rm -rf /var/lib/apt/lists/*
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+`;
+}
+
+function gameDockerfile(): string {
+  return `# syntax=docker/dockerfile:1
+# ccbox/game - C++ + SDL2 + Lua + OpenGL (game development)
+# Extends cpp stack - includes CMake, Clang, Conan
+FROM ccbox/cpp
+
+LABEL org.opencontainers.image.title="ccbox/game"
+
+# SDL2 + OpenGL development libraries
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+    libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev \\
+    libglew-dev libglm-dev libglfw3-dev \\
+    libopenal-dev libfreetype-dev \\
+    && rm -rf /var/lib/apt/lists/*
+
+# Lua + LuaRocks (for game scripting)
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+    lua5.4 liblua5.4-dev luarocks \\
+    && rm -rf /var/lib/apt/lists/*
+`;
+}
+
+function fullstackDockerfile(): string {
+  return `# syntax=docker/dockerfile:1
+# ccbox/fullstack - Node.js + Python + PostgreSQL client
+# Extends web stack - includes Node.js, TypeScript, eslint, vitest
+FROM ccbox/web
+
+LABEL org.opencontainers.image.title="ccbox/fullstack"
+
+${PYTHON_TOOLS_BASE}
+
+# Database clients (PostgreSQL, MySQL, SQLite)
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+    postgresql-client default-mysql-client sqlite3 \\
+    && rm -rf /var/lib/apt/lists/*
+
+# Redis CLI
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+    redis-tools \\
+    && rm -rf /var/lib/apt/lists/*
 `;
 }
 
 // Stack to Dockerfile generator mapping
 const DOCKERFILE_GENERATORS: Record<LanguageStack, () => string> = {
-  [LanguageStack.MINIMAL]: minimalDockerfile,
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Core Language Stacks
+  // ═══════════════════════════════════════════════════════════════════════════
   [LanguageStack.BASE]: baseDockerfile,
   [LanguageStack.PYTHON]: pythonDockerfile,
+  [LanguageStack.WEB]: webDockerfile,
   [LanguageStack.GO]: goDockerfile,
   [LanguageStack.RUST]: rustDockerfile,
   [LanguageStack.JAVA]: javaDockerfile,
-  [LanguageStack.WEB]: webDockerfile,
-  [LanguageStack.FULL]: fullDockerfile,
+  [LanguageStack.CPP]: cppDockerfile,
+  [LanguageStack.DOTNET]: dotnetDockerfile,
+  [LanguageStack.SWIFT]: swiftDockerfile,
+  [LanguageStack.DART]: dartDockerfile,
+  [LanguageStack.LUA]: luaDockerfile,
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Combined Language Stacks
+  // ═══════════════════════════════════════════════════════════════════════════
+  [LanguageStack.JVM]: jvmDockerfile,
+  [LanguageStack.FUNCTIONAL]: functionalDockerfile,
+  [LanguageStack.SCRIPTING]: scriptingDockerfile,
+  [LanguageStack.SYSTEMS]: systemsDockerfile,
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Use-Case Stacks
+  // ═══════════════════════════════════════════════════════════════════════════
+  [LanguageStack.DATA]: dataDockerfile,
+  [LanguageStack.AI]: aiDockerfile,
+  [LanguageStack.MOBILE]: mobileDockerfile,
+  [LanguageStack.GAME]: gameDockerfile,
+  [LanguageStack.FULLSTACK]: fullstackDockerfile,
 };
 
 /** Generate Dockerfile content for the given stack. */
 export function generateDockerfile(stack: LanguageStack): string {
   const generator = DOCKERFILE_GENERATORS[stack];
-  return generator ? generator() : minimalDockerfile();
+  return generator ? generator() : baseDockerfile();
 }
 
 /** Generate entrypoint script with comprehensive debugging support. */
@@ -377,70 +679,18 @@ if [[ "$(id -u)" == "0" ]]; then
     echo "[ccbox:WARN] Continuing anyway, but file ownership may be incorrect." >&2
 fi
 
-# CCO plugin installation (skip for bare mode and minimal stack)
-if [[ -n "$CCBOX_BARE_MODE" ]]; then
-    _log "Bare mode: vanilla Claude Code (no CCO)"
-elif [[ "$CCBOX_STACK" == "minimal" ]]; then
-    _log "Minimal stack: vanilla Claude Code (no CCO)"
-else
-    # Install/update CCO plugin (ensures latest commit each session)
-    # Note: Container should be started with --user flag (ccbox CLI does this)
-    _log "Installing CCO plugin..."
-
-    # Capture output for debugging
-    CCO_LOG=""
-
-    # Step 1: Uninstall existing plugin (only if installed)
-    if claude plugin list 2>&1 | grep -q "cco@ClaudeCodeOptimizer"; then
-        _log "Removing existing CCO plugin..."
-        CCO_LOG=$(claude plugin uninstall cco@ClaudeCodeOptimizer 2>&1) || true
-        _log_verbose "Uninstall output: $CCO_LOG"
-    fi
-
-    # Step 2: Remove marketplace (only if present)
-    if claude plugin marketplace list 2>&1 | grep -q "ClaudeCodeOptimizer"; then
-        _log "Removing existing marketplace..."
-        CCO_LOG=$(claude plugin marketplace remove ClaudeCodeOptimizer 2>&1) || true
-        _log_verbose "Marketplace remove output: $CCO_LOG"
-    fi
-
-    # Step 3: Add marketplace repo with full URL
-    _log "Adding CCO marketplace..."
-    CCO_LOG=$(claude plugin marketplace add https://github.com/sungurerdim/ClaudeCodeOptimizer 2>&1)
-    MARKETPLACE_EXIT=$?
-    if [[ $MARKETPLACE_EXIT -ne 0 ]]; then
-        if echo "$CCO_LOG" | grep -q "already"; then
-            _log_verbose "Marketplace already exists"
-        else
-            echo "[ccbox:WARN] Marketplace add failed (exit $MARKETPLACE_EXIT): $CCO_LOG" >&2
-        fi
+# ══════════════════════════════════════════════════════════════════════════════
+# LD_PRELOAD path mapping activation
+# Transparently maps host paths to container paths in filesystem calls
+# This replaces the old symlink-based approach for better reliability
+# ══════════════════════════════════════════════════════════════════════════════
+if [[ -n "$CCBOX_PATH_MAP" ]]; then
+    if [[ -f "/usr/local/lib/ccbox-pathmap.so" ]]; then
+        export LD_PRELOAD="/usr/local/lib/ccbox-pathmap.so"
+        _log "Path mapping active: $CCBOX_PATH_MAP"
+        _log_verbose "LD_PRELOAD: $LD_PRELOAD"
     else
-        _log "Marketplace added successfully"
-    fi
-
-    # Step 4: Install plugin
-    _log "Installing CCO plugin..."
-    CCO_LOG=$(claude plugin install cco@ClaudeCodeOptimizer 2>&1)
-    INSTALL_EXIT=$?
-    if [[ $INSTALL_EXIT -eq 0 ]]; then
-        _log "CCO plugin ready"
-    else
-        echo "[ccbox:WARN] CCO plugin installation failed (exit $INSTALL_EXIT): $CCO_LOG" >&2
-    fi
-
-    # Step 5: Fix plugin paths for host compatibility
-    # Replace container paths (/home/node/.claude/) with portable paths (~/.claude/)
-    # This ensures plugins work on both container and host
-    PLUGIN_DIR="/home/node/.claude/plugins"
-    if [[ -d "$PLUGIN_DIR" ]]; then
-        for json_file in "$PLUGIN_DIR"/*.json; do
-            [[ -f "$json_file" ]] || continue
-            if grep -q '/home/node/.claude/' "$json_file" 2>/dev/null; then
-                sed -i 's|/home/node/.claude/|~/.claude/|g' "$json_file"
-                _log_verbose "Fixed paths in $(basename "$json_file")"
-            fi
-        done
-        _log "Plugin paths fixed for host compatibility"
+        _log_verbose "Path mapping library not found, skipping LD_PRELOAD"
     fi
 fi
 
@@ -484,8 +734,7 @@ if ! command -v claude &>/dev/null; then
 fi
 
 _log_verbose "Claude location: $(which claude)"
-_log_verbose "Node version: $(node --version 2>/dev/null || echo 'N/A')"
-_log_verbose "npm version: $(npm --version 2>/dev/null || echo 'N/A')"
+_log_verbose "Claude version: $(claude --version 2>/dev/null || echo 'N/A')"
 
 _log "Starting Claude Code..."
 
@@ -509,6 +758,167 @@ else
 fi
 `;
 }
+/* eslint-enable no-useless-escape */
+
+/**
+ * Generate pathmap.c content for LD_PRELOAD path mapping library.
+ * This is embedded for compiled binary compatibility.
+ */
+function generatePathmapC(): string {
+  return `/**
+ * ccbox-pathmap: LD_PRELOAD path mapping library
+ * Intercepts filesystem calls and transparently maps host paths to container paths.
+ * Compile: gcc -shared -fPIC -O2 -o ccbox-pathmap.so pathmap.c -ldl
+ */
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <dirent.h>
+#include <unistd.h>
+#include <pthread.h>
+
+#define MAX_MAPPINGS 16
+#define MAX_PATH_LEN 4096
+
+typedef struct { char *from; char *to; size_t from_len; size_t to_len; } PathMapping;
+static PathMapping g_mappings[MAX_MAPPINGS];
+static int g_mapping_count = 0;
+static int g_initialized = 0;
+static pthread_once_t g_init_once = PTHREAD_ONCE_INIT;
+static __thread char g_path_buf[MAX_PATH_LEN];
+static __thread char g_path_buf2[MAX_PATH_LEN];
+
+static void normalize_path(char *path) { for (char *p = path; *p; p++) if (*p == '\\\\') *p = '/'; }
+
+static int path_prefix_matches(const char *prefix, size_t prefix_len, const char *path) {
+    if (strncmp(prefix, path, prefix_len) != 0) return 0;
+    char next = path[prefix_len];
+    return (next == '\\0' || next == '/');
+}
+
+static void parse_mappings(void) {
+    const char *env = getenv("CCBOX_PATH_MAP");
+    if (!env || !*env) return;
+    char *env_copy = strdup(env);
+    if (!env_copy) return;
+    char *saveptr = NULL;
+    char *mapping = strtok_r(env_copy, ";", &saveptr);
+    while (mapping && g_mapping_count < MAX_MAPPINGS) {
+        char *sep = NULL;
+        if (mapping[0] && mapping[1] == ':' && (mapping[2] == '/' || mapping[2] == '\\\\'))
+            sep = strchr(mapping + 2, ':');
+        else sep = strchr(mapping, ':');
+        if (sep) {
+            *sep = '\\0';
+            char *from = mapping, *to = sep + 1;
+            if (*from && *to) {
+                PathMapping *m = &g_mappings[g_mapping_count];
+                m->from = strdup(from); m->to = strdup(to);
+                if (m->from && m->to) {
+                    normalize_path(m->from);
+                    m->from_len = strlen(m->from);
+                    while (m->from_len > 1 && m->from[m->from_len - 1] == '/') m->from[--m->from_len] = '\\0';
+                    m->to_len = strlen(m->to);
+                    while (m->to_len > 1 && m->to[m->to_len - 1] == '/') m->to[--m->to_len] = '\\0';
+                    g_mapping_count++;
+                }
+            }
+        }
+        mapping = strtok_r(NULL, ";", &saveptr);
+    }
+    free(env_copy);
+}
+
+static void do_init(void) { if (g_initialized) return; g_initialized = 1; parse_mappings(); }
+__attribute__((constructor)) static void pathmap_init(void) { pthread_once(&g_init_once, do_init); }
+static inline void ensure_init(void) { if (__builtin_expect(!g_initialized, 0)) pthread_once(&g_init_once, do_init); }
+
+static const char *transform_path_buf(const char *path, char *buf, size_t bufsize) {
+    if (!path || !*path) return path;
+    ensure_init();
+    if (g_mapping_count == 0) return path;
+    size_t path_len = strlen(path);
+    if (path_len >= bufsize - 1) return path;
+    char normalized[MAX_PATH_LEN];
+    memcpy(normalized, path, path_len + 1);
+    normalize_path(normalized);
+    for (int i = 0; i < g_mapping_count; i++) {
+        PathMapping *m = &g_mappings[i];
+        if (path_prefix_matches(m->from, m->from_len, normalized)) {
+            const char *suffix = normalized + m->from_len;
+            size_t suffix_len = strlen(suffix);
+            if (m->to_len + suffix_len >= bufsize) return path;
+            memcpy(buf, m->to, m->to_len);
+            memcpy(buf + m->to_len, suffix, suffix_len + 1);
+            return buf;
+        }
+    }
+    if (memchr(path, '\\\\', path_len)) { memcpy(buf, normalized, path_len + 1); return buf; }
+    return path;
+}
+
+static const char *transform_path(const char *path) { return transform_path_buf(path, g_path_buf, sizeof(g_path_buf)); }
+static const char *transform_path2(const char *path) { return transform_path_buf(path, g_path_buf2, sizeof(g_path_buf2)); }
+
+#define ORIG_FUNC(ret, name, ...) \\
+    static ret (*orig_##name)(__VA_ARGS__) = NULL; \\
+    static inline ret (*get_orig_##name(void))(__VA_ARGS__) { \\
+        if (__builtin_expect(!orig_##name, 0)) orig_##name = dlsym(RTLD_NEXT, #name); \\
+        return orig_##name; \\
+    }
+
+ORIG_FUNC(int, open, const char *, int, ...)
+ORIG_FUNC(int, openat, int, const char *, int, ...)
+ORIG_FUNC(FILE *, fopen, const char *, const char *)
+ORIG_FUNC(int, stat, const char *, struct stat *)
+ORIG_FUNC(int, lstat, const char *, struct stat *)
+ORIG_FUNC(int, access, const char *, int)
+ORIG_FUNC(DIR *, opendir, const char *)
+ORIG_FUNC(int, mkdir, const char *, mode_t)
+ORIG_FUNC(int, rmdir, const char *)
+ORIG_FUNC(int, chdir, const char *)
+ORIG_FUNC(int, unlink, const char *)
+ORIG_FUNC(int, rename, const char *, const char *)
+ORIG_FUNC(int, chmod, const char *, mode_t)
+ORIG_FUNC(char *, realpath, const char *, char *)
+ORIG_FUNC(ssize_t, readlink, const char *, char *, size_t)
+ORIG_FUNC(int, symlink, const char *, const char *)
+ORIG_FUNC(int, link, const char *, const char *)
+
+int open(const char *path, int flags, ...) {
+    mode_t mode = 0;
+    if (flags & (O_CREAT | O_TMPFILE)) { va_list ap; va_start(ap, flags); mode = va_arg(ap, mode_t); va_end(ap); }
+    return get_orig_open()(transform_path(path), flags, mode);
+}
+int openat(int dirfd, const char *path, int flags, ...) {
+    mode_t mode = 0;
+    if (flags & (O_CREAT | O_TMPFILE)) { va_list ap; va_start(ap, flags); mode = va_arg(ap, mode_t); va_end(ap); }
+    return get_orig_openat()(dirfd, transform_path(path), flags, mode);
+}
+FILE *fopen(const char *path, const char *mode) { return get_orig_fopen()(transform_path(path), mode); }
+int stat(const char *path, struct stat *buf) { return get_orig_stat()(transform_path(path), buf); }
+int lstat(const char *path, struct stat *buf) { return get_orig_lstat()(transform_path(path), buf); }
+int access(const char *path, int mode) { return get_orig_access()(transform_path(path), mode); }
+DIR *opendir(const char *name) { return get_orig_opendir()(transform_path(name)); }
+int mkdir(const char *path, mode_t mode) { return get_orig_mkdir()(transform_path(path), mode); }
+int rmdir(const char *path) { return get_orig_rmdir()(transform_path(path)); }
+int chdir(const char *path) { return get_orig_chdir()(transform_path(path)); }
+int unlink(const char *path) { return get_orig_unlink()(transform_path(path)); }
+int rename(const char *oldpath, const char *newpath) { return get_orig_rename()(transform_path(oldpath), transform_path2(newpath)); }
+int chmod(const char *path, mode_t mode) { return get_orig_chmod()(transform_path(path), mode); }
+char *realpath(const char *path, char *resolved_path) { return get_orig_realpath()(transform_path(path), resolved_path); }
+ssize_t readlink(const char *path, char *buf, size_t bufsiz) { return get_orig_readlink()(transform_path(path), buf, bufsiz); }
+int symlink(const char *target, const char *linkpath) { return get_orig_symlink()(target, transform_path(linkpath)); }
+int link(const char *oldpath, const char *newpath) { return get_orig_link()(transform_path(oldpath), transform_path2(newpath)); }
+`;
+}
 
 /**
  * Write Dockerfile and entrypoint to build directory.
@@ -525,6 +935,17 @@ export function writeBuildFiles(stack: LanguageStack): string {
 
   writeFileSync(join(buildDir, "Dockerfile"), dockerfile, { encoding: "utf-8" });
   writeFileSync(join(buildDir, "entrypoint.sh"), entrypoint, { encoding: "utf-8", mode: 0o755 });
+
+  // Copy pathmap.c for LD_PRELOAD library build
+  const pathmapSrc = join(__dirname, "..", "native", "pathmap.c");
+  let pathmapContent: string;
+  if (existsSync(pathmapSrc)) {
+    pathmapContent = readFileSync(pathmapSrc, "utf-8");
+  } else {
+    // Fallback to embedded version when running from compiled binary
+    pathmapContent = generatePathmapC();
+  }
+  writeFileSync(join(buildDir, "pathmap.c"), pathmapContent, { encoding: "utf-8" });
 
   return buildDir;
 }
@@ -772,7 +1193,9 @@ export function buildClaudeArgs(options: {
 
 /**
  * Generate docker run command with full cleanup on exit.
- * Handles cross-platform path conversion and environment setup.
+ * Two mount modes:
+ * - Normal: full ~/.claude mount
+ * - Fresh (--fresh): only credentials, clean slate for customizations
  */
 export function getDockerRunCmd(
   config: Config,
@@ -780,8 +1203,8 @@ export function getDockerRunCmd(
   projectName: string,
   stack: LanguageStack,
   options: {
-    bare?: boolean;
-    debugLogs?: boolean;
+    fresh?: boolean;
+    ephemeralLogs?: boolean;
     debug?: number;
     prompt?: string;
     model?: string;
@@ -812,31 +1235,27 @@ export function getDockerRunCmd(
   }
 
   cmd.push("--name", containerName);
+
+  // Project mount (always)
   cmd.push("-v", `${dockerProjectPath}:/home/node/${dirName}:rw`);
 
+  // Claude config mount
   const dockerClaudeConfig = resolveForDocker(claudeConfig);
-
-  if (options.bare) {
-    addBareModeMounts(cmd, claudeConfig);
+  if (options.fresh) {
+    addFreshModeMounts(cmd, claudeConfig);
   } else {
     cmd.push("-v", `${dockerClaudeConfig}:/home/node/.claude:rw`);
   }
 
-  // Mount ~/.claude.json for MCP config, OAuth tokens, and plugin data
-  // Create if not exists so plugin installations persist to host
-  const claudeJsonPath = join(dirname(claudeConfig), ".claude.json");
-  if (!existsSync(claudeJsonPath)) {
-    writeFileSync(claudeJsonPath, "{}", { encoding: "utf-8" });
-  }
-  const dockerClaudeJson = resolveForDocker(claudeJsonPath);
-  cmd.push("-v", `${dockerClaudeJson}:/home/node/.claude.json:rw`);
+  // Working directory
+  cmd.push("-w", `/home/node/${dirName}`);
 
-  // Add container configuration
-  addTmpfsMounts(cmd, dirName);
+  // User mapping
   addUserMapping(cmd);
+
+  // Security options
   addSecurityOptions(cmd);
   addDnsOptions(cmd);
-  addBuildEnv(cmd);
 
   // Resource limits
   if (!options.unrestricted) {
@@ -844,6 +1263,7 @@ export function getDockerRunCmd(
   }
 
   // Environment variables
+  cmd.push("-e", "HOME=/home/node");
   addTerminalEnv(cmd);
   addClaudeEnv(cmd);
 
@@ -855,18 +1275,23 @@ export function getDockerRunCmd(
     cmd.push("-e", "CCBOX_UNRESTRICTED=1");
   }
 
-  if (!options.debugLogs) {
+  // Debug logs: ephemeral if requested, otherwise normal (persisted to host)
+  if (options.ephemeralLogs) {
     cmd.push("--tmpfs", "/home/node/.claude/debug:rw,size=512m,mode=0777");
   }
 
-  // Compute persistent paths for container awareness
-  const persistentPaths = options.bare
-    ? `/home/node/${dirName}`  // bare mode: only project dir is persistent
+  // Persistent paths for container awareness
+  const persistentPaths = options.fresh
+    ? `/home/node/${dirName}`  // fresh mode: only project dir is persistent
     : `/home/node/${dirName}, /home/node/.claude`;
   cmd.push("-e", `CCBOX_PERSISTENT_PATHS=${persistentPaths}`);
 
-  // Pass stack info for CCO installation decision
-  cmd.push("-e", `CCBOX_STACK=${stack}`);
+  // LD_PRELOAD path mapping: host paths -> container paths
+  // This enables transparent path translation for config files with absolute host paths
+  if (!options.fresh) {
+    const normalizedHostPath = claudeConfig.replace(/\\/g, "/");
+    cmd.push("-e", `CCBOX_PATH_MAP=${normalizedHostPath}:/home/node/.claude`);
+  }
 
   addGitEnv(cmd, config);
 
@@ -888,14 +1313,14 @@ export function getDockerRunCmd(
 
 // Helper functions for docker run command building
 
-function addBareModeMounts(cmd: string[], claudeConfig: string): void {
+function addFreshModeMounts(cmd: string[], claudeConfig: string): void {
   const [uid, gid] = getHostUserIds();
 
-  // Base tmpfs mount
+  // Base tmpfs mount for .claude directory
   cmd.push("--tmpfs", `/home/node/.claude:rw,size=64m,uid=${uid},gid=${gid},mode=0755`);
 
-  // Mount credential files INTO the tmpfs
-  const credentialFiles = [".credentials.json", ".claude.json", "settings.json"];
+  // Mount only credential files from host (auth persists)
+  const credentialFiles = [".credentials.json", "settings.json"];
   for (const f of credentialFiles) {
     const hostFile = join(claudeConfig, f);
     if (existsSync(hostFile)) {
@@ -904,17 +1329,8 @@ function addBareModeMounts(cmd: string[], claudeConfig: string): void {
     }
   }
 
-  // tmpfs for customization directories
-  const userDirs = ["rules", "commands", "agents", "skills"];
-  for (const d of userDirs) {
-    cmd.push("--tmpfs", `/home/node/.claude/${d}:rw,size=16m,uid=${uid},gid=${gid},mode=0755`);
-  }
-
-  // Hide host's CLAUDE.md
-  cmd.push("-v", "/dev/null:/home/node/.claude/CLAUDE.md:ro");
-
-  // Signal bare mode
-  cmd.push("-e", "CCBOX_BARE_MODE=1");
+  // Signal fresh mode
+  cmd.push("-e", "CCBOX_FRESH_MODE=1");
 }
 
 function addGitEnv(cmd: string[], config: Config): void {
@@ -989,53 +1405,11 @@ function addSecurityOptions(cmd: string[]): void {
   );
 }
 
-function addTmpfsMounts(cmd: string[], dirName: string): void {
-  const [uid, gid] = getHostUserIds();
-  const { tmpOptions } = CONTAINER_CONSTRAINTS;
-  cmd.push(
-    "-w",
-    `/home/node/${dirName}`,
-    "--tmpfs",
-    `/tmp:rw,${tmpOptions},size=512m`,
-    "--tmpfs",
-    `/var/tmp:rw,${tmpOptions},size=256m`,
-    "--tmpfs",
-    `/home/node/.npm:rw,size=256m,uid=${uid},gid=${gid},mode=0755`,
-    "--tmpfs",
-    `/home/node/.cache:rw,size=512m,uid=${uid},gid=${gid},mode=0755`
-  );
-}
 
 function addDnsOptions(cmd: string[]): void {
   cmd.push("--dns-opt", "ndots:1", "--dns-opt", "timeout:1", "--dns-opt", "attempts:1");
 }
 
-function addBuildEnv(cmd: string[]): void {
-  // Use in-container tmpfs for temp files (exec allowed, no cross-device issues)
-  // /home/node/.cache is mounted as tmpfs without noexec
-  const tmpPath = "/home/node/.cache/tmp";
-
-  cmd.push(
-    // General temp (POSIX standard - used by most tools)
-    "-e", `TMPDIR=${tmpPath}`,
-    "-e", `TEMP=${tmpPath}`,             // Windows-style (some cross-platform tools)
-    "-e", `TMP=${tmpPath}`,              // Alternative
-
-    // Node.js / npm
-    "-e", `npm_config_tmp=${tmpPath}`,   // npm temp (node-gyp native builds)
-
-    // Python
-    "-e", `PIP_BUILD_DIR=${tmpPath}`,    // pip wheel builds
-
-    // Go
-    "-e", `GOTMPDIR=${tmpPath}`,         // Go compiler temp
-
-    // Java / Maven / Gradle
-    "-e", `MAVEN_OPTS=-Djava.io.tmpdir=${tmpPath}`,  // Maven temp
-    "-e", `GRADLE_USER_HOME=${tmpPath}/.gradle`,     // Gradle home (includes tmp)
-    "-e", `_JAVA_OPTIONS=-Djava.io.tmpdir=${tmpPath}`, // Global Java temp fallback
-  );
-}
 
 function addClaudeEnv(cmd: string[]): void {
   const tz = getHostTimezone();
@@ -1060,3 +1434,4 @@ function addClaudeEnv(cmd: string[]): void {
     "NODE_COMPILE_CACHE=/home/node/.cache/node-compile"
   );
 }
+

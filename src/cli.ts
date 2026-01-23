@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * CLI entry point for ccbox.
  *
@@ -86,8 +86,8 @@ program
   .option("-b, --build", "Build image only (no start)")
   .option("--path <path>", "Project path", ".")
   .option("-C, --chdir <dir>", "Change to directory before running (like git -C)")
-  .option("--bare", "Vanilla mode: auth only, no CCO/settings/rules")
-  .option("--debug-logs", "Persist debug logs (default: ephemeral tmpfs)")
+  .option("--fresh", "Fresh mode: auth only, clean slate (no rules/settings/commands)")
+  .option("--no-debug-logs", "Don't persist debug logs (use ephemeral tmpfs)")
   .option("--deps", "Install all dependencies (including dev)")
   .option("--deps-prod", "Install production dependencies only")
   .option("--no-deps", "Skip dependency installation")
@@ -128,8 +128,8 @@ program
     }
 
     await run(options.stack ?? null, !!options.build, options.path ?? ".", {
-      bare: options.bare,
-      debugLogs: options.debugLogs,
+      fresh: options.fresh,
+      ephemeralLogs: !options.debugLogs,
       depsMode,
       debug: options.debug,
       prompt: options.prompt,
@@ -165,8 +165,8 @@ program
         }
       }
     } else {
-      // Default: rebuild minimal + base (full refresh)
-      stacksToBuild.push(LanguageStack.MINIMAL, LanguageStack.BASE);
+      // Default: rebuild base (full refresh)
+      stacksToBuild.push(LanguageStack.BASE);
     }
 
     if (stacksToBuild.length === 0) {
@@ -291,7 +291,7 @@ program
     console.log();
     console.log(chalk.dim("Usage: ccbox --stack=go"));
     console.log(chalk.dim("All stacks include: Python + Node.js + lint/test tools"));
-    console.log(chalk.dim("All except 'minimal' include CCO plugin (installed at runtime)"));
+    console.log(chalk.dim("CCO plugin available via: claude plugin install cco@ClaudeCodeOptimizer"));
   });
 
 // Parse and run
