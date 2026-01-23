@@ -119,6 +119,12 @@ const PACKAGE_MANAGERS: PackageManager[] = [
     priority: PRIORITY_HIGHEST,
   },
   {
+    name: "bun",
+    detect: ["bunfig.toml", "package.json"],
+    detectFn: "detectBun",
+    priority: PRIORITY_HIGHEST,
+  },
+  {
     name: "pnpm",
     detect: ["pnpm-lock.yaml"],
     installAll: "pnpm install",
@@ -582,6 +588,29 @@ function detectOpam(path: string, _files: string[]): DepsInfo | null {
   return null;
 }
 
+function detectBun(path: string, files: string[]): DepsInfo | null {
+  // bunfig.toml varsa kesinlikle bun
+  if (existsSync(join(path, "bunfig.toml"))) {
+    return createDepsInfo("bun", files, "bun install", "bun install --production", true, PRIORITY_HIGHEST);
+  }
+
+  // package.json içinde packageManager field'ı kontrol et
+  const packageJsonPath = join(path, "package.json");
+  if (existsSync(packageJsonPath)) {
+    try {
+      const content = readFileSync(packageJsonPath, "utf-8");
+      const pkg = JSON.parse(content);
+      if (pkg.packageManager && typeof pkg.packageManager === "string" && pkg.packageManager.startsWith("bun@")) {
+        return createDepsInfo("bun", files, "bun install", "bun install --production", true, PRIORITY_HIGHEST);
+      }
+    } catch {
+      // JSON parse hatası - devam et
+    }
+  }
+
+  return null;
+}
+
 function detectMake(path: string, files: string[]): DepsInfo | null {
   const makefilePath = join(path, "Makefile");
   if (!existsSync(makefilePath)) {return null;}
@@ -610,6 +639,7 @@ const DETECT_FUNCTIONS: Record<string, DetectFn> = {
   detectLuarocks,
   detectNimble,
   detectOpam,
+  detectBun,
   detectMake,
 };
 

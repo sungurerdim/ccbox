@@ -1,12 +1,12 @@
 # Dependencies
 node_modules/
+package-lock.json
 
 # Build output
 dist/
 
 # Logs
 *.log
-npm-debug.log*
 
 # Runtime
 .env
@@ -28,5 +28,17 @@ coverage/
 # Temp files
 *.tmp
 *.temp
-ccbox-1.0.0.tgz
-ccbox-*.tgz
+
+# Bun
+bun.lockb
+
+# Native code (embedded in generator.ts)
+native/
+
+# Build artifacts
+ccbox.exe
+ccbox
+*.exe
+
+# Windows artifacts
+nul

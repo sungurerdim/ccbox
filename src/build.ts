@@ -49,7 +49,7 @@ export async function buildImage(stack: LanguageStack): Promise<boolean> {
   };
 
   // Build args: only use --pull for stacks with external base images (no ccbox dependency)
-  // Stacks with ccbox dependencies (base, python, web, full) use local images
+  // Stacks with ccbox dependencies (python, web, full) use local images
   const buildArgs = [
     "build",
     "--output",
@@ -60,7 +60,7 @@ export async function buildImage(stack: LanguageStack): Promise<boolean> {
     "--progress=auto",
   ];
 
-  // Only pull for stacks with external base images (minimal, go, rust, java)
+  // Only pull for stacks with external base images (base, go, rust, java)
   if (dependency === null) {
     buildArgs.push("--pull");
   }

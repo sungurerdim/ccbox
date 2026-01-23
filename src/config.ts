@@ -19,46 +19,132 @@ import { DOCKER_COMMAND_TIMEOUT } from "./constants.js";
 /**
  * Supported language stacks for Docker images.
  *
- * Hierarchy: minimal -> base -> python/web/full (+ extras)
- * Standalone: go, rust, java (own base images)
+ * Architecture:
+ * - base: Minimal Claude Code only (vanilla benchmark)
+ * - Language stacks: Built on base or official language images
+ * - full: Everything combined (development/testing)
+ *
+ * Hierarchy:
+ *   debian:bookworm-slim -> base -> python/web/ruby/php/elixir/dotnet/...
+ *   golang:latest -> go
+ *   rust:latest -> rust
+ *   eclipse-temurin:latest -> java -> jvm
  */
 export enum LanguageStack {
-  MINIMAL = "minimal", // Node.js + Claude Code (~300MB)
-  BASE = "base", // minimal alias (default) (~300MB)
-  PYTHON = "python", // base + ruff, mypy, pytest, uv (~400MB)
-  GO = "go", // Go + Node.js + golangci-lint (~650MB)
-  RUST = "rust", // Rust + Node.js + clippy (~800MB)
-  JAVA = "java", // JDK (Temurin LTS) + Maven (~900MB)
-  WEB = "web", // base + pnpm (~350MB)
-  FULL = "full", // base + Go + Rust + Java + pnpm (~1.3GB)
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Core Language Stacks
+  // ═══════════════════════════════════════════════════════════════════════════
+  BASE = "base",         // Claude Code only (vanilla/benchmark)
+  PYTHON = "python",     // Python + uv + ruff + pytest + mypy
+  WEB = "web",           // Node.js + TypeScript + eslint + vitest
+  GO = "go",             // Go + golangci-lint (golang base)
+  RUST = "rust",         // Rust + clippy + rustfmt (rust base)
+  JAVA = "java",         // JDK + Maven + Gradle (temurin base)
+  CPP = "cpp",           // C++ + CMake + Clang + Conan
+  DOTNET = "dotnet",     // .NET SDK + C# + F#
+  SWIFT = "swift",       // Swift
+  DART = "dart",         // Dart SDK
+  LUA = "lua",           // Lua + LuaRocks
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Combined Language Stacks (multiple languages grouped)
+  // ═══════════════════════════════════════════════════════════════════════════
+  JVM = "jvm",           // Java + Scala + Clojure + Kotlin
+  FUNCTIONAL = "functional", // Haskell + OCaml + Elixir/Erlang
+  SCRIPTING = "scripting",   // Ruby + PHP + Perl
+  SYSTEMS = "systems",   // C++ + Zig + Nim
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Use-Case Stacks (project type focused)
+  // ═══════════════════════════════════════════════════════════════════════════
+  DATA = "data",         // Python + R + Julia (data science)
+  AI = "ai",             // Python + Jupyter + PyTorch + TensorFlow
+  MOBILE = "mobile",     // Dart + Flutter SDK + Android tools
+  GAME = "game",         // C++ + SDL2 + Lua + OpenGL
+  FULLSTACK = "fullstack", // Node.js + Python + DB clients
 }
 
 /** Stack descriptions for CLI help (sizes are estimates) */
 export const STACK_INFO: Record<LanguageStack, { description: string; sizeMB: number }> = {
-  [LanguageStack.MINIMAL]: { description: "Node.js + Claude Code", sizeMB: 300 },
-  [LanguageStack.BASE]: { description: "minimal alias (default)", sizeMB: 300 },
-  [LanguageStack.PYTHON]: { description: "base + ruff, mypy, pytest, uv", sizeMB: 400 },
-  [LanguageStack.GO]: { description: "Go + Node.js + golangci-lint", sizeMB: 650 },
-  [LanguageStack.RUST]: { description: "Rust + Node.js + clippy", sizeMB: 800 },
-  [LanguageStack.JAVA]: { description: "JDK (Temurin) + Maven", sizeMB: 900 },
-  [LanguageStack.WEB]: { description: "base + pnpm", sizeMB: 350 },
-  [LanguageStack.FULL]: { description: "base + Go + Rust + Java + pnpm", sizeMB: 1300 },
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Core Language Stacks
+  // ═══════════════════════════════════════════════════════════════════════════
+  [LanguageStack.BASE]: { description: "Claude Code only (vanilla)", sizeMB: 200 },
+  [LanguageStack.PYTHON]: { description: "Python + uv + ruff + pytest", sizeMB: 350 },
+  [LanguageStack.WEB]: { description: "Node.js + TypeScript + eslint + vitest", sizeMB: 400 },
+  [LanguageStack.GO]: { description: "Go + golangci-lint", sizeMB: 550 },
+  [LanguageStack.RUST]: { description: "Rust + clippy + rustfmt", sizeMB: 700 },
+  [LanguageStack.JAVA]: { description: "JDK + Maven + Gradle", sizeMB: 600 },
+  [LanguageStack.CPP]: { description: "C++ + CMake + Clang + Conan", sizeMB: 450 },
+  [LanguageStack.DOTNET]: { description: ".NET SDK + C# + F#", sizeMB: 500 },
+  [LanguageStack.SWIFT]: { description: "Swift", sizeMB: 500 },
+  [LanguageStack.DART]: { description: "Dart SDK", sizeMB: 300 },
+  [LanguageStack.LUA]: { description: "Lua + LuaRocks", sizeMB: 250 },
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Combined Language Stacks
+  // ═══════════════════════════════════════════════════════════════════════════
+  [LanguageStack.JVM]: { description: "Java + Scala + Clojure + Kotlin", sizeMB: 900 },
+  [LanguageStack.FUNCTIONAL]: { description: "Haskell + OCaml + Elixir/Erlang", sizeMB: 900 },
+  [LanguageStack.SCRIPTING]: { description: "Ruby + PHP + Perl (web backends)", sizeMB: 450 },
+  [LanguageStack.SYSTEMS]: { description: "C++ + Zig + Nim (low-level)", sizeMB: 550 },
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Use-Case Stacks
+  // ═══════════════════════════════════════════════════════════════════════════
+  [LanguageStack.DATA]: { description: "Python + R + Julia (data science)", sizeMB: 800 },
+  [LanguageStack.AI]: { description: "Python + Jupyter + PyTorch + TensorFlow", sizeMB: 2500 },
+  [LanguageStack.MOBILE]: { description: "Dart + Flutter SDK + Android tools", sizeMB: 1500 },
+  [LanguageStack.GAME]: { description: "C++ + SDL2 + Lua + OpenGL", sizeMB: 600 },
+  [LanguageStack.FULLSTACK]: { description: "Node.js + Python + PostgreSQL client", sizeMB: 700 },
 };
 
 /**
  * Stack dependencies: which stack must be built first.
- * Hierarchy: minimal -> base -> python/web/full
- * GO, RUST, JAVA use their own base images (golang:latest, rust:latest, etc.)
+ * null = uses external base image (golang:latest, rust:latest, etc.)
+ *
+ * Hierarchy:
+ *   debian:bookworm-slim -> base -> python -> data, ai
+ *                                -> web -> fullstack
+ *                                -> cpp -> systems, game
+ *                                -> dart -> mobile
+ *                                -> functional, scripting, dotnet, swift, lua
+ *   golang:latest -> go
+ *   rust:latest -> rust
+ *   eclipse-temurin:latest -> java -> jvm
  */
 export const STACK_DEPENDENCIES: Record<LanguageStack, LanguageStack | null> = {
-  [LanguageStack.MINIMAL]: null,
-  [LanguageStack.BASE]: LanguageStack.MINIMAL,
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Core Language Stacks
+  // ═══════════════════════════════════════════════════════════════════════════
+  [LanguageStack.BASE]: null,
   [LanguageStack.PYTHON]: LanguageStack.BASE,
-  [LanguageStack.GO]: null,
-  [LanguageStack.RUST]: null,
-  [LanguageStack.JAVA]: null,
   [LanguageStack.WEB]: LanguageStack.BASE,
-  [LanguageStack.FULL]: LanguageStack.BASE,
+  [LanguageStack.GO]: null,      // Uses golang:latest
+  [LanguageStack.RUST]: null,    // Uses rust:latest
+  [LanguageStack.JAVA]: null,    // Uses eclipse-temurin:latest
+  [LanguageStack.CPP]: LanguageStack.BASE,
+  [LanguageStack.DOTNET]: LanguageStack.BASE,
+  [LanguageStack.SWIFT]: LanguageStack.BASE,
+  [LanguageStack.DART]: LanguageStack.BASE,
+  [LanguageStack.LUA]: LanguageStack.BASE,
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Combined Language Stacks
+  // ═══════════════════════════════════════════════════════════════════════════
+  [LanguageStack.JVM]: LanguageStack.JAVA,          // java + Scala/Clojure/Kotlin
+  [LanguageStack.FUNCTIONAL]: LanguageStack.BASE,   // Haskell + OCaml + Elixir
+  [LanguageStack.SCRIPTING]: LanguageStack.BASE,    // Ruby + PHP + Perl
+  [LanguageStack.SYSTEMS]: LanguageStack.CPP,       // cpp + Zig + Nim
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Use-Case Stacks (optimized layering)
+  // ═══════════════════════════════════════════════════════════════════════════
+  [LanguageStack.DATA]: LanguageStack.PYTHON,       // python + R + Julia
+  [LanguageStack.AI]: LanguageStack.PYTHON,         // python + Jupyter + ML libs
+  [LanguageStack.MOBILE]: LanguageStack.DART,       // dart + Flutter SDK
+  [LanguageStack.GAME]: LanguageStack.CPP,          // cpp + SDL2 + Lua
+  [LanguageStack.FULLSTACK]: LanguageStack.WEB,     // web + Python
 };
 
 /** ccbox configuration model. */
