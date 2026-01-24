@@ -10,8 +10,10 @@ import { input, confirm } from "@inquirer/prompts";
 import {
   createConfig,
   getImageName,
+  getStackValues,
   imageExists,
   LanguageStack,
+  parseStack,
   STACK_INFO,
   type Config,
 } from "./config.js";
@@ -178,9 +180,15 @@ export async function resolveStack(
     return detection.recommendedStack;
   }
 
-  // Explicit stack specified
+  // Explicit stack specified - validate it
   if (stackName) {
-    return stackName as LanguageStack;
+    const validStack = parseStack(stackName);
+    if (!validStack) {
+      console.log(chalk.red(`Invalid stack: "${stackName}"`));
+      console.log(chalk.dim(`Valid stacks: ${getStackValues().join(", ")}`));
+      return null;
+    }
+    return validStack;
   }
 
   // No --stack: interactive menu (or skip if image exists)
