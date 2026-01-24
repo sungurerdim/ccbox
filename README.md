@@ -193,6 +193,42 @@ eclipse-temurin:latest → java → jvm
 
 Images are cached locally. Subsequent runs are instant.
 
+### Path Mapping
+
+ccbox uses LD_PRELOAD to transparently translate host paths to container paths. This enables seamless host compatibility - Claude Code inside the container works exactly as if running on the host.
+
+**How it works:**
+
+1. **Automatic activation**: Path mapping only activates when `CCBOX_PATH_MAP` environment variable is set
+2. **Environment variable**: Defines mappings in format `host1:container1;host2:container2`
+3. **Syscall interception**: The preload library intercepts 60+ syscalls (open, read, write, stat, mkdir, etc.)
+4. **Bidirectional transformation**:
+   - **Read**: Host paths → Container paths (e.g., `D:/Projects/app` → `/ccbox/app`)
+   - **Write**: Container paths → Host paths (preserves original format)
+
+**Example:**
+
+```
+CCBOX_PATH_MAP=/home/user/projects/app:/ccbox/app;/home/user/.claude:/ccbox/.claude
+```
+
+On Windows/WSL:
+```
+CCBOX_PATH_MAP=D:/Projects/app:/ccbox/app;C:/Users/X/.claude:/ccbox/.claude
+```
+
+This allows Claude Code to:
+- Install plugins using host paths (stored correctly for host access)
+- Read/write config files that reference host paths
+- Work with project files using their original paths
+
+**Platform behavior:**
+- **Linux/macOS**: Maps native paths (e.g., `/home/user/...` → `/ccbox/...`)
+- **Windows/WSL**: Maps Windows paths with automatic slash normalization
+- **No mapping needed**: If paths already match, the system has zero overhead
+
+**Why LD_PRELOAD works:** Docker's default seccomp profile blocks io_uring (Linux async I/O), forcing traditional syscalls that LD_PRELOAD can intercept. This makes the path translation reliable even with Bun-based applications.
+
 ## Uninstall
 
 <details>
