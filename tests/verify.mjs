@@ -144,9 +144,9 @@ test("VALID_MODELS contains sonnet", () => constants.VALID_MODELS.has("sonnet"))
 test("VALID_MODELS contains haiku", () => constants.VALID_MODELS.has("haiku"));
 test("VALID_MODELS has exactly 3 models", () => constants.VALID_MODELS.size === 3);
 test("PRUNE_CACHE_AGE = 168h", () => constants.PRUNE_CACHE_AGE === "168h");
-test("CONTAINER_USER = node", () => constants.CONTAINER_USER === "node");
-test("CONTAINER_HOME = /home/node", () => constants.CONTAINER_HOME === "/home/node");
-test("CONTAINER_PROJECT_DIR = /home/node/project", () => constants.CONTAINER_PROJECT_DIR === "/home/node/project");
+test("CONTAINER_USER = ccbox", () => constants.CONTAINER_USER === "ccbox");
+test("CONTAINER_HOME = /ccbox", () => constants.CONTAINER_HOME === "/ccbox");
+test("CONTAINER_PROJECT_DIR = /ccbox", () => constants.CONTAINER_PROJECT_DIR === "/ccbox");
 test("TMPFS_SIZE = 64m", () => constants.TMPFS_SIZE === "64m");
 test("TMPFS_MODE = 1777", () => constants.TMPFS_MODE === "1777");
 test("DEFAULT_PIDS_LIMIT = 2048", () => constants.DEFAULT_PIDS_LIMIT === 2048);
@@ -637,7 +637,7 @@ test("getDockerRunCmd is function", () => typeof generator.getDockerRunCmd === "
 // generateDockerfile produces valid content
 test("generateDockerfile(base) returns Dockerfile", () => {
   const df = generator.generateDockerfile(LanguageStack.BASE);
-  return df.includes("FROM") && df.includes("node") && df.length > 100;
+  return df.includes("FROM") && df.includes("ccbox") && df.length > 100;
 });
 
 test("generateDockerfile(go) includes golang", () => {

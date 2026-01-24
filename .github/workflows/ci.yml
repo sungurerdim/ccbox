@@ -25,5 +25,5 @@ jobs:
           bun install
           bun run typecheck
           bun run lint
-          bun test
+          bun run test
         timeout-minutes: 15

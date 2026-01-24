@@ -105,7 +105,23 @@ export async function checkDocker(autoStart = true): Promise<boolean> {
 }
 
 /**
+ * Sanitize a string value for safe use in Docker environment variables.
+ * Removes characters that could cause injection or parsing issues.
+ */
+function sanitizeEnvValue(value: string): string {
+  return value
+    // Remove newlines (prevents environment variable injection)
+    .replace(/[\r\n]/g, " ")
+    // Remove null bytes
+    // eslint-disable-next-line no-control-regex
+    .replace(/\x00/g, "")
+    // Trim whitespace
+    .trim();
+}
+
+/**
  * Get a single git config value.
+ * Returns sanitized value safe for Docker environment variables.
  */
 async function getGitConfigValue(key: string): Promise<string> {
   try {
@@ -116,7 +132,8 @@ async function getGitConfigValue(key: string): Promise<string> {
     } as ExecaOptions);
 
     if (result.exitCode === 0) {
-      return String(result.stdout ?? "").trim();
+      // Sanitize to prevent environment variable injection
+      return sanitizeEnvValue(String(result.stdout ?? ""));
     }
   } catch (error) {
     const err = error as { code?: string; timedOut?: boolean };

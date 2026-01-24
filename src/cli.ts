@@ -291,7 +291,6 @@ program
     console.log();
     console.log(chalk.dim("Usage: ccbox --stack=go"));
     console.log(chalk.dim("All stacks include: Python + Node.js + lint/test tools"));
-    console.log(chalk.dim("CCO plugin available via: claude plugin install cco@ClaudeCodeOptimizer"));
   });
 
 // Parse and run

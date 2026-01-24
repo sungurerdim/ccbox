@@ -85,6 +85,11 @@ export async function removeCcboxContainers(): Promise<number> {
 
 /**
  * Remove all ccbox images (stacks + project images).
+ * Cleans up all image naming conventions:
+ * - ccbox/base, ccbox/web (stack images)
+ * - ccbox.projectname/web (project images)
+ * - ccbox-projectname (legacy project images)
+ * - ccbox:base (legacy stack images)
  */
 export async function removeCcboxImages(): Promise<number> {
   let removed = 0;
@@ -99,8 +104,9 @@ export async function removeCcboxImages(): Promise<number> {
     }
   }
 
-  // Remove project images
-  for (const prefix of ["ccbox.", "ccbox-"]) {
+  // Remove all ccbox-prefixed images (project images + any others)
+  // Covers: ccbox/, ccbox., ccbox-, ccbox:
+  for (const prefix of ["ccbox/", "ccbox.", "ccbox-", "ccbox:"]) {
     const images = await listImages(prefix);
     for (const image of images) {
       if (await removeImage(image, true)) {
@@ -108,6 +114,10 @@ export async function removeCcboxImages(): Promise<number> {
       }
     }
   }
+
+  // Also remove any dangling images that originated from ccbox builds
+  const danglingRemoved = await cleanupCcboxDanglingImages();
+  removed += danglingRemoved;
 
   return removed;
 }

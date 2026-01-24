@@ -226,13 +226,33 @@ export function imageExists(stack: LanguageStack): boolean {
 /**
  * Get Docker container name for a project.
  *
+ * Docker container names must be: [a-zA-Z0-9][a-zA-Z0-9_.-]*
+ * Max length is 64 characters. We use lowercase for consistency.
+ *
  * @param projectName - Name of the project directory.
  * @param unique - If true, append a short unique suffix to allow multiple instances.
  */
 export function getContainerName(projectName: string, unique = true): string {
-  const safeName = projectName
+  // Max 50 chars for project name portion (leaves room for prefix + suffix)
+  // Format: ccbox.{safeName}-{6-char-uuid} = 6 + safeName + 7 = 13 + safeName
+  // Docker limit: 64 chars, so safeName max = 64 - 13 = 51, use 50 for safety
+  const MAX_PROJECT_NAME_LENGTH = 50;
+
+  let safeName = projectName
     .toLowerCase()
-    .replace(/[^a-z0-9_-]/g, "-");
+    .replace(/[^a-z0-9_-]/g, "-")
+    .replace(/-{2,}/g, "-") // Collapse multiple hyphens
+    .replace(/^-+|-+$/g, ""); // Trim leading/trailing hyphens
+
+  // Truncate if too long
+  if (safeName.length > MAX_PROJECT_NAME_LENGTH) {
+    safeName = safeName.slice(0, MAX_PROJECT_NAME_LENGTH).replace(/-+$/, "");
+  }
+
+  // Fallback for empty names
+  if (!safeName) {
+    safeName = "project";
+  }
 
   if (unique) {
     const suffix = randomUUID().slice(0, 6);

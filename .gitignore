@@ -42,3 +42,9 @@ ccbox
 
 # Windows artifacts
 nul
+
+# Local git config
+.gitconfig
+
+# Local Claude settings
+.claude/settings.local.json

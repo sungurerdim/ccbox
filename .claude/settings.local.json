@@ -1,9 +1,0 @@
-{
-  "spinnerTipsEnabled": false,
-  "permissions": {
-    "allow": [
-      "Bash(test -f *)",
-      "Bash(test -d *)"
-    ]
-  }
-}
