@@ -27,10 +27,10 @@ export const PRUNE_CACHE_AGE = "168h"; // 7 days - keep recent build cache
 export const CLAUDE_HOST_DIR = "~/.claude"; // Claude config on host (expandable)
 
 // Container paths
-export const CONTAINER_USER = "node"; // Container username
-export const CONTAINER_HOME = "/home/node"; // Container home directory
-export const CONTAINER_PROJECT_DIR = "/home/node/project"; // Project mount point
-export const CONTAINER_CLAUDE_DIR = "/home/node/.claude"; // Claude config in container
+export const CONTAINER_USER = "ccbox"; // Container username
+export const CONTAINER_HOME = "/ccbox"; // Container base directory
+export const CONTAINER_PROJECT_DIR = "/ccbox"; // Project base (actual: /ccbox/{dirName}, supports unicode via NFC normalization)
+export const CONTAINER_CLAUDE_DIR = "/ccbox/.claude"; // Claude config in container (global)
 export const CONTAINER_TMP_DIR = "/tmp"; // Tmpfs mount point
 
 // Build paths - SSOT for all Dockerfile generation

@@ -133,6 +133,11 @@ async function executeContainer(
     unrestricted,
   });
 
+  // Debug: print docker command
+  if (debug >= 2) {
+    console.log(chalk.dim("Docker command: " + cmd.join(" ")));
+  }
+
   // Stream mode (-dd): close stdin for watch-only (no user input)
   const stdin = debug >= 2 ? "ignore" : "inherit";
 
@@ -250,7 +255,7 @@ async function buildAndRun(
     console.log();
   }
 
-  // Ensure stack image is ready (CCO plugin installed during build)
+  // Ensure stack image is ready
   if (!(await ensureImageReady(selectedStack, false))) {
     process.exit(1);
   }

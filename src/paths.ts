@@ -11,7 +11,8 @@
  */
 
 import { existsSync, statSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { platform, env } from "node:process";
 
 import { PathError } from "./errors.js";
@@ -27,6 +28,19 @@ let wslCached: boolean | null = null;
  */
 export function isWindowsPath(path: string): boolean {
   return /^[A-Za-z]:[/\\]/.test(path);
+}
+
+/**
+ * Check if path is a Windows UNC path (e.g., \\\\server\\share or //server/share).
+ *
+ * UNC (Universal Naming Convention) paths are used for network shares on Windows.
+ *
+ * @param path - Path to check.
+ * @returns True if path looks like a UNC path.
+ */
+export function isUncPath(path: string): boolean {
+  // Match \\server\share or //server/share patterns
+  return /^(?:\\\\|\/\/)[^/\\]+[/\\][^/\\]+/.test(path);
 }
 
 /**
@@ -192,18 +206,25 @@ export function resolveForDocker(path: string): string {
   // Normalize backslashes for consistent pattern matching
   const pathStr = path.replace(/\\/g, "/");
 
-  // Case 1: Windows-style path
+  // Case 1: Windows UNC path (//server/share/...)
+  // Docker Desktop on Windows supports UNC paths directly
+  if (isUncPath(pathStr)) {
+    validateDockerPath(path, pathStr);
+    return pathStr;
+  }
+
+  // Case 2: Windows-style path (C:/...)
   if (isWindowsPath(pathStr)) {
     const result = windowsToDockerPath(pathStr);
     validateDockerPath(path, result);
     return result;
   }
 
-  // Case 2: WSL mount path (/mnt/[a-z] or /mnt/[a-z]/...)
+  // Case 3: WSL mount path (/mnt/[a-z] or /mnt/[a-z]/...)
   if (
     pathStr.startsWith("/mnt/") &&
     pathStr.length >= 6 &&
-    /[a-z]/.test(pathStr[5]!) &&
+    /[a-z]/i.test(pathStr[5]!) &&
     (pathStr.length === 6 || pathStr[6] === "/")
   ) {
     const result = wslToDockerPath(pathStr);
@@ -211,7 +232,7 @@ export function resolveForDocker(path: string): string {
     return result;
   }
 
-  // Case 3: Native Linux/macOS path - use as-is
+  // Case 4: Native Linux/macOS path - use as-is
   validateDockerPath(path, pathStr);
   return pathStr;
 }
@@ -219,15 +240,15 @@ export function resolveForDocker(path: string): string {
 /**
  * Format container path to prevent MSYS path translation on Windows.
  *
- * Git Bash (MSYS2) translates Unix-style paths like /home/node to
- * C:/Program Files/Git/home/node. Double slashes prevent this.
+ * Git Bash (MSYS2) translates Unix-style paths like /ccbox to
+ * C:/Program Files/Git/ccbox. Double slashes prevent this.
  *
  * @param path - Container path (must start with /).
  * @returns Path with // prefix on Windows, unchanged on other platforms.
  *
  * @example
- * containerPath("/home/node/.claude") // Windows: "//home/node/.claude"
- * containerPath("/home/node/.claude") // Linux/macOS: "/home/node/.claude"
+ * containerPath("/ccbox/.claude") // Windows: "//ccbox/.claude"
+ * containerPath("/ccbox/.claude") // Linux/macOS: "/ccbox/.claude"
  */
 export function containerPath(path: string): string {
   if (platform === "win32" && path.startsWith("/")) {
@@ -240,7 +261,7 @@ export function containerPath(path: string): string {
  * Get environment dict for running Docker commands on Windows.
  *
  * On Windows with Git Bash (MSYS2), path translation must be disabled
- * to prevent /home/node/.claude from becoming C:/Program Files/Git/home/node/.claude.
+ * to prevent /ccbox/.claude from becoming C:/Program Files/Git/ccbox/.claude.
  *
  * @returns Environment dict with MSYS_NO_PATHCONV=1 on Windows, copy of process.env otherwise.
  */
@@ -301,4 +322,247 @@ export function validateFilePath(path: string, mustExist = true): string {
   }
 
   return filePath;
+}
+
+/**
+ * Get the Claude config directory path.
+ *
+ * @returns Absolute path to ~/.claude directory.
+ */
+export function getClaudeConfigDir(): string {
+  return join(homedir(), ".claude");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Project Directory Name Handling
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Maximum bytes for a directory name (ext4/NTFS filesystem limit) */
+const MAX_DIR_NAME_BYTES = 255;
+
+/** Reserved names on Windows that cannot be used as directory names */
+const WINDOWS_RESERVED_NAMES = new Set([
+  "con",
+  "prn",
+  "aux",
+  "nul",
+  "com1",
+  "com2",
+  "com3",
+  "com4",
+  "com5",
+  "com6",
+  "com7",
+  "com8",
+  "com9",
+  "lpt1",
+  "lpt2",
+  "lpt3",
+  "lpt4",
+  "lpt5",
+  "lpt6",
+  "lpt7",
+  "lpt8",
+  "lpt9",
+]);
+
+/**
+ * Normalize a project directory name for cross-platform compatibility.
+ *
+ * Strategy: Preserve the original name as much as possible, only applying
+ * minimal transformations when absolutely necessary for compatibility.
+ *
+ * Transformations applied:
+ * 1. Unicode NFC normalization (canonical composition)
+ * 2. Remove null bytes (security)
+ * 3. Remove control characters (U+0000-U+001F, U+007F-U+009F)
+ * 4. Trim leading/trailing whitespace
+ * 5. Replace Windows-reserved trailing chars (space, dot)
+ * 6. Truncate if exceeds filesystem byte limit
+ *
+ * @param dirName - Raw directory name from filesystem.
+ * @returns Normalized directory name safe for container paths.
+ */
+export function normalizeProjectDirName(dirName: string): string {
+  if (!dirName) {
+    return "project";
+  }
+
+  let normalized = dirName;
+
+  // 1. Unicode NFC normalization (canonical composition)
+  // This ensures é (e + combining acute) becomes é (precomposed)
+  // Prevents duplicate-looking filenames due to different encodings
+  normalized = normalized.normalize("NFC");
+
+  // 2. Remove null bytes (security - prevents path truncation attacks)
+  // eslint-disable-next-line no-control-regex
+  normalized = normalized.replace(/\x00/g, "");
+
+  // 3. Remove control characters (invisible, cause display issues)
+  // U+0000-U+001F (C0 controls) and U+007F-U+009F (DEL + C1 controls)
+  // eslint-disable-next-line no-control-regex
+  normalized = normalized.replace(/[\x00-\x1F\x7F-\x9F]/g, "");
+
+  // 4. Trim leading/trailing whitespace
+  normalized = normalized.trim();
+
+  // 5. Windows compatibility: remove trailing spaces and dots
+  // Windows filesystems silently strip these, causing path mismatches
+  normalized = normalized.replace(/[. ]+$/, "");
+
+  // 6. Truncate if exceeds filesystem byte limit (255 bytes for ext4/NTFS)
+  // Use Buffer to count actual UTF-8 bytes, not JS string length
+  if (Buffer.byteLength(normalized, "utf8") > MAX_DIR_NAME_BYTES) {
+    // Truncate character by character until within limit
+    while (
+      Buffer.byteLength(normalized, "utf8") > MAX_DIR_NAME_BYTES &&
+      normalized.length > 0
+    ) {
+      normalized = normalized.slice(0, -1);
+    }
+    // Re-trim in case truncation left trailing whitespace
+    normalized = normalized.trim();
+  }
+
+  // Fallback if everything was stripped
+  if (!normalized) {
+    return "project";
+  }
+
+  return normalized;
+}
+
+/**
+ * Validation result for project directory names.
+ */
+export interface DirNameValidation {
+  /** Whether the name is valid (no blocking issues) */
+  valid: boolean;
+  /** Normalized name (use this for container paths) */
+  normalized: string;
+  /** Blocking errors that prevent usage */
+  errors: string[];
+  /** Non-blocking warnings (name will still work) */
+  warnings: string[];
+}
+
+/**
+ * Validate a project directory name for Docker container compatibility.
+ *
+ * Returns both errors (blocking) and warnings (informational).
+ * The normalized name is always provided and safe to use.
+ *
+ * @param dirName - Raw directory name to validate.
+ * @returns Validation result with normalized name, errors, and warnings.
+ */
+export function validateProjectDirName(dirName: string): DirNameValidation {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  // Normalize first
+  const normalized = normalizeProjectDirName(dirName);
+
+  // Check for empty/whitespace-only names
+  if (!dirName || !dirName.trim()) {
+    errors.push("Directory name is empty");
+    return { valid: false, normalized: "project", errors, warnings };
+  }
+
+  // Check byte length of original (before truncation)
+  const originalBytes = Buffer.byteLength(dirName, "utf8");
+  if (originalBytes > MAX_DIR_NAME_BYTES) {
+    warnings.push(
+      `Name exceeds ${MAX_DIR_NAME_BYTES} bytes (${originalBytes} bytes), will be truncated`
+    );
+  }
+
+  // Check for Windows reserved names
+  const lowerName = normalized.toLowerCase().replace(/\.[^.]*$/, ""); // Remove extension
+  if (WINDOWS_RESERVED_NAMES.has(lowerName)) {
+    warnings.push(
+      `"${normalized}" is a reserved name on Windows, may cause issues`
+    );
+  }
+
+  // Check for problematic patterns (warnings only - name still works)
+  if (normalized !== dirName) {
+    if (dirName !== dirName.normalize("NFC")) {
+      warnings.push("Name contains non-normalized Unicode characters (NFD)");
+    }
+    // eslint-disable-next-line no-control-regex
+    if (/[\x00-\x1F\x7F-\x9F]/.test(dirName)) {
+      warnings.push("Name contains control characters (removed)");
+    }
+    if (dirName !== dirName.trim()) {
+      warnings.push("Name has leading/trailing whitespace (trimmed)");
+    }
+    if (/[. ]+$/.test(dirName.trim())) {
+      warnings.push("Name has trailing dots/spaces (removed for Windows)");
+    }
+  }
+
+  // Informational warnings for non-ASCII (not errors, just heads-up)
+  if (/[^\x20-\x7E]/.test(normalized)) {
+    // Has characters outside printable ASCII
+    if (/\p{Emoji}/u.test(normalized)) {
+      warnings.push("Name contains emoji characters");
+    } else if (/[\u4E00-\u9FFF\u3400-\u4DBF]/.test(normalized)) {
+      warnings.push("Name contains CJK (Chinese/Japanese/Korean) characters");
+    } else if (/[\u0600-\u06FF]/.test(normalized)) {
+      warnings.push("Name contains Arabic characters");
+    } else if (/[\u0590-\u05FF]/.test(normalized)) {
+      warnings.push("Name contains Hebrew characters");
+    // eslint-disable-next-line no-control-regex
+    } else if (/[^\x00-\x7F]/.test(normalized)) {
+      warnings.push("Name contains non-ASCII characters");
+    }
+  }
+
+  // Check for shell-sensitive characters (informational - execa handles these)
+  if (/[$`'"\\!&|;*?[\]{}()<>]/.test(normalized)) {
+    warnings.push(
+      "Name contains shell special characters (safe with current implementation)"
+    );
+  }
+
+  return {
+    valid: errors.length === 0,
+    normalized,
+    errors,
+    warnings,
+  };
+}
+
+/**
+ * Sanitize a project name for Docker identifiers (container names, image tags).
+ *
+ * Docker requires: lowercase, alphanumeric, hyphens, underscores, dots.
+ * Max length for container names is 64 characters.
+ *
+ * @param name - Project name to sanitize.
+ * @param maxLength - Maximum length (default: 50 to leave room for prefixes/suffixes).
+ * @returns Docker-safe identifier string.
+ */
+export function sanitizeForDocker(name: string, maxLength = 50): string {
+  if (!name) {
+    return "project";
+  }
+
+  let safe = name
+    // Lowercase (Docker convention)
+    .toLowerCase()
+    // Replace any non-allowed character with hyphen
+    .replace(/[^a-z0-9._-]/g, "-")
+    // Collapse multiple hyphens
+    .replace(/-{2,}/g, "-")
+    // Remove leading/trailing hyphens and dots
+    .replace(/^[-_.]+|[-_.]+$/g, "");
+
+  // Apply max length
+  if (safe.length > maxLength) {
+    safe = safe.slice(0, maxLength).replace(/[-_.]+$/, "");
+  }
+
+  return safe || "project";
 }

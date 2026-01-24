@@ -20,8 +20,50 @@ import {
 import { DOCKER_BUILD_TIMEOUT, DOCKER_COMMAND_TIMEOUT } from "./constants.js";
 import type { DepsInfo, DepsMode } from "./deps.js";
 import { generateProjectDockerfile, writeBuildFiles } from "./generator.js";
-import { getDockerEnv } from "./paths.js";
+import { getDockerEnv, getClaudeConfigDir, resolveForDocker } from "./paths.js";
 import { cleanupCcboxDanglingImages } from "./cleanup.js";
+
+/**
+ * Run claude install in container to set up installMethod in host config.
+ * This is run once after base image build to configure the host's .claude.json.
+ */
+async function runClaudeInstall(): Promise<void> {
+  const claudeConfig = getClaudeConfigDir();
+  const dockerClaudeConfig = resolveForDocker(claudeConfig);
+
+  console.log(chalk.dim("Configuring Claude Code installation..."));
+
+  try {
+    await execa(
+      "docker",
+      [
+        "run",
+        "--rm",
+        "--privileged",
+        "-v",
+        `${dockerClaudeConfig}:/ccbox/.claude:rw`,
+        "-e",
+        "HOME=/ccbox",
+        "-e",
+        "CLAUDE_CONFIG_DIR=/ccbox/.claude",
+        getImageName(LanguageStack.BASE),
+        "claude",
+        "install",
+        "--force",
+      ],
+      {
+        timeout: 60000,
+        env: getDockerEnv(),
+        reject: false,
+        stdio: "pipe",
+      } as ExecaOptions
+    );
+    console.log(chalk.dim("Claude Code configured"));
+  } catch {
+    // Non-fatal - configuration will be done on first run
+    console.log(chalk.dim("Claude install skipped (will configure on first run)"));
+  }
+}
 
 /**
  * Build Docker image for stack with BuildKit optimization.
@@ -78,6 +120,11 @@ export async function buildImage(stack: LanguageStack): Promise<boolean> {
 
     // Post-build cleanup
     await cleanupCcboxDanglingImages();
+
+    // For base image: run claude install to set up installMethod in host config
+    if (stack === LanguageStack.BASE) {
+      await runClaudeInstall();
+    }
 
     return true;
   } catch (error: unknown) {
