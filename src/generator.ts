@@ -95,7 +95,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \\
     git curl ca-certificates bash gcc libc6-dev \\
     python3 python3-pip python3-venv python-is-python3 \\
     ripgrep jq procps openssh-client locales \\
-    fd-find gh gosu fuse3 libfuse3-dev pkg-config \\
+    fd-find gh gosu \\
     gawk sed grep findutils coreutils less file unzip \\
     && rm -rf /var/lib/apt/lists/* \\
     && sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen \\
@@ -127,21 +127,13 @@ ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \\
     GIT_INDEX_THREADS=0
 `;
 
-// LD_PRELOAD path mapping library and FUSE filesystem build
+// LD_PRELOAD path mapping library build
 const PATH_MAP_BUILD = `
 # Build LD_PRELOAD path mapping library (host path -> container path translation)
+# Intercepts syscalls to transform paths transparently (works because Docker seccomp blocks io_uring)
 COPY pathmap.c /tmp/pathmap.c
 RUN gcc -shared -fPIC -O2 -o /usr/local/lib/ccbox-pathmap.so /tmp/pathmap.c -ldl \\
     && rm /tmp/pathmap.c
-
-# Build FUSE filesystem for cross-platform path transformation
-# FUSE intercepts ALL file operations (including io_uring) at kernel level
-COPY ccbox-fuse.c /tmp/ccbox-fuse.c
-RUN gcc -Wall -O2 -o /usr/local/bin/ccbox-fuse /tmp/ccbox-fuse.c $(pkg-config fuse3 --cflags --libs) \\
-    && rm /tmp/ccbox-fuse.c \\
-    && chmod 755 /usr/local/bin/ccbox-fuse \\
-    # Enable FUSE allow_other for non-root user access (required for gosu privilege drop)
-    && echo 'user_allow_other' >> /etc/fuse.conf
 `;
 
 // Python dev tools
@@ -689,93 +681,6 @@ _log_verbose "Arguments: $*"
 _log "Running as UID: $(id -u), GID: $(id -g)"
 _log_verbose "User: $(id -un 2>/dev/null || echo 'unknown')"
 
-# ══════════════════════════════════════════════════════════════════════════════
-# FUSE Filesystem Setup (must run as root)
-# FUSE provides kernel-level path transformation that works with io_uring
-# This is required because Bun runtime uses io_uring which bypasses LD_PRELOAD
-# ══════════════════════════════════════════════════════════════════════════════
-if [[ -n "$CCBOX_FUSE_SOURCE" && -n "$CCBOX_FUSE_TARGET" ]]; then
-    if [[ "$(id -u)" != "0" ]]; then
-        _die "FUSE mount requires root privileges. Container must start as root."
-    fi
-
-    _log "Setting up FUSE filesystem..."
-    _log_verbose "Source: $CCBOX_FUSE_SOURCE"
-    _log_verbose "Target: $CCBOX_FUSE_TARGET"
-
-    # Create target directory (must exist before FUSE mount)
-    mkdir -p "$CCBOX_FUSE_TARGET"
-    if [[ ! -d "$CCBOX_FUSE_TARGET" ]]; then
-        _die "Failed to create mount point: $CCBOX_FUSE_TARGET"
-    fi
-    _log_verbose "Created mount point: $CCBOX_FUSE_TARGET"
-
-    # Build pathmap argument from CCBOX_PATH_MAP
-    FUSE_PATHMAP=""
-    if [[ -n "$CCBOX_PATH_MAP" ]]; then
-        FUSE_PATHMAP="$CCBOX_PATH_MAP"
-        _log_verbose "Path mappings: $FUSE_PATHMAP"
-    fi
-
-    # Mount FUSE filesystem with allow_other and uid/gid override for non-root user access
-    if [[ -x "/usr/local/bin/ccbox-fuse" ]]; then
-        # Build FUSE options - uid/gid override makes files appear owned by container user
-        FUSE_OPTS="source=$CCBOX_FUSE_SOURCE,allow_other"
-        if [[ -n "$CCBOX_UID" ]]; then
-            FUSE_OPTS="$FUSE_OPTS,uid=$CCBOX_UID"
-        fi
-        if [[ -n "$CCBOX_GID" ]]; then
-            FUSE_OPTS="$FUSE_OPTS,gid=$CCBOX_GID"
-        fi
-        if [[ -n "$FUSE_PATHMAP" ]]; then
-            FUSE_OPTS="$FUSE_OPTS,pathmap=$FUSE_PATHMAP"
-        fi
-
-        /usr/local/bin/ccbox-fuse -o "$FUSE_OPTS" "$CCBOX_FUSE_TARGET" &
-        FUSE_PID=$!
-        sleep 0.5  # Wait for FUSE to initialize
-
-        # Verify mount
-        if mountpoint -q "$CCBOX_FUSE_TARGET" 2>/dev/null; then
-            _log "FUSE mounted at $CCBOX_FUSE_TARGET (PID: $FUSE_PID)"
-        else
-            _die "FUSE mount failed at $CCBOX_FUSE_TARGET"
-        fi
-    else
-        _log "ccbox-fuse not found, falling back to direct mount"
-        # Fallback: bind mount without transformation
-        mount --bind "$CCBOX_FUSE_SOURCE" "$CCBOX_FUSE_TARGET" || true
-    fi
-
-    # Set ownership for non-root user (only the mount point, not recursively through FUSE)
-    # FUSE provides access via allow_other option - don't chown host files through FUSE
-    if [[ -n "$CCBOX_UID" && -n "$CCBOX_GID" ]]; then
-        chown "$CCBOX_UID:$CCBOX_GID" /ccbox 2>/dev/null || true
-        chown "$CCBOX_UID:$CCBOX_GID" "$CCBOX_FUSE_TARGET" 2>/dev/null || true
-    fi
-
-    # Debug: Test FUSE write permissions
-    if [[ "$CCBOX_DEBUG" -ge 2 ]]; then
-        _log_verbose "Testing FUSE write permissions..."
-        # Test as root
-        if echo "root-test" > "$CCBOX_FUSE_TARGET/.ccbox-write-test" 2>/dev/null; then
-            _log_verbose "Root write to FUSE: OK"
-            rm -f "$CCBOX_FUSE_TARGET/.ccbox-write-test"
-        else
-            _log_verbose "Root write to FUSE: FAILED"
-        fi
-        # Test as target user
-        if gosu $CCBOX_UID:$CCBOX_GID touch "$CCBOX_FUSE_TARGET/.ccbox-user-test" 2>/dev/null; then
-            _log_verbose "User write to FUSE: OK"
-            gosu $CCBOX_UID:$CCBOX_GID rm -f "$CCBOX_FUSE_TARGET/.ccbox-user-test" 2>/dev/null
-        else
-            _log_verbose "User write to FUSE: FAILED (errno: $?)"
-            _log_verbose "FUSE target permissions: $(ls -la $CCBOX_FUSE_TARGET 2>&1 | head -3)"
-            _log_verbose "Source mount permissions: $(ls -la /mnt/host-claude 2>&1 | head -3)"
-        fi
-    fi
-fi
-
 # Ensure critical directories are writable by the target user
 if [[ "$(id -u)" == "0" && -n "$CCBOX_UID" && -n "$CCBOX_GID" ]]; then
     # Fix ownership of directories that may have been created by root during image build
@@ -790,116 +695,19 @@ if [[ "$(id -u)" == "0" && -n "$CCBOX_UID" && -n "$CCBOX_GID" ]]; then
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Cross-platform path compatibility (additional layers)
-# 1. LD_PRELOAD: intercepts syscalls and normalizes backslashes to forward slashes
-# 2. Symlinks: creates Windows-style path structure (e.g., /c/Users/... -> /ccbox/...)
-# 3. Node.js preload: monkey-patches path.isAbsolute() to recognize Windows paths
-# 4. Orphan cleanup: removes .orphaned_at markers that prevent plugin loading
-# This ensures Claude Code tools work with paths stored in JSON configs (plugins, etc.)
+# Cross-platform path compatibility
+# LD_PRELOAD intercepts syscalls to transform host paths to container paths
+# Works with Bun-based Claude Code (Docker seccomp blocks io_uring)
 # ══════════════════════════════════════════════════════════════════════════════
 if [[ -n "$CCBOX_PATH_MAP" ]]; then
-    # Layer 1: LD_PRELOAD for syscall interception
+    # LD_PRELOAD for syscall interception (works with Bun-based Claude Code)
     if [[ -f "/usr/local/lib/ccbox-pathmap.so" ]]; then
         export LD_PRELOAD="/usr/local/lib/ccbox-pathmap.so"
         _log "Path mapping active: $CCBOX_PATH_MAP"
         _log_verbose "LD_PRELOAD: $LD_PRELOAD"
     fi
 
-    # Layer 2: Node.js preload for Windows path compatibility
-    # Patches path and fs modules to transform Windows paths to container paths
-    PRELOAD_SCRIPT="/tmp/ccbox-path-preload.js"
-    cat > "\$PRELOAD_SCRIPT" << 'PRELOAD_EOF'
-// ccbox path compatibility preload
-// Transforms Windows paths (C:/...) to container paths (/ccbox/.claude/...)
-(function() {
-    const path = require('path');
-    const fs = require('fs');
-
-    // Build path mappings from CCBOX_PATH_MAP
-    const pathMappings = [];
-    (process.env.CCBOX_PATH_MAP || '').split(';').forEach(mapping => {
-        const match = mapping.match(/^([A-Za-z]):(.*):(\/.*)$/);
-        if (match) {
-            pathMappings.push({
-                pattern: new RegExp('^' + match[1] + ':' + match[2].replace(/\//g, '[\\\\/]'), 'i'),
-                target: match[3]
-            });
-        }
-    });
-
-    // Transform Windows path to container path
-    function transformPath(p) {
-        if (typeof p !== 'string') return p;
-        const normalized = p.replace(/\\\\/g, '/');
-        for (const m of pathMappings) {
-            if (m.pattern.test(normalized)) {
-                return normalized.replace(m.pattern, m.target);
-            }
-        }
-        return p;
-    }
-
-    // Patch path module
-    const origIsAbsolute = path.isAbsolute;
-    path.isAbsolute = p => (typeof p === 'string' && /^[A-Za-z]:[\\\\/]/.test(p)) || origIsAbsolute(p);
-
-    const origResolve = path.resolve;
-    path.resolve = (...args) => origResolve(...args.map(transformPath));
-
-    const origNormalize = path.normalize;
-    path.normalize = p => origNormalize(transformPath(p));
-
-    const origJoin = path.join;
-    path.join = (...args) => origJoin(...args.map(transformPath));
-
-    // Patch fs module - wrap functions that take path as first argument
-    const fsFuncs = [
-        'access', 'appendFile', 'chmod', 'chown', 'copyFile', 'lchmod', 'lchown',
-        'lutimes', 'link', 'lstat', 'mkdir', 'mkdtemp', 'open', 'opendir',
-        'readdir', 'readFile', 'readlink', 'realpath', 'rename', 'rm', 'rmdir',
-        'stat', 'symlink', 'truncate', 'unlink', 'utimes', 'writeFile',
-        'accessSync', 'appendFileSync', 'chmodSync', 'chownSync', 'copyFileSync',
-        'lchmodSync', 'lchownSync', 'lutimesSync', 'linkSync', 'lstatSync',
-        'mkdirSync', 'mkdtempSync', 'openSync', 'opendirSync', 'readdirSync',
-        'readFileSync', 'readlinkSync', 'realpathSync', 'renameSync', 'rmSync',
-        'rmdirSync', 'statSync', 'symlinkSync', 'truncateSync', 'unlinkSync',
-        'utimesSync', 'writeFileSync', 'existsSync', 'exists'
-    ];
-
-    fsFuncs.forEach(name => {
-        if (typeof fs[name] === 'function') {
-            const orig = fs[name];
-            fs[name] = function(p, ...rest) {
-                return orig.call(this, transformPath(p), ...rest);
-            };
-        }
-    });
-
-    // Handle fs.promises
-    if (fs.promises) {
-        const promiseFuncs = [
-            'access', 'appendFile', 'chmod', 'chown', 'copyFile', 'lchmod',
-            'lchown', 'lutimes', 'link', 'lstat', 'mkdir', 'mkdtemp', 'open',
-            'opendir', 'readdir', 'readFile', 'readlink', 'realpath', 'rename',
-            'rm', 'rmdir', 'stat', 'symlink', 'truncate', 'unlink', 'utimes',
-            'writeFile'
-        ];
-        promiseFuncs.forEach(name => {
-            if (typeof fs.promises[name] === 'function') {
-                const orig = fs.promises[name];
-                fs.promises[name] = function(p, ...rest) {
-                    return orig.call(this, transformPath(p), ...rest);
-                };
-            }
-        });
-    }
-})();
-PRELOAD_EOF
-    chmod 644 "\$PRELOAD_SCRIPT"
-    export NODE_OPTIONS="\${NODE_OPTIONS:-} --require=\$PRELOAD_SCRIPT"
-    _log_verbose "Node.js path preload: \$PRELOAD_SCRIPT"
-
-    # Layer 3: Clean orphaned plugin markers
+    # Clean orphaned plugin markers
     # Claude Code marks plugins as "orphaned" for cleanup, but these markers
     # persist on host and prevent plugins from loading in containers.
     # Remove .orphaned_at files to restore plugin functionality.
@@ -919,17 +727,6 @@ if [[ -d "$PWD/.claude" ]]; then
     _log "Project .claude detected (persistent, host-mounted)"
     _log_verbose "Project .claude contents: $(ls -A "$PWD/.claude" 2>/dev/null | tr '\\n' ' ')"
 fi
-
-# Runtime config (as node user) - append to existing NODE_OPTIONS (preserves flags from docker run)
-# --max-old-space-size: dynamic heap limit (3/4 of available RAM)
-# --max-semi-space-size: larger young generation reduces GC pauses for smoother output
-export NODE_OPTIONS="\${NODE_OPTIONS:-} --max-old-space-size=$(( $(free -m | awk '/^Mem:/{print $2}') * 3 / 4 )) --max-semi-space-size=64"
-export UV_THREADPOOL_SIZE=$(nproc)
-
-# Create Node.js compile cache directory (40% faster subsequent startups)
-mkdir -p /ccbox/.cache/node-compile 2>/dev/null || true
-_log_verbose "NODE_OPTIONS: $NODE_OPTIONS"
-_log_verbose "UV_THREADPOOL_SIZE: $UV_THREADPOOL_SIZE"
 
 # Git performance optimizations
 git config --global core.fileMode false 2>/dev/null || true
@@ -1953,234 +1750,6 @@ char *__fgets_chk(char *s, size_t slen, int size, FILE *stream) {
 }
 
 /**
- * Generate ccbox-fuse.c content for FUSE filesystem.
- * This is embedded for compiled binary compatibility.
- */
-function generateCcboxFuseC(): string {
-  return `/**
- * ccbox-fuse: FUSE filesystem for transparent cross-platform path mapping
- * Provides kernel-level path transformation that works with io_uring
- * Compile: gcc -Wall -O2 -o ccbox-fuse ccbox-fuse.c $(pkg-config fuse3 --cflags --libs)
- */
-#define FUSE_USE_VERSION 31
-#include <fuse3/fuse.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <dirent.h>
-#include <errno.h>
-#include <ctype.h>
-#include <limits.h>
-#include <stddef.h>
-
-#define MAX_MAPPINGS 32
-#define MAX_PATH_LEN 4096
-
-typedef struct {
-    char *from, *to;
-    size_t from_len, to_len;
-    char drive;
-    int is_unc, is_wsl;
-} PathMapping;
-
-static char *source_dir = NULL;
-static PathMapping mappings[MAX_MAPPINGS];
-static int mapping_count = 0;
-
-static char *normalize_path(const char *path) {
-    if (!path) return NULL;
-    char *norm = strdup(path);
-    if (!norm) return NULL;
-    for (char *p = norm; *p; p++) if (*p == '\\\\') *p = '/';
-    if (norm[0] && norm[1] == ':') norm[0] = tolower(norm[0]);
-    size_t len = strlen(norm);
-    while (len > 1 && norm[len-1] == '/') norm[--len] = '\\0';
-    return norm;
-}
-
-static int needs_transform(const char *path) {
-    if (!path || mapping_count == 0) return 0;
-    const char *dot = strrchr(path, '.');
-    return dot && strcasecmp(dot, ".json") == 0;
-}
-
-static void get_source_path(char *dest, const char *path, size_t destsize) {
-    snprintf(dest, destsize, "%s%s", source_dir, path);
-}
-
-static size_t transform_to_container(char *buf, size_t len) {
-    if (!buf || len == 0 || mapping_count == 0) return len;
-    char *work = malloc(len * 2 + 1);
-    if (!work) return len;
-    size_t wi = 0, i = 0;
-    while (i < len && buf[i]) {
-        int matched = 0;
-        if (i + 2 < len && isalpha(buf[i]) && buf[i+1] == ':') {
-            char drive = tolower(buf[i]);
-            for (int m = 0; m < mapping_count && !matched; m++) {
-                if (mappings[m].drive == drive) {
-                    memcpy(work + wi, mappings[m].to, mappings[m].to_len);
-                    wi += mappings[m].to_len;
-                    i += 2;
-                    while (i < len && buf[i] != '"' && buf[i] != ',' && buf[i] != '}') {
-                        if (buf[i] == '\\\\') { work[wi++] = '/'; i++; if (i < len && buf[i] == '\\\\') i++; }
-                        else work[wi++] = buf[i++];
-                    }
-                    matched = 1;
-                }
-            }
-        }
-        if (!matched) work[wi++] = buf[i++];
-    }
-    work[wi] = '\\0';
-    if (wi <= len) { memcpy(buf, work, wi + 1); free(work); return wi; }
-    free(work);
-    return len;
-}
-
-static int ccbox_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi) {
-    (void)fi;
-    char fpath[MAX_PATH_LEN];
-    get_source_path(fpath, path, sizeof(fpath));
-    return lstat(fpath, stbuf) == -1 ? -errno : 0;
-}
-
-static int ccbox_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags) {
-    (void)offset; (void)fi; (void)flags;
-    char fpath[MAX_PATH_LEN];
-    get_source_path(fpath, path, sizeof(fpath));
-    DIR *dp = opendir(fpath);
-    if (!dp) return -errno;
-    struct dirent *de;
-    while ((de = readdir(dp))) {
-        struct stat st = {0};
-        st.st_ino = de->d_ino;
-        st.st_mode = de->d_type << 12;
-        if (filler(buf, de->d_name, &st, 0, 0)) break;
-    }
-    closedir(dp);
-    return 0;
-}
-
-static int ccbox_open(const char *path, struct fuse_file_info *fi) {
-    char fpath[MAX_PATH_LEN];
-    get_source_path(fpath, path, sizeof(fpath));
-    int fd = open(fpath, fi->flags);
-    if (fd == -1) return -errno;
-    fi->fh = fd;
-    return 0;
-}
-
-static int ccbox_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
-    int fd = fi->fh;
-    if (needs_transform(path)) {
-        struct stat st;
-        if (fstat(fd, &st) == -1) return -errno;
-        size_t filesize = st.st_size;
-        if (filesize == 0) return 0;
-        char *filebuf = malloc(filesize + 1);
-        if (!filebuf) return -ENOMEM;
-        ssize_t nread = pread(fd, filebuf, filesize, 0);
-        if (nread == -1) { free(filebuf); return -errno; }
-        filebuf[nread] = '\\0';
-        size_t newlen = transform_to_container(filebuf, nread);
-        if ((size_t)offset >= newlen) { free(filebuf); return 0; }
-        size_t tocopy = newlen - offset;
-        if (tocopy > size) tocopy = size;
-        memcpy(buf, filebuf + offset, tocopy);
-        free(filebuf);
-        return tocopy;
-    }
-    ssize_t res = pread(fd, buf, size, offset);
-    return res == -1 ? -errno : res;
-}
-
-static int ccbox_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
-    (void)path;
-    ssize_t res = pwrite(fi->fh, buf, size, offset);
-    return res == -1 ? -errno : res;
-}
-
-static int ccbox_release(const char *path, struct fuse_file_info *fi) { (void)path; close(fi->fh); return 0; }
-static int ccbox_access(const char *path, int mask) { char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return access(fpath, mask) == -1 ? -errno : 0; }
-static int ccbox_mkdir(const char *path, mode_t mode) { char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return mkdir(fpath, mode) == -1 ? -errno : 0; }
-static int ccbox_unlink(const char *path) { char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return unlink(fpath) == -1 ? -errno : 0; }
-static int ccbox_rmdir(const char *path) { char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return rmdir(fpath) == -1 ? -errno : 0; }
-static int ccbox_create(const char *path, mode_t mode, struct fuse_file_info *fi) { char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); int fd = open(fpath, fi->flags, mode); if (fd == -1) return -errno; fi->fh = fd; return 0; }
-static int ccbox_truncate(const char *path, off_t size, struct fuse_file_info *fi) { char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return (fi ? ftruncate(fi->fh, size) : truncate(fpath, size)) == -1 ? -errno : 0; }
-static int ccbox_utimens(const char *path, const struct timespec ts[2], struct fuse_file_info *fi) { (void)fi; char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return utimensat(0, fpath, ts, AT_SYMLINK_NOFOLLOW) == -1 ? -errno : 0; }
-static int ccbox_chmod(const char *path, mode_t mode, struct fuse_file_info *fi) { (void)fi; char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return chmod(fpath, mode) == -1 ? -errno : 0; }
-static int ccbox_chown(const char *path, uid_t uid, gid_t gid, struct fuse_file_info *fi) { (void)fi; char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return lchown(fpath, uid, gid) == -1 ? -errno : 0; }
-static int ccbox_rename(const char *from, const char *to, unsigned int flags) { if (flags) return -EINVAL; char ff[MAX_PATH_LEN], ft[MAX_PATH_LEN]; get_source_path(ff, from, sizeof(ff)); get_source_path(ft, to, sizeof(ft)); return rename(ff, ft) == -1 ? -errno : 0; }
-
-static const struct fuse_operations ccbox_oper = {
-    .getattr = ccbox_getattr, .readdir = ccbox_readdir, .open = ccbox_open, .read = ccbox_read,
-    .write = ccbox_write, .release = ccbox_release, .access = ccbox_access, .mkdir = ccbox_mkdir,
-    .unlink = ccbox_unlink, .rmdir = ccbox_rmdir, .create = ccbox_create, .truncate = ccbox_truncate,
-    .utimens = ccbox_utimens, .chmod = ccbox_chmod, .chown = ccbox_chown, .rename = ccbox_rename,
-};
-
-static void add_mapping(const char *from, const char *to) {
-    if (mapping_count >= MAX_MAPPINGS) return;
-    PathMapping *m = &mappings[mapping_count];
-    m->from = normalize_path(from);
-    m->to = normalize_path(to);
-    if (!m->from || !m->to) { free(m->from); free(m->to); return; }
-    m->from_len = strlen(m->from);
-    m->to_len = strlen(m->to);
-    m->drive = (m->from[0] && m->from[1] == ':') ? tolower(m->from[0]) : 0;
-    m->is_unc = m->from[0] == '/' && m->from[1] == '/';
-    m->is_wsl = strncmp(m->from, "/mnt/", 5) == 0 && isalpha(m->from[5]);
-    if (m->is_wsl) m->drive = tolower(m->from[5]);
-    mapping_count++;
-}
-
-static void parse_pathmap(const char *pathmap) {
-    if (!pathmap || !*pathmap) return;
-    char *copy = strdup(pathmap);
-    if (!copy) return;
-    char *saveptr = NULL, *mapping = strtok_r(copy, ";", &saveptr);
-    while (mapping) {
-        char *sep = mapping;
-        if (sep[0] && sep[1] == ':') sep += 2;
-        sep = strchr(sep, ':');
-        if (sep) { *sep = '\\0'; add_mapping(mapping, sep + 1); }
-        mapping = strtok_r(NULL, ";", &saveptr);
-    }
-    free(copy);
-}
-
-struct ccbox_config { char *source; char *pathmap; };
-
-static struct fuse_opt ccbox_opts[] = {
-    {"source=%s", offsetof(struct ccbox_config, source), 0},
-    {"pathmap=%s", offsetof(struct ccbox_config, pathmap), 0},
-    FUSE_OPT_END
-};
-
-int main(int argc, char *argv[]) {
-    struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
-    struct ccbox_config conf = {0};
-    if (fuse_opt_parse(&args, &conf, ccbox_opts, NULL) == -1) return 1;
-    if (!conf.source) { fprintf(stderr, "Error: source not specified\\n"); return 1; }
-    source_dir = conf.source;
-    size_t slen = strlen(source_dir);
-    while (slen > 1 && source_dir[slen-1] == '/') source_dir[--slen] = '\\0';
-    if (conf.pathmap) parse_pathmap(conf.pathmap);
-    fuse_opt_add_arg(&args, "-o");
-    fuse_opt_add_arg(&args, "default_permissions");
-    if (getuid() == 0) { fuse_opt_add_arg(&args, "-o"); fuse_opt_add_arg(&args, "allow_other"); }
-    int ret = fuse_main(args.argc, args.argv, &ccbox_oper, NULL);
-    fuse_opt_free_args(&args);
-    return ret;
-}
-`;
-}
-
-/**
  * Write Dockerfile and entrypoint to build directory.
  * Uses OS-agnostic path handling.
  */
@@ -2206,17 +1775,6 @@ export function writeBuildFiles(stack: LanguageStack): string {
     pathmapContent = generatePathmapC();
   }
   writeFileSync(join(buildDir, "pathmap.c"), pathmapContent, { encoding: "utf-8" });
-
-  // Copy ccbox-fuse.c for FUSE filesystem build
-  const fuseSrc = join(__dirname, "..", "native", "ccbox-fuse.c");
-  let fuseContent: string;
-  if (existsSync(fuseSrc)) {
-    fuseContent = readFileSync(fuseSrc, "utf-8");
-  } else {
-    // Fallback to embedded version when running from compiled binary
-    fuseContent = generateCcboxFuseC();
-  }
-  writeFileSync(join(buildDir, "ccbox-fuse.c"), fuseContent, { encoding: "utf-8" });
 
   return buildDir;
 }
@@ -2525,7 +2083,7 @@ export function getDockerRunCmd(
   // Claude config mount
   // - Base image: minimal mount (only credentials + settings for vanilla experience)
   // - Fresh mode: same as base (explicit --fresh flag)
-  // - Other images: full .claude mount via FUSE for path transformation
+  // - Other images: full .claude mount (LD_PRELOAD handles path transformation)
   const dockerClaudeConfig = resolveForDocker(claudeConfig);
   const isBaseImage = stack === "base";
   const useMinimalMount = options.fresh || isBaseImage;
@@ -2533,11 +2091,8 @@ export function getDockerRunCmd(
   if (useMinimalMount) {
     addMinimalMounts(cmd, claudeConfig);
   } else {
-    // Mount to staging location - FUSE will mount at final location
-    // This enables kernel-level path transformation for io_uring
-    cmd.push("-v", `${dockerClaudeConfig}:/mnt/host-claude:rw`);
-    cmd.push("-e", "CCBOX_FUSE_SOURCE=/mnt/host-claude");
-    cmd.push("-e", "CCBOX_FUSE_TARGET=/ccbox/.claude");
+    // Direct mount - LD_PRELOAD handles path transformation at syscall level
+    cmd.push("-v", `${dockerClaudeConfig}:/ccbox/.claude:rw`);
   }
 
   // Working directory
@@ -2702,7 +2257,7 @@ function addTerminalEnv(cmd: string[]): void {
 function addUserMapping(cmd: string[]): void {
   const [uid, gid] = getHostUserIds();
   // Pass UID/GID as environment variables instead of --user flag
-  // This allows container to start as root for FUSE setup, then drop to non-root via gosu
+  // Container starts as root for setup, then drops to non-root user via gosu
   cmd.push("-e", `CCBOX_UID=${uid}`);
   cmd.push("-e", `CCBOX_GID=${gid}`);
 }
@@ -2711,19 +2266,10 @@ function addSecurityOptions(cmd: string[]): void {
   const { capDrop, pidsLimit } = CONTAINER_CONSTRAINTS;
   cmd.push(
     `--cap-drop=${capDrop}`,
-    // FUSE requires SYS_ADMIN capability and /dev/fuse device access
-    // This is needed for kernel-level path transformation (bypasses io_uring)
-    "--cap-add=SYS_ADMIN",
-    // SETUID and SETGID are required for gosu to switch users
-    "--cap-add=SETUID",
-    "--cap-add=SETGID",
-    // CHOWN is needed for ownership changes
-    "--cap-add=CHOWN",
-    // DAC_OVERRIDE allows root to bypass file permission checks (needed for mkdir)
-    "--cap-add=DAC_OVERRIDE",
-    // FOWNER allows root to change file ownership
-    "--cap-add=FOWNER",
-    "--device=/dev/fuse",
+    // Minimal capabilities for user switching and file ownership
+    "--cap-add=SETUID",   // gosu: change user ID
+    "--cap-add=SETGID",   // gosu: change group ID
+    "--cap-add=CHOWN",    // entrypoint: change file ownership
     `--pids-limit=${pidsLimit}`,
     "--init",
     "--shm-size=256m",
@@ -2764,12 +2310,11 @@ function addClaudeEnv(cmd: string[]): void {
     // Runtime configuration
     "-e",
     "PYTHONUNBUFFERED=1",
+    // Bun runtime settings (Claude Code uses Bun)
     "-e",
-    "NODE_OPTIONS=--no-warnings --disable-warning=ExperimentalWarning --disable-warning=DeprecationWarning",
+    "DO_NOT_TRACK=1",  // Disable Bun telemetry/crash reports
     "-e",
-    "NODE_NO_READLINE=1",
-    "-e",
-    "NODE_COMPILE_CACHE=/ccbox/.cache/node-compile"
+    "BUN_RUNTIME_TRANSPILER_CACHE_PATH=0"  // Disable cache (Docker ephemeral filesystem)
   );
 }
 
