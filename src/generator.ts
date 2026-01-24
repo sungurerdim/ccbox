@@ -805,117 +805,101 @@ if [[ -n "$CCBOX_PATH_MAP" ]]; then
         _log_verbose "LD_PRELOAD: $LD_PRELOAD"
     fi
 
-    # Layer 2: Create symlink structure for Windows paths in JSON configs
-    # Parse CCBOX_PATH_MAP format: "C:/Users/X/.claude:/ccbox/.claude;D:/Projects:/d/Projects"
-    IFS=';' read -ra MAPPINGS <<< "$CCBOX_PATH_MAP"
-    for mapping in "\${MAPPINGS[@]}"; do
-        # Match Windows path format: C:/path/to/dir:/container/path
-        # The regex handles drive letter followed by colon
-        if [[ "$mapping" =~ ^([A-Za-z]):(.*):(/.*)\$ ]]; then
-            drive="\${BASH_REMATCH[1],,}"  # lowercase drive letter
-            win_path="\${BASH_REMATCH[2]}"
-            target="\${BASH_REMATCH[3]}"
-
-            # Create full Linux-style path: C:/Users/X/.claude -> /c/Users/X/.claude
-            full_path="/\${drive}\${win_path}"
-            parent_dir=\$(dirname "\$full_path")
-
-            # Create parent directories and symlink
-            if [[ ! -e "\$full_path" ]]; then
-                mkdir -p "\$parent_dir" 2>/dev/null || true
-                ln -sf "\$target" "\$full_path" 2>/dev/null || true
-                _log_verbose "Symlink: \$full_path -> \$target"
-            fi
-        fi
-    done
-
-    # Layer 3: Node.js preload script for path.isAbsolute() monkey-patching
-    # This makes Node.js recognize Windows paths (C:\..., D:\...) as absolute on Linux
-    # Critical for Claude Code plugin system which validates paths before filesystem access
+    # Layer 2: Node.js preload for Windows path compatibility
+    # Patches path and fs modules to transform Windows paths to container paths
     PRELOAD_SCRIPT="/tmp/ccbox-path-preload.js"
     cat > "\$PRELOAD_SCRIPT" << 'PRELOAD_EOF'
 // ccbox path compatibility preload
-// Monkey-patches path.isAbsolute() to recognize Windows paths on Linux
+// Transforms Windows paths (C:/...) to container paths (/ccbox/.claude/...)
 (function() {
     const path = require('path');
+    const fs = require('fs');
+
+    // Build path mappings from CCBOX_PATH_MAP
+    const pathMappings = [];
+    (process.env.CCBOX_PATH_MAP || '').split(';').forEach(mapping => {
+        const match = mapping.match(/^([A-Za-z]):(.*):(\/.*)$/);
+        if (match) {
+            pathMappings.push({
+                pattern: new RegExp('^' + match[1] + ':' + match[2].replace(/\//g, '[\\\\/]'), 'i'),
+                target: match[3]
+            });
+        }
+    });
+
+    // Transform Windows path to container path
+    function transformPath(p) {
+        if (typeof p !== 'string') return p;
+        const normalized = p.replace(/\\\\/g, '/');
+        for (const m of pathMappings) {
+            if (m.pattern.test(normalized)) {
+                return normalized.replace(m.pattern, m.target);
+            }
+        }
+        return p;
+    }
+
+    // Patch path module
     const origIsAbsolute = path.isAbsolute;
+    path.isAbsolute = p => (typeof p === 'string' && /^[A-Za-z]:[\\\\/]/.test(p)) || origIsAbsolute(p);
 
-    path.isAbsolute = function(p) {
-        if (typeof p !== 'string') return origIsAbsolute.call(this, p);
-        // Check for Windows absolute path patterns: C:\, C:/, D:\, etc.
-        if (/^[A-Za-z]:[\\\\/]/.test(p)) return true;
-        return origIsAbsolute.call(this, p);
-    };
+    const origResolve = path.resolve;
+    path.resolve = (...args) => origResolve(...args.map(transformPath));
 
-    // Also patch path.posix.isAbsolute for completeness
-    const origPosixIsAbsolute = path.posix.isAbsolute;
-    path.posix.isAbsolute = function(p) {
-        if (typeof p !== 'string') return origPosixIsAbsolute.call(this, p);
-        if (/^[A-Za-z]:[\\\\/]/.test(p)) return true;
-        return origPosixIsAbsolute.call(this, p);
-    };
+    const origNormalize = path.normalize;
+    path.normalize = p => origNormalize(transformPath(p));
+
+    const origJoin = path.join;
+    path.join = (...args) => origJoin(...args.map(transformPath));
+
+    // Patch fs module - wrap functions that take path as first argument
+    const fsFuncs = [
+        'access', 'appendFile', 'chmod', 'chown', 'copyFile', 'lchmod', 'lchown',
+        'lutimes', 'link', 'lstat', 'mkdir', 'mkdtemp', 'open', 'opendir',
+        'readdir', 'readFile', 'readlink', 'realpath', 'rename', 'rm', 'rmdir',
+        'stat', 'symlink', 'truncate', 'unlink', 'utimes', 'writeFile',
+        'accessSync', 'appendFileSync', 'chmodSync', 'chownSync', 'copyFileSync',
+        'lchmodSync', 'lchownSync', 'lutimesSync', 'linkSync', 'lstatSync',
+        'mkdirSync', 'mkdtempSync', 'openSync', 'opendirSync', 'readdirSync',
+        'readFileSync', 'readlinkSync', 'realpathSync', 'renameSync', 'rmSync',
+        'rmdirSync', 'statSync', 'symlinkSync', 'truncateSync', 'unlinkSync',
+        'utimesSync', 'writeFileSync', 'existsSync', 'exists'
+    ];
+
+    fsFuncs.forEach(name => {
+        if (typeof fs[name] === 'function') {
+            const orig = fs[name];
+            fs[name] = function(p, ...rest) {
+                return orig.call(this, transformPath(p), ...rest);
+            };
+        }
+    });
+
+    // Handle fs.promises
+    if (fs.promises) {
+        const promiseFuncs = [
+            'access', 'appendFile', 'chmod', 'chown', 'copyFile', 'lchmod',
+            'lchown', 'lutimes', 'link', 'lstat', 'mkdir', 'mkdtemp', 'open',
+            'opendir', 'readdir', 'readFile', 'readlink', 'realpath', 'rename',
+            'rm', 'rmdir', 'stat', 'symlink', 'truncate', 'unlink', 'utimes',
+            'writeFile'
+        ];
+        promiseFuncs.forEach(name => {
+            if (typeof fs.promises[name] === 'function') {
+                const orig = fs.promises[name];
+                fs.promises[name] = function(p, ...rest) {
+                    return orig.call(this, transformPath(p), ...rest);
+                };
+            }
+        });
+    }
 })();
 PRELOAD_EOF
     chmod 644 "\$PRELOAD_SCRIPT"
     export NODE_OPTIONS="\${NODE_OPTIONS:-} --require=\$PRELOAD_SCRIPT"
     _log_verbose "Node.js path preload: \$PRELOAD_SCRIPT"
 
-    # Layer 4: Physical path transformation in JSON files
-    # Bun runtime uses io_uring which bypasses LD_PRELOAD, so we must
-    # physically transform Windows paths to Linux paths in config files.
-    # We copy files to a temp location, transform them, then bind-mount back.
-    _transform_json_paths() {
-        local src="\$1" dst="\$2" drive="\$3" win_path="\$4" target="\$5"
-        cp "\$src" "\$dst" 2>/dev/null || return 1
-
-        # Build sed patterns - JSON escapes backslash as \\\\
-        local drive_upper="\${drive^^}"
-        local drive_lower="\${drive,,}"
-
-        # Pattern: C:\\\\Users\\\\Sungur\\\\.claude -> /ccbox/.claude
-        # In JSON: "C:\\\\Users\\\\..." where \\\\ represents a single backslash
-        sed -i "s|\${drive_upper}:\\\\\\\\\\\\\\\\|\${target}/|g" "\$dst" 2>/dev/null
-        sed -i "s|\${drive_lower}:\\\\\\\\\\\\\\\\|\${target}/|g" "\$dst" 2>/dev/null
-        # Also handle forward slash variant
-        sed -i "s|\${drive_upper}:/|\${target}/|g" "\$dst" 2>/dev/null
-        sed -i "s|\${drive_lower}:/|\${target}/|g" "\$dst" 2>/dev/null
-        # Convert remaining escaped backslashes to forward slashes
-        sed -i 's|\\\\\\\\|/|g' "\$dst" 2>/dev/null
-        return 0
-    }
-
-    for mapping in "\${MAPPINGS[@]}"; do
-        if [[ "$mapping" =~ ^([A-Za-z]):(.*):(/.*)\$ ]]; then
-            _drive="\${BASH_REMATCH[1]}"
-            _win_path="\${BASH_REMATCH[2]}"
-            _target="\${BASH_REMATCH[3]}"
-
-            # Transform JSON files that contain Windows paths
-            if [[ -d "/ccbox/.claude" ]]; then
-                _json_count=0
-                _tmp_dir="/tmp/ccbox-json-transform"
-                mkdir -p "\$_tmp_dir"
-
-                while IFS= read -r -d '' jsonfile; do
-                    # Check if file contains Windows drive letters
-                    if grep -qiE "[A-Za-z]:(\\\\\\\\|/)" "\$jsonfile" 2>/dev/null; then
-                        _basename=\$(basename "\$jsonfile")
-                        _tmp_file="\${_tmp_dir}/\${_basename}.\$\$"
-                        if _transform_json_paths "\$jsonfile" "\$_tmp_file" "\$_drive" "\$_win_path" "\$_target"; then
-                            # Overwrite original with transformed version
-                            cat "\$_tmp_file" > "\$jsonfile" 2>/dev/null && rm -f "\$_tmp_file"
-                            ((_json_count++)) || true
-                        fi
-                    fi
-                done < <(find /ccbox/.claude -name "*.json" -type f -print0 2>/dev/null)
-
-                rm -rf "\$_tmp_dir" 2>/dev/null
-                [[ \$_json_count -gt 0 ]] && _log "Transformed paths in \$_json_count JSON file(s)"
-            fi
-        fi
-    done
-
-    # Layer 5: Clean orphaned plugin markers
+    # Layer 3: Clean orphaned plugin markers
     # Claude Code marks plugins as "orphaned" for cleanup, but these markers
     # persist on host and prevent plugins from loading in containers.
     # Remove .orphaned_at files to restore plugin functionality.
@@ -2601,10 +2585,20 @@ export function getDockerRunCmd(
 
   // LD_PRELOAD path mapping: host paths -> container paths
   // This enables transparent path translation for config files with absolute host paths
-  // Only needed when full .claude is mounted (not for base image or fresh mode)
+  // Maps both project directory and .claude config for full host compatibility
+  const pathMappings: string[] = [];
+
+  // Always map project directory
+  pathMappings.push(`${dockerProjectPath}:/ccbox/${dirName}`);
+
+  // Map .claude config (unless fresh/base image mode)
   if (!options.fresh && !isBaseImage) {
-    const normalizedHostPath = claudeConfig.replace(/\\/g, "/");
-    cmd.push("-e", `CCBOX_PATH_MAP=${normalizedHostPath}:/ccbox/.claude`);
+    const normalizedClaudePath = claudeConfig.replace(/\\/g, "/");
+    pathMappings.push(`${normalizedClaudePath}:/ccbox/.claude`);
+  }
+
+  if (pathMappings.length > 0) {
+    cmd.push("-e", `CCBOX_PATH_MAP=${pathMappings.join(";")}`);
   }
 
   addGitEnv(cmd, config);
