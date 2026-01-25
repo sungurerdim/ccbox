@@ -92,24 +92,34 @@ export async function removeCcboxContainers(): Promise<number> {
  * - ccbox:base (legacy stack images)
  */
 export async function removeCcboxImages(): Promise<number> {
-  let removed = 0;
+  // Collect all unique ccbox images first to avoid double-counting
+  const imagesToRemove = new Set<string>();
 
-  // Remove stack images - new format (ccbox/base) and old format (ccbox:base)
+  // Add stack images - new format (ccbox/base) and old format (ccbox:base)
   for (const stack of Object.values(LanguageStack)) {
-    if (await removeImage(getImageName(stack), true)) {
-      removed++;
-    }
-    if (await removeImage(`ccbox:${stack}`, true)) {
-      removed++;
-    }
+    imagesToRemove.add(getImageName(stack));
+    imagesToRemove.add(`ccbox:${stack}`);
   }
 
-  // Remove all ccbox-prefixed images (project images + any others)
+  // Add all ccbox-prefixed images (project images + any others)
   // Covers: ccbox/, ccbox., ccbox-, ccbox:
   for (const prefix of ["ccbox/", "ccbox.", "ccbox-", "ccbox:"]) {
     const images = await listImages(prefix);
     for (const image of images) {
-      if (await removeImage(image, true)) {
+      imagesToRemove.add(image);
+    }
+  }
+
+  // Remove images and count only successful removals
+  // Check if image exists before counting as removed
+  let removed = 0;
+  for (const image of imagesToRemove) {
+    // Check if image actually exists before trying to remove
+    const exists = (await listImages()).includes(image);
+    if (exists && await removeImage(image, true)) {
+      // Verify it was actually removed
+      const stillExists = (await listImages()).includes(image);
+      if (!stillExists) {
         removed++;
       }
     }
