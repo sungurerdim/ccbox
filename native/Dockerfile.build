@@ -1,0 +1,15 @@
+# Multi-arch build for ccbox-fuse
+FROM debian:bookworm-slim AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc libc6-dev libfuse3-dev pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+COPY ccbox-fuse.c .
+
+# Static linking for portability (only link fuse3 dynamically as it requires kernel interface)
+RUN gcc -Wall -O2 -s -o ccbox-fuse ccbox-fuse.c $(pkg-config fuse3 --cflags --libs)
+
+FROM scratch
+COPY --from=builder /build/ccbox-fuse /ccbox-fuse

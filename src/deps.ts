@@ -600,7 +600,9 @@ function detectBun(path: string, files: string[]): DepsInfo | null {
     try {
       const content = readFileSync(packageJsonPath, "utf-8");
       const pkg = JSON.parse(content);
-      if (pkg.packageManager && typeof pkg.packageManager === "string" && pkg.packageManager.startsWith("bun@")) {
+      // Support both "bun" and "bun@x.x.x" formats
+      if (pkg.packageManager && typeof pkg.packageManager === "string" &&
+          (pkg.packageManager === "bun" || pkg.packageManager.startsWith("bun@"))) {
         return createDepsInfo("bun", files, "bun install", "bun install --production", true, PRIORITY_HIGHEST);
       }
     } catch {
