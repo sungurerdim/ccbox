@@ -2,54 +2,19 @@
 
 Run Claude Code in isolated Docker containers. One command, zero configuration.
 
-## Installation
+## Install
 
-<details>
-<summary><b>macOS</b></summary>
-
+**macOS / Linux / WSL:**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sungurerdim/ccbox/main/install.sh | bash
 ```
 
-Or with Homebrew:
-```bash
-brew install ccbox
-```
-
-</details>
-
-<details>
-<summary><b>Linux</b></summary>
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/sungurerdim/ccbox/main/install.sh | bash
-```
-
-</details>
-
-<details>
-<summary><b>Windows</b></summary>
-
-PowerShell:
+**Windows (PowerShell):**
 ```powershell
 irm https://raw.githubusercontent.com/sungurerdim/ccbox/main/install.ps1 | iex
 ```
 
-Or with WinGet:
-```bash
-winget install ccbox
-```
-
-</details>
-
-<details>
-<summary><b>WSL</b></summary>
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/sungurerdim/ccbox/main/install.sh | bash
-```
-
-</details>
+> Installs to system PATH automatically. Or download binaries from [Releases](https://github.com/sungurerdim/ccbox/releases).
 
 **Requirements:** Docker Desktop or Docker Engine
 
@@ -195,39 +160,31 @@ Images are cached locally. Subsequent runs are instant.
 
 ### Path Mapping
 
-ccbox uses LD_PRELOAD to transparently translate host paths to container paths. This enables seamless host compatibility - Claude Code inside the container works exactly as if running on the host.
+ccbox uses FUSE (Filesystem in Userspace) to transparently translate paths between host and container. This enables seamless cross-platform compatibility - Claude Code inside the container works exactly as if running on the host.
 
 **How it works:**
 
-1. **Automatic activation**: Path mapping only activates when `CCBOX_PATH_MAP` environment variable is set
-2. **Environment variable**: Defines mappings in format `host1:container1;host2:container2`
-3. **Syscall interception**: The preload library intercepts 60+ syscalls (open, read, write, stat, mkdir, etc.)
-4. **Bidirectional transformation**:
-   - **Read**: Host paths → Container paths (e.g., `D:/Projects/app` → `/ccbox/app`)
-   - **Write**: Container paths → Host paths (preserves original format)
+1. **FUSE overlay**: Host `.claude` directories are mounted via FUSE with on-the-fly path transformation
+2. **Kernel-level interception**: FUSE intercepts ALL file operations (works with Bun, Go, Rust - any runtime)
+3. **JSON path transform**: Paths inside `.json` config files are automatically converted
+4. **Bidirectional**:
+   - **Read**: `C:\Users\X\.claude` → `/ccbox/.claude`
+   - **Write**: `/ccbox/.claude` → `C:\Users\X\.claude`
 
-**Example:**
+**What gets transformed:**
 
-```
-CCBOX_PATH_MAP=/home/user/projects/app:/ccbox/app;/home/user/.claude:/ccbox/.claude
-```
-
-On Windows/WSL:
-```
-CCBOX_PATH_MAP=D:/Projects/app:/ccbox/app;C:/Users/X/.claude:/ccbox/.claude
-```
-
-This allows Claude Code to:
-- Install plugins using host paths (stored correctly for host access)
-- Read/write config files that reference host paths
-- Work with project files using their original paths
+| Location | Path Transform | Content Transform |
+|----------|---------------|-------------------|
+| Global `.claude` | ✅ FUSE overlay | ✅ JSON files |
+| Project `.claude` | ✅ FUSE overlay | ✅ JSON files |
+| Project files | Direct mount | None needed |
 
 **Platform behavior:**
-- **Linux/macOS**: Maps native paths (e.g., `/home/user/...` → `/ccbox/...`)
-- **Windows/WSL**: Maps Windows paths with automatic slash normalization
-- **No mapping needed**: If paths already match, the system has zero overhead
+- **Windows**: `C:\Users\X\.claude` → `/ccbox/.claude`
+- **macOS**: `/Users/X/.claude` → `/ccbox/.claude`
+- **Linux**: `/home/X/.claude` → `/ccbox/.claude`
 
-**Why LD_PRELOAD works:** Docker's default seccomp profile blocks io_uring (Linux async I/O), forcing traditional syscalls that LD_PRELOAD can intercept. This makes the path translation reliable even with Bun-based applications.
+All transformations happen in-memory - host files are never modified by the transform process.
 
 ## Uninstall
 
