@@ -4,9 +4,12 @@ package-lock.json
 
 # Build output
 dist/
+out/
+build/
 
 # Logs
 *.log
+logs/
 
 # Runtime
 .env
@@ -15,19 +18,28 @@ dist/
 # OS
 .DS_Store
 Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
 
 # IDE
 .idea/
 .vscode/
 *.swp
 *.swo
+*.sublime-*
 
 # Test coverage
 coverage/
+.nyc_output/
 
-# Temp files
+# Temp and cache
 *.tmp
 *.temp
+tmp/
+temp/
+.cache/
+.temp/
+*.cache
 
 # Bun
 bun.lockb
@@ -35,16 +47,24 @@ bun.lockb
 # Native code (embedded in generator.ts)
 native/
 
-# Build artifacts
-ccbox.exe
-ccbox
+# Executables and scripts
 *.exe
+*.bat
+*.cmd
+*.com
+*.msi
+ccbox
 
 # Windows artifacts
 nul
+*.lnk
 
 # Local git config
 .gitconfig
 
 # Local Claude settings
 .claude/settings.local.json
+
+# CCO auto-generated files
+.claude/context.md
+.claude/rules/
