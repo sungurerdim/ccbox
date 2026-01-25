@@ -788,11 +788,16 @@ if [[ -n "$CCBOX_PATH_MAP" && -x "/usr/local/bin/ccbox-fuse" ]]; then
         fi
     fi
 
-    # Project .claude is mounted directly (no FUSE overlay)
-    # Reason: mv/copy would modify host filesystem which is unacceptable
-    # Project .claude is typically created inside container with Linux paths
-    if [[ -d "$PWD/.claude" ]]; then
-        _log "Project .claude detected (direct mount, no transform)"
+    # Mount project .claude if it was separately mounted as .claude-source
+    # Docker mounts project/.claude -> project/.claude-source (overlay mount)
+    # FUSE then mounts .claude-source -> .claude with path transformation
+    if [[ -d "$PWD/.claude-source" ]]; then
+        if _mount_claude_fuse "$PWD/.claude-source" "$PWD/.claude" "project"; then
+            export CCBOX_FUSE_PROJECT=1
+        fi
+    elif [[ -d "$PWD/.claude" ]]; then
+        # No separate mount - project .claude used directly (created in container)
+        _log "Project .claude detected (direct, no transform)"
     fi
 
     _log "Path mapping: $CCBOX_PATH_MAP"
@@ -1562,6 +1567,14 @@ export function getDockerRunCmd(
 
   // Project mount (always)
   cmd.push("-v", `${dockerProjectPath}:/ccbox/${dirName}:rw`);
+
+  // Project .claude mount (if exists) - separate for FUSE overlay
+  // This allows FUSE to transform paths in project .claude without modifying host
+  const projectClaudeDir = join(projectPath, ".claude");
+  if (existsSync(projectClaudeDir)) {
+    const dockerProjectClaude = resolveForDocker(projectClaudeDir);
+    cmd.push("-v", `${dockerProjectClaude}:/ccbox/${dirName}/.claude-source:rw`);
+  }
 
   // Claude config mount
   // - Base image: minimal mount (only credentials + settings for vanilla experience)
