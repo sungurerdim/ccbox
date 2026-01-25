@@ -781,25 +781,18 @@ if [[ -n "$CCBOX_PATH_MAP" && -x "/usr/local/bin/ccbox-fuse" ]]; then
     _log "Setting up FUSE for path translation..."
 
     # Mount global .claude (from host config directory)
+    # Global .claude is pre-mounted as .claude-source by Docker, FUSE overlays it
     if [[ -d "/ccbox/.claude-source" ]]; then
         if _mount_claude_fuse "/ccbox/.claude-source" "/ccbox/.claude" "global"; then
             export CCBOX_FUSE_GLOBAL=1
         fi
     fi
 
-    # Mount project .claude if it exists and needs transformation
-    # Project .claude may contain JSON files with Windows paths from host
+    # Project .claude is mounted directly (no FUSE overlay)
+    # Reason: mv/copy would modify host filesystem which is unacceptable
+    # Project .claude is typically created inside container with Linux paths
     if [[ -d "$PWD/.claude" ]]; then
-        # Move existing .claude to .claude-source for FUSE overlay
-        if [[ ! -d "$PWD/.claude-source" ]]; then
-            mv "$PWD/.claude" "$PWD/.claude-source"
-        fi
-        if _mount_claude_fuse "$PWD/.claude-source" "$PWD/.claude" "project"; then
-            export CCBOX_FUSE_PROJECT=1
-        else
-            # Restore original if FUSE failed
-            [[ -d "$PWD/.claude-source" && ! -d "$PWD/.claude" ]] && mv "$PWD/.claude-source" "$PWD/.claude"
-        fi
+        _log "Project .claude detected (direct mount, no transform)"
     fi
 
     _log "Path mapping: $CCBOX_PATH_MAP"
@@ -898,6 +891,7 @@ function generateCcboxFuseC(): string {
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <dirent.h>
 #include <errno.h>
 #include <ctype.h>
@@ -1153,6 +1147,9 @@ static int ccbox_write(const char *path, const char *buf, size_t size, off_t off
 }
 
 static int ccbox_release(const char *path, struct fuse_file_info *fi) { (void)path; close(fi->fh); return 0; }
+static int ccbox_flush(const char *path, struct fuse_file_info *fi) { (void)path; return close(dup(fi->fh)) == -1 ? -errno : 0; }
+static int ccbox_fsync(const char *path, int isdatasync, struct fuse_file_info *fi) { (void)path; return (isdatasync ? fdatasync(fi->fh) : fsync(fi->fh)) == -1 ? -errno : 0; }
+static int ccbox_statfs(const char *path, struct statvfs *stbuf) { char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return statvfs(fpath, stbuf) == -1 ? -errno : 0; }
 static int ccbox_access(const char *path, int mask) { char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return access(fpath, mask) == -1 ? -errno : 0; }
 static int ccbox_mkdir(const char *path, mode_t mode) { char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return mkdir(fpath, mode) == -1 ? -errno : 0; }
 static int ccbox_unlink(const char *path) { char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return unlink(fpath) == -1 ? -errno : 0; }
@@ -1169,10 +1166,11 @@ static int ccbox_link(const char *from, const char *to) { char ff[MAX_PATH_LEN],
 
 static const struct fuse_operations ccbox_oper = {
     .getattr = ccbox_getattr, .readdir = ccbox_readdir, .open = ccbox_open, .read = ccbox_read,
-    .write = ccbox_write, .release = ccbox_release, .access = ccbox_access, .mkdir = ccbox_mkdir,
-    .unlink = ccbox_unlink, .rmdir = ccbox_rmdir, .create = ccbox_create, .truncate = ccbox_truncate,
-    .utimens = ccbox_utimens, .chmod = ccbox_chmod, .chown = ccbox_chown, .rename = ccbox_rename,
-    .symlink = ccbox_symlink, .readlink = ccbox_readlink, .link = ccbox_link,
+    .write = ccbox_write, .release = ccbox_release, .flush = ccbox_flush, .fsync = ccbox_fsync,
+    .statfs = ccbox_statfs, .access = ccbox_access, .mkdir = ccbox_mkdir, .unlink = ccbox_unlink,
+    .rmdir = ccbox_rmdir, .create = ccbox_create, .truncate = ccbox_truncate, .utimens = ccbox_utimens,
+    .chmod = ccbox_chmod, .chown = ccbox_chown, .rename = ccbox_rename, .symlink = ccbox_symlink,
+    .readlink = ccbox_readlink, .link = ccbox_link,
 };
 
 static void add_mapping(const char *from, const char *to) {
