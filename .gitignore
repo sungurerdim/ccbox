@@ -44,8 +44,10 @@ temp/
 # Bun
 bun.lockb
 
-# Native code (embedded in generator.ts)
-native/
+# Native code build artifacts (source and pre-compiled binaries are tracked)
+native/out-*/
+native/*.b64
+native/*.o
 
 # Executables and scripts
 *.exe

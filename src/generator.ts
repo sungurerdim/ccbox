@@ -23,6 +23,7 @@ import { getClaudeConfigDir, getContainerName, getImageName, LanguageStack } fro
 import { DEFAULT_PIDS_LIMIT } from "./constants.js";
 import type { DepsInfo, DepsMode } from "./deps.js";
 import { getInstallCommands } from "./deps.js";
+import { FUSE_BINARY_AMD64, FUSE_BINARY_ARM64 } from "./fuse-binaries.js";
 import { resolveForDocker, normalizeProjectDirName } from "./paths.js";
 
 // Container constraints (SSOT - used for both docker run and prompt generation)
@@ -91,9 +92,7 @@ const COMMON_TOOLS = `
 RUN groupadd -g 1000 ccbox 2>/dev/null || true && \\
     useradd -m -d /ccbox -s /bin/bash -u 1000 -g 1000 ccbox 2>/dev/null || true
 
-# System packages - split into runtime and build deps for smaller final image
-# Runtime deps: kept in final image
-# Build deps: removed after compilation (libfuse3-dev, pkg-config, gcc, libc6-dev)
+# System packages - runtime only (no build deps needed - FUSE binary is pre-compiled)
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \\
     --mount=type=cache,target=/var/lib/apt,sharing=locked \\
     apt-get update && apt-get install -y --no-install-recommends \\
@@ -101,14 +100,12 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \\
     git curl ca-certificates bash openssh-client locales gosu \\
     # Search tools
     ripgrep jq fd-find \\
-    # FUSE runtime (fuse3 needed, libfuse3-dev only for build)
+    # FUSE runtime (only fuse3 needed - binary is pre-compiled)
     fuse3 \\
     # GitHub CLI
     gh \\
     # Core utilities (grep/sed/findutils come with base image)
     procps unzip \\
-    # Build dependencies (will be removed after FUSE/pathmap compilation)
-    gcc libc6-dev libfuse3-dev pkg-config \\
     && rm -rf /var/lib/apt/lists/* \\
     # Locale setup
     && sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen \\
@@ -140,23 +137,42 @@ ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \\
     GIT_INDEX_THREADS=0
 `;
 
-// FUSE filesystem build for kernel-level path transformation
+// FUSE filesystem - pre-compiled binaries for kernel-level path transformation
 // FUSE intercepts ALL file operations including Bun/Zig direct syscalls
-// Build deps are removed after compilation for smaller image
-const FUSE_BUILD = `
-# Build FUSE filesystem for kernel-level path transformation
+// No gcc/build-deps needed - binaries are embedded in ccbox CLI
+function generateFuseBuild(): string {
+  return `
+# Install pre-compiled FUSE binary for kernel-level path transformation
 # FUSE works with ALL apps including Bun (which bypasses glibc/LD_PRELOAD)
-COPY ccbox-fuse.c /tmp/ccbox-fuse.c
+# Binary is pre-compiled - no gcc needed (~2GB download savings)
+# Uses Docker's TARGETARCH for multi-platform builds
+ARG TARGETARCH=amd64
+COPY ccbox-fuse-amd64 ccbox-fuse-arm64 /tmp/
+RUN if [ "$TARGETARCH" = "arm64" ]; then \\
+        cp /tmp/ccbox-fuse-arm64 /usr/local/bin/ccbox-fuse; \\
+    else \\
+        cp /tmp/ccbox-fuse-amd64 /usr/local/bin/ccbox-fuse; \\
+    fi \\
+    && chmod 755 /usr/local/bin/ccbox-fuse \\
+    && echo 'user_allow_other' >> /etc/fuse.conf \\
+    && rm -f /tmp/ccbox-fuse-*
+`;
+}
 
-# Compile FUSE binary, then remove build dependencies (~100MB savings)
+// Legacy: Keep for reference - C source compilation (requires gcc)
+const FUSE_BUILD_FROM_SOURCE = `
+# Build FUSE filesystem from source (requires gcc ~2GB)
+COPY ccbox-fuse.c /tmp/ccbox-fuse.c
 RUN gcc -Wall -O2 -o /usr/local/bin/ccbox-fuse /tmp/ccbox-fuse.c $(pkg-config fuse3 --cflags --libs) \\
     && chmod 755 /usr/local/bin/ccbox-fuse \\
     && echo 'user_allow_other' >> /etc/fuse.conf \\
     && rm /tmp/ccbox-fuse.c \\
-    # Remove build dependencies (gcc, libc6-dev, libfuse3-dev, pkg-config)
     && apt-get purge -y --auto-remove gcc libc6-dev libfuse3-dev pkg-config \\
     && rm -rf /var/lib/apt/lists/*
 `;
+
+// Placeholder for backward compatibility
+const FUSE_BUILD = generateFuseBuild();
 
 // Python dev tools
 const PYTHON_TOOLS_BASE = `
@@ -280,7 +296,7 @@ ${ENTRYPOINT_SETUP}
 
 function javaDockerfile(): string {
   return `# syntax=docker/dockerfile:1
-# ccbox/java - Java (Temurin LTS) + Claude Code + Maven
+# ccbox/java - Java (Temurin LTS) + Claude Code + Maven + quality tools
 FROM eclipse-temurin:latest
 
 LABEL org.opencontainers.image.title="ccbox/java"
@@ -298,13 +314,23 @@ RUN set -eux; \\
     MVN_VER=$(curl -sfL https://api.github.com/repos/apache/maven/releases/latest | jq -r .tag_name | sed 's/maven-//'); \\
     curl -sfL "https://archive.apache.org/dist/maven/maven-3/\${MVN_VER}/binaries/apache-maven-\${MVN_VER}-bin.tar.gz" | tar -xz -C /opt; \\
     ln -s /opt/apache-maven-\${MVN_VER}/bin/mvn /usr/local/bin/mvn
+
+# Java quality tools (google-java-format for formatting, checkstyle for linting)
+RUN GJF_VER=\$(curl -sfL https://api.github.com/repos/google/google-java-format/releases/latest | jq -r .tag_name | sed 's/v//') \\
+    && curl -sfL "https://github.com/google/google-java-format/releases/download/v\${GJF_VER}/google-java-format-\${GJF_VER}-all-deps.jar" -o /opt/google-java-format.jar \\
+    && echo '#!/bin/bash\\njava -jar /opt/google-java-format.jar "\$@"' > /usr/local/bin/google-java-format \\
+    && chmod +x /usr/local/bin/google-java-format \\
+    && CS_VER=\$(curl -sfL https://api.github.com/repos/checkstyle/checkstyle/releases/latest | jq -r .tag_name | sed 's/checkstyle-//') \\
+    && curl -sfL "https://github.com/checkstyle/checkstyle/releases/download/checkstyle-\${CS_VER}/checkstyle-\${CS_VER}-all.jar" -o /opt/checkstyle.jar \\
+    && echo '#!/bin/bash\\njava -jar /opt/checkstyle.jar "\$@"' > /usr/local/bin/checkstyle \\
+    && chmod +x /usr/local/bin/checkstyle
 ${ENTRYPOINT_SETUP}
 `;
 }
 
 function webDockerfile(): string {
   return `# syntax=docker/dockerfile:1
-# ccbox/web - Node.js + TypeScript + test tools (fullstack)
+# ccbox/web - Node.js + Bun + TypeScript + test tools (fullstack)
 FROM ccbox/base
 
 LABEL org.opencontainers.image.title="ccbox/web"
@@ -317,8 +343,13 @@ RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - \\
 # pnpm (via corepack)
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
-# Node.js/TypeScript dev tools (typescript, eslint, vitest)
-RUN npm install -g typescript eslint vitest @types/node \\
+# Bun (fast JavaScript runtime and package manager)
+RUN curl -fsSL https://bun.sh/install | bash \\
+    && ln -s /root/.bun/bin/bun /usr/local/bin/bun \\
+    && ln -s /root/.bun/bin/bunx /usr/local/bin/bunx
+
+# Node.js/TypeScript dev tools (typescript, eslint, vitest, prettier)
+RUN npm install -g typescript eslint vitest prettier @types/node \\
     && npm cache clean --force
 `;
 }
@@ -352,53 +383,70 @@ RUN KOTLIN_VER=\$(curl -sfL https://api.github.com/repos/JetBrains/kotlin/releas
 
 function dotnetDockerfile(): string {
   return `# syntax=docker/dockerfile:1
-# ccbox/dotnet - .NET SDK
+# ccbox/dotnet - .NET SDK + quality tools
 FROM ccbox/base
 
 LABEL org.opencontainers.image.title="ccbox/dotnet"
 
-# .NET SDK (latest LTS)
+# .NET SDK (latest LTS) - includes built-in tools: dotnet format, dotnet test
 RUN curl -fsSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel LTS --install-dir /usr/share/dotnet \\
     && ln -s /usr/share/dotnet/dotnet /usr/local/bin/dotnet
 ENV DOTNET_ROOT=/usr/share/dotnet
 ENV DOTNET_CLI_TELEMETRY_OPTOUT=1
+
+# .NET quality tools (dotnet-format is built-in, add analyzers)
+RUN dotnet tool install -g dotnet-reportgenerator-globaltool \\
+    && dotnet tool install -g coverlet.console
+ENV PATH="\$PATH:/root/.dotnet/tools"
 `;
 }
 
 function swiftDockerfile(): string {
   return `# syntax=docker/dockerfile:1
-# ccbox/swift - Swift
+# ccbox/swift - Swift + quality tools
 FROM ccbox/base
 
 LABEL org.opencontainers.image.title="ccbox/swift"
 
-# Swift (official release)
+# Swift (official release) - includes swift-format built-in
 RUN SWIFT_ARCH=\$(dpkg --print-architecture | sed 's/amd64/x86_64/;s/arm64/aarch64/') \\
     && SWIFT_VER=\$(curl -sfL https://api.github.com/repos/swiftlang/swift/releases/latest | jq -r .tag_name | sed 's/swift-//;s/-RELEASE//') \\
     && curl -fsSL "https://download.swift.org/swift-\${SWIFT_VER}-release/ubuntu2204/swift-\${SWIFT_VER}-RELEASE/swift-\${SWIFT_VER}-RELEASE-ubuntu22.04.tar.gz" | tar -xz -C /opt \\
     && ln -s /opt/swift-\${SWIFT_VER}-RELEASE-ubuntu22.04/usr/bin/swift /usr/local/bin/swift \\
-    && ln -s /opt/swift-\${SWIFT_VER}-RELEASE-ubuntu22.04/usr/bin/swiftc /usr/local/bin/swiftc
+    && ln -s /opt/swift-\${SWIFT_VER}-RELEASE-ubuntu22.04/usr/bin/swiftc /usr/local/bin/swiftc \\
+    && ln -s /opt/swift-\${SWIFT_VER}-RELEASE-ubuntu22.04/usr/bin/swift-format /usr/local/bin/swift-format 2>/dev/null || true
+
+# SwiftLint (linting)
+RUN SWIFTLINT_VER=\$(curl -sfL https://api.github.com/repos/realm/SwiftLint/releases/latest | jq -r .tag_name) \\
+    && curl -sfL "https://github.com/realm/SwiftLint/releases/download/\${SWIFTLINT_VER}/swiftlint_linux.zip" -o /tmp/swiftlint.zip \\
+    && unzip -q /tmp/swiftlint.zip -d /usr/local/bin && rm /tmp/swiftlint.zip \\
+    && chmod +x /usr/local/bin/swiftlint
 `;
 }
 
 function dartDockerfile(): string {
   return `# syntax=docker/dockerfile:1
-# ccbox/dart - Dart + Flutter CLI
+# ccbox/dart - Dart + quality tools (built-in: dart analyze, dart format, dart test)
 FROM ccbox/base
 
 LABEL org.opencontainers.image.title="ccbox/dart"
 
-# Dart SDK
+# Dart SDK - includes built-in quality tools:
+#   dart analyze (linting), dart format (formatting), dart test (testing)
 RUN DART_ARCH=\$(dpkg --print-architecture) \\
     && curl -fsSL "https://storage.googleapis.com/dart-archive/channels/stable/release/latest/sdk/dartsdk-linux-\${DART_ARCH}-release.zip" -o /tmp/dart.zip \\
     && unzip -q /tmp/dart.zip -d /opt && rm /tmp/dart.zip
 ENV PATH="/opt/dart-sdk/bin:$PATH"
+
+# DCM (Dart Code Metrics) - advanced static analysis
+RUN dart pub global activate dart_code_metrics 2>/dev/null || true
+ENV PATH="\$PATH:/root/.pub-cache/bin"
 `;
 }
 
 function luaDockerfile(): string {
   return `# syntax=docker/dockerfile:1
-# ccbox/lua - Lua + LuaRocks
+# ccbox/lua - Lua + LuaRocks + quality tools
 FROM ccbox/base
 
 LABEL org.opencontainers.image.title="ccbox/lua"
@@ -407,6 +455,10 @@ LABEL org.opencontainers.image.title="ccbox/lua"
 RUN apt-get update && apt-get install -y --no-install-recommends \\
     lua5.4 liblua5.4-dev luarocks \\
     && rm -rf /var/lib/apt/lists/*
+
+# Lua quality tools (luacheck for linting, lua-formatter for formatting)
+RUN luarocks install luacheck \\
+    && luarocks install --server=https://luarocks.org/dev luaformatter 2>/dev/null || true
 `;
 }
 
@@ -502,27 +554,32 @@ RUN apt-get update && apt-get install -y --no-install-recommends \\
 
 function scriptingDockerfile(): string {
   return `# syntax=docker/dockerfile:1
-# ccbox/scripting - Ruby + PHP + Perl (web backends)
+# ccbox/scripting - Ruby + PHP + Perl + quality tools (web backends)
 FROM ccbox/base
 
 LABEL org.opencontainers.image.title="ccbox/scripting"
 
-# Ruby + Bundler
+# Ruby + Bundler + quality tools (rubocop for linting/formatting)
 RUN apt-get update && apt-get install -y --no-install-recommends \\
     ruby ruby-dev ruby-bundler \\
     && rm -rf /var/lib/apt/lists/* \\
-    && gem install bundler --no-document
+    && gem install bundler rubocop --no-document
 
-# PHP + common extensions + Composer
+# PHP + common extensions + Composer + quality tools (php-cs-fixer, phpstan)
 RUN apt-get update && apt-get install -y --no-install-recommends \\
     php php-cli php-common php-curl php-json php-mbstring php-xml php-zip \\
     && rm -rf /var/lib/apt/lists/* \\
-    && curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+    && curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer \\
+    && curl -L https://cs.symfony.com/download/php-cs-fixer-v3.phar -o /usr/local/bin/php-cs-fixer \\
+    && chmod +x /usr/local/bin/php-cs-fixer \\
+    && curl -L https://github.com/phpstan/phpstan/releases/latest/download/phpstan.phar -o /usr/local/bin/phpstan \\
+    && chmod +x /usr/local/bin/phpstan
 
-# Perl + cpanminus
+# Perl + cpanminus + quality tools (Perl::Critic, Perl::Tidy)
 RUN apt-get update && apt-get install -y --no-install-recommends \\
     perl cpanminus liblocal-lib-perl \\
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \\
+    && cpanm --notest Perl::Critic Perl::Tidy 2>/dev/null || true
 `;
 }
 
@@ -733,89 +790,101 @@ if [[ "$(id -u)" == "0" && -n "$CCBOX_UID" && -n "$CCBOX_GID" ]]; then
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Cross-platform path compatibility via FUSE
+# Cross-platform path compatibility via FUSE (in-place overlay)
 # FUSE provides kernel-level path transformation that works with ALL apps
 # including Bun/Zig which bypass glibc (and thus LD_PRELOAD)
+#
+# In-place overlay: FUSE mounts directly over existing directories without
+# creating additional directories on host. Uses bind mount trick:
+# 1. Bind mount original dir to temp location (container-only)
+# 2. FUSE mounts from temp back to original path
+# 3. Changes go through FUSE -> bind mount -> host (transparent)
 # ══════════════════════════════════════════════════════════════════════════════
 
-# Helper function to mount FUSE filesystem for a .claude directory
-_mount_claude_fuse() {
-    local source_dir="$1"
-    local mount_point="$2"
-    local label="$3"
+# Helper function for in-place FUSE overlay on a directory
+_setup_fuse_overlay() {
+    local mount_point="$1"
+    local label="$2"
 
-    if [[ ! -d "$source_dir" ]]; then
-        _log_verbose "FUSE skip ($label): source not found: $source_dir"
+    if [[ ! -d "$mount_point" ]]; then
+        _log_verbose "FUSE skip ($label): dir not found: $mount_point"
         return 1
     fi
 
-    # Create mount point
-    mkdir -p "$mount_point"
-    chmod 755 "$mount_point"
+    # Container-only bind mount source directory
+    # Use /run (tmpfs, always available, not cleaned by tmp cleaners)
+    # Bind mount doesn't copy data - just creates alternate path to same inode
+    local safe_name
+    safe_name=$(echo "$mount_point" | tr '/' '-' | sed 's/^-//')
+    local fuse_base="/run/ccbox-fuse"
+    mkdir -p "$fuse_base" 2>/dev/null || true
+    local tmp_source="$fuse_base/$safe_name"
+    mkdir -p "$tmp_source"
+
+    # Bind mount original to temp (preserves bidirectional host connection)
+    if ! mount --bind "$mount_point" "$tmp_source"; then
+        _log "Warning: bind mount failed for $label"
+        rmdir "$tmp_source" 2>/dev/null
+        return 1
+    fi
 
     # Build FUSE options
-    local fuse_opts="source=$source_dir,allow_other"
+    local fuse_opts="source=$tmp_source,allow_other"
     [[ -n "$CCBOX_UID" ]] && fuse_opts="$fuse_opts,uid=$CCBOX_UID"
     [[ -n "$CCBOX_GID" ]] && fuse_opts="$fuse_opts,gid=$CCBOX_GID"
     [[ -n "$CCBOX_PATH_MAP" ]] && fuse_opts="$fuse_opts,pathmap=$CCBOX_PATH_MAP"
 
-    _log_verbose "FUSE ($label): $source_dir -> $mount_point"
+    _log_verbose "FUSE ($label): $tmp_source -> $mount_point (in-place overlay)"
 
-    # Mount FUSE filesystem in background
+    # Mount FUSE over original path (in-place overlay)
     nohup /usr/local/bin/ccbox-fuse -f -o "$fuse_opts" "$mount_point" </dev/null >/dev/null 2>&1 &
     local fuse_pid=$!
     sleep 0.5  # Wait for FUSE to initialize
 
     # Verify mount
     if mountpoint -q "$mount_point" 2>/dev/null; then
-        _log "FUSE mounted: $label"
+        _log "FUSE mounted: $label (in-place)"
         return 0
     else
         _log "Warning: FUSE mount failed for $label"
         kill $fuse_pid 2>/dev/null || true
+        umount "$tmp_source" 2>/dev/null || true
+        rmdir "$tmp_source" 2>/dev/null
         return 1
     fi
 }
 
 if [[ -n "$CCBOX_PATH_MAP" && -x "/usr/local/bin/ccbox-fuse" ]]; then
-    _log "Setting up FUSE for path translation..."
+    _log "Setting up FUSE for path translation (in-place overlay)..."
 
-    # Mount global .claude (from host config directory)
-    # Global .claude is pre-mounted as .claude-source by Docker, FUSE overlays it
-    if [[ -d "/ccbox/.claude-source" ]]; then
-        if _mount_claude_fuse "/ccbox/.claude-source" "/ccbox/.claude" "global"; then
+    # Mount global .claude with FUSE overlay
+    if [[ -d "/ccbox/.claude" ]]; then
+        if _setup_fuse_overlay "/ccbox/.claude" "global"; then
             export CCBOX_FUSE_GLOBAL=1
         fi
     fi
 
-    # Mount project .claude if it was separately mounted as .claude-source
-    # Docker mounts project/.claude -> project/.claude-source (overlay mount)
-    # FUSE then mounts .claude-source -> .claude with path transformation
-    if [[ -d "$PWD/.claude-source" ]]; then
-        if _mount_claude_fuse "$PWD/.claude-source" "$PWD/.claude" "project"; then
+    # Mount project .claude with FUSE overlay (if exists)
+    if [[ -d "$PWD/.claude" ]]; then
+        if _setup_fuse_overlay "$PWD/.claude" "project"; then
             export CCBOX_FUSE_PROJECT=1
         fi
-    elif [[ -d "$PWD/.claude" ]]; then
-        # No separate mount - project .claude used directly (created in container)
-        _log "Project .claude detected (direct, no transform)"
     fi
 
     _log "Path mapping: $CCBOX_PATH_MAP"
 
     # Clean orphaned plugin markers in global .claude
-    _claude_check_dir="/ccbox/.claude"
-    [[ -n "$CCBOX_FUSE_GLOBAL" ]] || _claude_check_dir="/ccbox/.claude-source"
-    if [[ -d "$_claude_check_dir/plugins/cache" ]]; then
-        _orphan_count=$(find "$_claude_check_dir/plugins/cache" -name ".orphaned_at" -type f 2>/dev/null | wc -l)
+    if [[ -d "/ccbox/.claude/plugins/cache" ]]; then
+        _orphan_count=$(find "/ccbox/.claude/plugins/cache" -name ".orphaned_at" -type f 2>/dev/null | wc -l)
         if [[ "$_orphan_count" -gt 0 ]]; then
-            find "$_claude_check_dir/plugins/cache" -name ".orphaned_at" -type f -exec rm -f {} + 2>/dev/null || true
+            find "/ccbox/.claude/plugins/cache" -name ".orphaned_at" -type f -exec rm -f {} + 2>/dev/null || true
             _log "Cleaned $_orphan_count orphaned plugin marker(s)"
         fi
     fi
 else
     # No path mapping needed or FUSE not available
     if [[ -d "$PWD/.claude" ]]; then
-        _log "Project .claude detected (direct mount)"
+        _log "Project .claude detected (direct mount, no path transform)"
     fi
 fi
 
@@ -1156,16 +1225,42 @@ static int ccbox_flush(const char *path, struct fuse_file_info *fi) { (void)path
 static int ccbox_fsync(const char *path, int isdatasync, struct fuse_file_info *fi) { (void)path; return (isdatasync ? fdatasync(fi->fh) : fsync(fi->fh)) == -1 ? -errno : 0; }
 static int ccbox_statfs(const char *path, struct statvfs *stbuf) { char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return statvfs(fpath, stbuf) == -1 ? -errno : 0; }
 static int ccbox_access(const char *path, int mask) { char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return access(fpath, mask) == -1 ? -errno : 0; }
-static int ccbox_mkdir(const char *path, mode_t mode) { char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return mkdir(fpath, mode) == -1 ? -errno : 0; }
+static int ccbox_mkdir(const char *path, mode_t mode) {
+    struct fuse_context *ctx = fuse_get_context();
+    char fpath[MAX_PATH_LEN];
+    get_source_path(fpath, path, sizeof(fpath));
+    if (mkdir(fpath, mode) == -1) return -errno;
+    // Set ownership to calling process (not FUSE daemon)
+    chown(fpath, ctx->uid, ctx->gid);
+    return 0;
+}
 static int ccbox_unlink(const char *path) { char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return unlink(fpath) == -1 ? -errno : 0; }
 static int ccbox_rmdir(const char *path) { char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return rmdir(fpath) == -1 ? -errno : 0; }
-static int ccbox_create(const char *path, mode_t mode, struct fuse_file_info *fi) { char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); int fd = open(fpath, fi->flags, mode); if (fd == -1) return -errno; fi->fh = fd; return 0; }
+static int ccbox_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
+    struct fuse_context *ctx = fuse_get_context();
+    char fpath[MAX_PATH_LEN];
+    get_source_path(fpath, path, sizeof(fpath));
+    int fd = open(fpath, fi->flags, mode);
+    if (fd == -1) return -errno;
+    fi->fh = fd;
+    // Set ownership to calling process (not FUSE daemon)
+    fchown(fd, ctx->uid, ctx->gid);
+    return 0;
+}
 static int ccbox_truncate(const char *path, off_t size, struct fuse_file_info *fi) { char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return (fi ? ftruncate(fi->fh, size) : truncate(fpath, size)) == -1 ? -errno : 0; }
 static int ccbox_utimens(const char *path, const struct timespec ts[2], struct fuse_file_info *fi) { (void)fi; char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return utimensat(0, fpath, ts, AT_SYMLINK_NOFOLLOW) == -1 ? -errno : 0; }
 static int ccbox_chmod(const char *path, mode_t mode, struct fuse_file_info *fi) { (void)fi; char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return chmod(fpath, mode) == -1 ? -errno : 0; }
 static int ccbox_chown(const char *path, uid_t uid, gid_t gid, struct fuse_file_info *fi) { (void)fi; char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return lchown(fpath, uid, gid) == -1 ? -errno : 0; }
 static int ccbox_rename(const char *from, const char *to, unsigned int flags) { if (flags) return -EINVAL; char ff[MAX_PATH_LEN], ft[MAX_PATH_LEN]; get_source_path(ff, from, sizeof(ff)); get_source_path(ft, to, sizeof(ft)); return rename(ff, ft) == -1 ? -errno : 0; }
-static int ccbox_symlink(const char *target, const char *linkpath) { char fpath[MAX_PATH_LEN]; get_source_path(fpath, linkpath, sizeof(fpath)); return symlink(target, fpath) == -1 ? -errno : 0; }
+static int ccbox_symlink(const char *target, const char *linkpath) {
+    struct fuse_context *ctx = fuse_get_context();
+    char fpath[MAX_PATH_LEN];
+    get_source_path(fpath, linkpath, sizeof(fpath));
+    if (symlink(target, fpath) == -1) return -errno;
+    // Set ownership to calling process (not FUSE daemon)
+    lchown(fpath, ctx->uid, ctx->gid);
+    return 0;
+}
 static int ccbox_readlink(const char *path, char *buf, size_t size) { char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); ssize_t res = readlink(fpath, buf, size - 1); if (res == -1) return -errno; buf[res] = '\\0'; return 0; }
 static int ccbox_link(const char *from, const char *to) { char ff[MAX_PATH_LEN], ft[MAX_PATH_LEN]; get_source_path(ff, from, sizeof(ff)); get_source_path(ft, to, sizeof(ft)); return link(ff, ft) == -1 ? -errno : 0; }
 
@@ -1239,8 +1334,9 @@ int main(int argc, char *argv[]) {
 /**
  * Write Dockerfile and entrypoint to build directory.
  * Uses OS-agnostic path handling.
+ * @param targetArch - Target architecture (amd64 or arm64). If not specified, uses host arch.
  */
-export function writeBuildFiles(stack: LanguageStack): string {
+export function writeBuildFiles(stack: LanguageStack, targetArch?: string): string {
   // Use OS-agnostic temp directory
   const buildDir = join(tmpdir(), "ccbox", "build", stack);
   mkdirSync(buildDir, { recursive: true });
@@ -1252,8 +1348,30 @@ export function writeBuildFiles(stack: LanguageStack): string {
   writeFileSync(join(buildDir, "Dockerfile"), dockerfile, { encoding: "utf-8" });
   writeFileSync(join(buildDir, "entrypoint.sh"), entrypoint, { encoding: "utf-8", mode: 0o755 });
 
-  // Copy ccbox-fuse.c for FUSE filesystem build
-  // FUSE provides kernel-level path transformation for ALL apps (including Bun)
+  // Write pre-compiled FUSE binary (no gcc needed - ~2GB savings)
+  // Architecture is detected at build time via Docker's TARGETARCH
+  // We write both binaries and let Docker select the right one
+  const fuseBinaryAmd64 = Buffer.from(FUSE_BINARY_AMD64, "base64");
+  const fuseBinaryArm64 = Buffer.from(FUSE_BINARY_ARM64, "base64");
+
+  writeFileSync(join(buildDir, "ccbox-fuse-amd64"), fuseBinaryAmd64, { mode: 0o755 });
+  writeFileSync(join(buildDir, "ccbox-fuse-arm64"), fuseBinaryArm64, { mode: 0o755 });
+
+  // Write architecture selector script
+  // Docker will use TARGETARCH to copy the correct binary
+  const archSelector = `#!/bin/sh
+# Select correct binary based on architecture
+ARCH=\${TARGETARCH:-amd64}
+if [ "$ARCH" = "arm64" ]; then
+  cp /tmp/ccbox-fuse-arm64 /usr/local/bin/ccbox-fuse
+else
+  cp /tmp/ccbox-fuse-amd64 /usr/local/bin/ccbox-fuse
+fi
+chmod 755 /usr/local/bin/ccbox-fuse
+`;
+  writeFileSync(join(buildDir, "install-fuse.sh"), archSelector, { encoding: "utf-8", mode: 0o755 });
+
+  // Also keep ccbox-fuse.c for source builds if needed
   const fuseSrc = join(__dirname, "..", "native", "ccbox-fuse.c");
   let fuseContent: string;
   if (existsSync(fuseSrc)) {
@@ -1565,21 +1683,13 @@ export function getDockerRunCmd(
 
   cmd.push("--name", containerName);
 
-  // Project mount (always)
+  // Project mount (always) - includes project .claude if exists
   cmd.push("-v", `${dockerProjectPath}:/ccbox/${dirName}:rw`);
-
-  // Project .claude mount (if exists) - separate for FUSE overlay
-  // This allows FUSE to transform paths in project .claude without modifying host
-  const projectClaudeDir = join(projectPath, ".claude");
-  if (existsSync(projectClaudeDir)) {
-    const dockerProjectClaude = resolveForDocker(projectClaudeDir);
-    cmd.push("-v", `${dockerProjectClaude}:/ccbox/${dirName}/.claude-source:rw`);
-  }
 
   // Claude config mount
   // - Base image: minimal mount (only credentials + settings for vanilla experience)
   // - Fresh mode: same as base (explicit --fresh flag)
-  // - Other images: full .claude mount (LD_PRELOAD handles path transformation)
+  // - Other images: full .claude mount with FUSE in-place overlay for path transformation
   const dockerClaudeConfig = resolveForDocker(claudeConfig);
   const isBaseImage = stack === "base";
   const useMinimalMount = options.fresh || isBaseImage;
@@ -1587,10 +1697,9 @@ export function getDockerRunCmd(
   if (useMinimalMount) {
     addMinimalMounts(cmd, claudeConfig);
   } else {
-    // Mount to .claude-source for FUSE overlay
-    // FUSE will mount .claude-source -> .claude with path transformation
-    // This enables kernel-level interception for Bun's direct syscalls
-    cmd.push("-v", `${dockerClaudeConfig}:/ccbox/.claude-source:rw`);
+    // Mount global .claude directly - FUSE does in-place overlay in entrypoint
+    // No .claude-source needed - FUSE uses bind mount trick inside container
+    cmd.push("-v", `${dockerClaudeConfig}:/ccbox/.claude:rw`);
 
     // FUSE device access for kernel-level path transformation
     // Windows Docker Desktop requires --privileged for /dev/fuse access
