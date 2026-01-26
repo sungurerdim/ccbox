@@ -465,8 +465,24 @@ export function getDockerRunCmd(
 
   cmd.push("--name", containerName);
 
-  // Project mount (always) - includes project .claude if exists
-  cmd.push("-v", `${dockerProjectPath}:/ccbox/${dirName}:rw`);
+  // Host project path for session compatibility
+  // Claude Code uses pwd to determine project path for sessions
+  // Mount directly to host-like path so sessions match across environments
+  // Dockerfile creates /{a..z} directories for Windows drive letter support
+  const hostProjectPath = dockerProjectPath.replace(/^([A-Za-z]):/, (_, d) => `/${d.toLowerCase()}`);
+
+  // Project mount (always) - mount to host-like path for session compatibility
+  cmd.push("-v", `${dockerProjectPath}:${hostProjectPath}:rw`);
+
+  // WSL session compatibility: detect WSL paths and pass for symlink bridge
+  // WSL uses /mnt/d/... which encodes differently than /d/...
+  // Entrypoint will create symlinks between encodings for session sharing
+  const originalPath = resolve(projectPath);
+  const wslMatch = originalPath.match(/^\/mnt\/([a-z])(\/.*)?$/i);
+  if (wslMatch) {
+    // Pass original WSL path for encoding bridge in entrypoint
+    cmd.push("-e", `CCBOX_WSL_ORIGINAL_PATH=${originalPath}`);
+  }
 
   // Claude config mount
   // - Base image: minimal mount (only credentials + settings for vanilla experience)
@@ -493,8 +509,8 @@ export function getDockerRunCmd(
     }
   }
 
-  // Working directory
-  cmd.push("-w", `/ccbox/${dirName}`);
+  // Working directory - use host path for session compatibility
+  cmd.push("-w", hostProjectPath);
 
   // User mapping
   addUserMapping(cmd);
@@ -513,8 +529,8 @@ export function getDockerRunCmd(
   }
 
   // Environment variables
-  // HOME = project directory, CLAUDE_CONFIG_DIR = global config
-  cmd.push("-e", `HOME=/ccbox/${dirName}`);
+  // HOME = host project path (direct mount), CLAUDE_CONFIG_DIR = global config
+  cmd.push("-e", `HOME=${hostProjectPath}`);
   cmd.push("-e", "CLAUDE_CONFIG_DIR=/ccbox/.claude");
   addTerminalEnv(cmd);
   addClaudeEnv(cmd);
@@ -535,18 +551,28 @@ export function getDockerRunCmd(
   // Persistent paths for container awareness
   // Base image and fresh mode: only project dir persists (.claude is ephemeral)
   // Other images: both project and .claude persist
+  // Use host path for user-facing messages (matches pwd output)
   const persistentPaths = (options.fresh || isBaseImage)
-    ? `/ccbox/${dirName}`
-    : `/ccbox/${dirName}, /ccbox/.claude`;
+    ? hostProjectPath
+    : `${hostProjectPath}, /ccbox/.claude`;
   cmd.push("-e", `CCBOX_PERSISTENT_PATHS=${persistentPaths}`);
 
-  // LD_PRELOAD path mapping: host paths -> container paths
-  // This enables transparent path translation for config files with absolute host paths
-  // Maps both project directory and .claude config for full host compatibility
+  // FUSE path mapping: host paths -> container paths (for JSON config transformation)
+  // Maps Windows paths (D:/...) to POSIX paths (/d/...) in session files
+  // This ensures sessions created in container are visible on host and vice versa
   const pathMappings: string[] = [];
 
-  // Always map project directory
-  pathMappings.push(`${dockerProjectPath}:/ccbox/${dirName}`);
+  // Map project directory (Windows D:/... -> POSIX /d/...)
+  // Only needed on Windows where path format differs
+  if (dockerProjectPath !== hostProjectPath) {
+    pathMappings.push(`${dockerProjectPath}:${hostProjectPath}`);
+  }
+
+  // Map WSL path if detected (/mnt/d/... -> /d/...)
+  // This allows FUSE to transform WSL paths in session files
+  if (wslMatch) {
+    pathMappings.push(`${originalPath}:${hostProjectPath}`);
+  }
 
   // Map .claude config (unless fresh/base image mode)
   if (!options.fresh && !isBaseImage) {
