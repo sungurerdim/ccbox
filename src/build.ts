@@ -4,7 +4,7 @@
  * Handles Docker image building for stacks and projects.
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -132,7 +132,14 @@ export async function buildImage(
 
     console.log(chalk.green(`Built ${imageName}`));
 
-    // Post-build cleanup
+    // Post-build cleanup: remove temp build files
+    try {
+      rmSync(buildDir, { recursive: true, force: true });
+    } catch {
+      // Ignore cleanup errors
+    }
+
+    // Clean dangling images
     await cleanupCcboxDanglingImages();
 
     // For base image: run claude install to set up installMethod in host config
@@ -239,6 +246,14 @@ export async function buildProjectImage(
     );
 
     console.log(chalk.green(`Built ${imageName}`));
+
+    // Cleanup temp build files
+    try {
+      rmSync(buildDir, { recursive: true, force: true });
+    } catch {
+      // Ignore cleanup errors
+    }
+
     return imageName;
   } catch (error: unknown) {
     console.log(chalk.red(`Failed to build ${imageName}`));
@@ -253,6 +268,14 @@ export async function buildProjectImage(
         console.log(chalk.dim(`Error: ${error.message}`));
       }
     }
+
+    // Cleanup even on failure
+    try {
+      rmSync(buildDir, { recursive: true, force: true });
+    } catch {
+      // Ignore cleanup errors
+    }
+
     return null;
   }
 }

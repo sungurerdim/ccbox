@@ -1,22 +1,33 @@
 # Dependencies
 node_modules/
+vendor/
+.pnpm-store/
 
 # Git
 .git/
 .gitignore
 .github/
 
-# Build output (will be built in container)
+# Build output
 dist/
+dist-test/
+build/
+out/
+target/
 
 # IDE
 .idea/
 .vscode/
 *.swp
+*.swo
 
 # Test
 tests/
 coverage/
+htmlcov/
+.coverage
+.pytest_cache/
+.nyc_output/
 
 # OS
 .DS_Store
@@ -24,3 +35,37 @@ Thumbs.db
 
 # Docs
 *.md
+
+# Logs and temp
+*.log
+*.tmp
+.temp/
+.cache/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+*.egg-info/
+.eggs/
+venv/
+.venv/
+
+# Archives
+*.tar.gz
+*.zip
+*.rar
+*.7z
+
+# Native binaries (ccbox specific - already compiled)
+native/ccbox-fuse-linux-*

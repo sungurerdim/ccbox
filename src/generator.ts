@@ -243,16 +243,19 @@ else
     fi
 fi
 
-# Git performance optimizations
+# Git performance optimizations (I/O reduction)
 git config --global core.fileMode false 2>/dev/null || true
 git config --global --add safe.directory '*' 2>/dev/null || true
 git config --global core.preloadindex true 2>/dev/null || true
 git config --global core.fscache true 2>/dev/null || true
 git config --global core.untrackedcache true 2>/dev/null || true
 git config --global core.commitgraph true 2>/dev/null || true
+git config --global core.splitIndex true 2>/dev/null || true
 git config --global fetch.writeCommitGraph true 2>/dev/null || true
 git config --global gc.auto 0 2>/dev/null || true
 git config --global credential.helper 'cache --timeout=86400' 2>/dev/null || true
+git config --global pack.threads 0 2>/dev/null || true
+git config --global index.threads 0 2>/dev/null || true
 
 # Create temp directory in cache (exec allowed, ephemeral tmpfs)
 mkdir -p /ccbox/.cache/tmp 2>/dev/null || true
