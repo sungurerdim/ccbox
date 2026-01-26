@@ -13,7 +13,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 
-import { PathError } from "./errors.js";
+import { PathError, ValidationError } from "./errors.js";
 import { DOCKER_COMMAND_TIMEOUT } from "./constants.js";
 
 /**
@@ -267,7 +267,57 @@ export function parseStack(value: string): LanguageStack | undefined {
   return Object.values(LanguageStack).find((s) => s === normalized);
 }
 
+/**
+ * Create and validate a LanguageStack from string input.
+ * Factory function with validation - throws ValidationError if invalid.
+ *
+ * @param value - Stack name to validate
+ * @returns Valid LanguageStack enum value
+ * @throws ValidationError if stack name is invalid
+ */
+export function createStack(value: string): LanguageStack {
+  const stack = parseStack(value);
+  if (!stack) {
+    const validStacks = getStackValues().join(", ");
+    throw new ValidationError(
+      `Invalid stack '${value}'. Valid options: ${validStacks}`
+    );
+  }
+  return stack;
+}
+
 /** Get all stack values as array (for CLI choices). */
 export function getStackValues(): string[] {
   return Object.values(LanguageStack);
+}
+
+/**
+ * Filter stacks by category or search term.
+ *
+ * @param filter - Filter string (category name or partial match)
+ * @returns Filtered array of LanguageStack values
+ */
+export function filterStacks(filter: string): LanguageStack[] {
+  const normalized = filter.toLowerCase();
+  const allStacks = Object.values(LanguageStack);
+
+  // Category-based filtering
+  const categories: Record<string, LanguageStack[]> = {
+    core: [LanguageStack.BASE, LanguageStack.PYTHON, LanguageStack.WEB, LanguageStack.GO,
+           LanguageStack.RUST, LanguageStack.JAVA, LanguageStack.CPP, LanguageStack.DOTNET,
+           LanguageStack.SWIFT, LanguageStack.DART, LanguageStack.LUA],
+    combined: [LanguageStack.JVM, LanguageStack.FUNCTIONAL, LanguageStack.SCRIPTING, LanguageStack.SYSTEMS],
+    usecase: [LanguageStack.DATA, LanguageStack.AI, LanguageStack.MOBILE, LanguageStack.GAME, LanguageStack.FULLSTACK],
+  };
+
+  // Check if filter matches a category
+  if (categories[normalized]) {
+    return categories[normalized];
+  }
+
+  // Otherwise filter by partial name match
+  return allStacks.filter(stack =>
+    stack.includes(normalized) ||
+    STACK_INFO[stack].description.toLowerCase().includes(normalized)
+  );
 }

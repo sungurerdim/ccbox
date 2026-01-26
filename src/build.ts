@@ -65,15 +65,29 @@ async function runClaudeInstall(): Promise<void> {
   }
 }
 
+/** Build options for Docker image building. */
+export interface BuildOptions {
+  /** Docker build progress mode: auto (default), plain, or tty. */
+  progress?: string;
+}
+
 /**
  * Build Docker image for stack with BuildKit optimization.
+ *
+ * @param stack - Language stack to build
+ * @param options - Build options including progress mode
  */
-export async function buildImage(stack: LanguageStack): Promise<boolean> {
+export async function buildImage(
+  stack: LanguageStack,
+  options: BuildOptions = {}
+): Promise<boolean> {
+  const { progress = "auto" } = options;
+
   // Check if this stack depends on base image
   const dependency = STACK_DEPENDENCIES[stack];
   if (dependency !== null && !imageExists(dependency)) {
     console.log(chalk.dim(`Building dependency: ccbox/${dependency}...`));
-    if (!(await buildImage(dependency))) {
+    if (!(await buildImage(dependency, options))) {
       console.log(chalk.red(`Failed to build dependency ccbox/${dependency}`));
       return false;
     }
@@ -99,7 +113,7 @@ export async function buildImage(stack: LanguageStack): Promise<boolean> {
     "-f",
     join(buildDir, "Dockerfile"),
     "--no-cache",
-    "--progress=auto",
+    `--progress=${progress}`,
   ];
 
   // Only pull for stacks with external base images (base, go, rust, java)
@@ -174,14 +188,23 @@ export async function projectImageExists(projectName: string, stack: LanguageSta
 
 /**
  * Build project-specific image with dependencies.
+ *
+ * @param projectPath - Path to the project directory
+ * @param projectName - Name of the project (for image naming)
+ * @param stack - Language stack to base the image on
+ * @param depsList - List of detected dependencies
+ * @param depsMode - Dependency installation mode (all, prod, skip)
+ * @param options - Build options including progress mode
  */
 export async function buildProjectImage(
   projectPath: string,
   projectName: string,
   stack: LanguageStack,
   depsList: DepsInfo[],
-  depsMode: DepsMode
+  depsMode: DepsMode,
+  options: BuildOptions = {}
 ): Promise<string | null> {
+  const { progress = "auto" } = options;
   const imageName = getProjectImageName(projectName, stack);
   const baseImage = getImageName(stack);
 
@@ -206,7 +229,7 @@ export async function buildProjectImage(
     // Note: no --pull flag since we're building on top of local ccbox images
     await execa(
       "docker",
-      ["build", "-t", imageName, "-f", dockerfilePath, "--no-cache", "--progress=auto", projectPath],
+      ["build", "-t", imageName, "-f", dockerfilePath, "--no-cache", `--progress=${progress}`, projectPath],
       {
         stdio: "inherit",
         env,
@@ -257,11 +280,19 @@ export async function getInstalledCcboxImages(): Promise<Set<string>> {
 
 /**
  * Ensure the image is ready (built if needed).
+ *
+ * @param stack - Language stack to ensure
+ * @param buildOnly - Force rebuild even if image exists
+ * @param options - Build options including progress mode
  */
-export async function ensureImageReady(stack: LanguageStack, buildOnly: boolean): Promise<boolean> {
+export async function ensureImageReady(
+  stack: LanguageStack,
+  buildOnly: boolean,
+  options: BuildOptions = {}
+): Promise<boolean> {
   const needsBuild = buildOnly || !imageExists(stack);
   if (needsBuild) {
-    return buildImage(stack);
+    return buildImage(stack, options);
   }
   return true;
 }

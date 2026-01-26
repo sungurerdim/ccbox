@@ -30,7 +30,7 @@ export default [
     rules: {
       // TypeScript handles these
       "no-unused-vars": "off",
-      "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
+      "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_", varsIgnorePattern: "^_" }],
       "no-undef": "off",
 
       // Code quality

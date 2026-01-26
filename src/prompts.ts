@@ -162,6 +162,11 @@ export async function setupGitConfig(): Promise<Config> {
 
 /**
  * Resolve the stack to use based on user input or detection.
+ *
+ * Stack resolution follows this priority:
+ * 1. Explicit stack via --stack flag (validates against LanguageStack enum)
+ * 2. --stack=auto or --yes (unattended): use detected stack
+ * 3. Interactive menu (if image doesn't exist or skipIfImageExists=false)
  */
 export async function resolveStack(
   stackName: string | null,
@@ -175,20 +180,25 @@ export async function resolveStack(
 
   const detection = detectProjectType(projectPath);
 
-  // --stack=auto or unattended mode: use detected stack directly, no prompt
-  if (stackName === "auto" || unattended) {
-    return detection.recommendedStack;
-  }
-
-  // Explicit stack specified - validate it
-  if (stackName) {
+  // Explicit stack specified - validate and use it (takes priority over unattended)
+  if (stackName && stackName !== "auto") {
     const validStack = parseStack(stackName);
     if (!validStack) {
       console.log(chalk.red(`Invalid stack: "${stackName}"`));
       console.log(chalk.dim(`Valid stacks: ${getStackValues().join(", ")}`));
       return null;
     }
+    // Double-check stack is in LanguageStack enum (defensive validation)
+    if (!Object.values(LanguageStack).includes(validStack)) {
+      console.log(chalk.red(`Stack "${validStack}" not in LanguageStack enum`));
+      return null;
+    }
     return validStack;
+  }
+
+  // --stack=auto or unattended mode: use detected stack directly, no prompt
+  if (stackName === "auto" || unattended) {
+    return detection.recommendedStack;
   }
 
   // No --stack: interactive menu (or skip if image exists)

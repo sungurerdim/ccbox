@@ -7,6 +7,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { globbySync } from "globby";
+import { PRIORITY } from "./constants.js";
 
 /** Dependency installation mode. */
 export type DepsMode = "all" | "prod" | "skip";
@@ -51,10 +52,7 @@ interface PackageManager {
   detectFn?: string;
 }
 
-// Priority constants for package managers (higher = run first)
-const PRIORITY_HIGHEST = 10; // Lock files
-const PRIORITY_HIGH = 5; // Standard package managers
-const PRIORITY_LOW = 3; // Fallback package managers
+// Priority constants imported from constants.ts (SSOT)
 
 // All supported package managers with detection rules
 const PACKAGE_MANAGERS: PackageManager[] = [
@@ -66,39 +64,52 @@ const PACKAGE_MANAGERS: PackageManager[] = [
     detect: ["uv.lock"],
     installAll: "uv sync --all-extras",
     installProd: "uv sync --no-dev",
-    priority: PRIORITY_HIGHEST,
+    priority: PRIORITY.HIGHEST,
   },
   {
     name: "poetry",
     detect: ["poetry.lock"],
     installAll: "poetry install",
     installProd: "poetry install --no-dev",
-    priority: PRIORITY_HIGHEST,
+    priority: PRIORITY.HIGHEST,
+  },
+  {
+    name: "pdm",
+    detect: ["pdm.lock"],
+    installAll: "pdm install",
+    installProd: "pdm sync --prod",
+    priority: PRIORITY.HIGHEST,
+  },
+  {
+    name: "pdm",
+    detect: ["pyproject.toml"],
+    detectFn: "detectPdmPyproject",
+    priority: PRIORITY.HIGH,
   },
   {
     name: "pipenv",
     detect: ["Pipfile.lock", "Pipfile"],
     installAll: "pipenv install --dev",
     installProd: "pipenv install",
-    priority: PRIORITY_HIGHEST,
+    priority: PRIORITY.HIGHEST,
   },
   {
     name: "pip",
     detect: ["pyproject.toml"],
     detectFn: "detectPipPyproject",
-    priority: PRIORITY_HIGH,
+    priority: PRIORITY.HIGH,
   },
   {
     name: "pip",
     detect: ["requirements.txt"],
     detectFn: "detectPipRequirements",
-    priority: PRIORITY_HIGH,
+    priority: PRIORITY.HIGH,
   },
   {
     name: "pip",
     detect: ["setup.py", "setup.cfg"],
     detectFn: "detectPipSetup",
-    priority: PRIORITY_HIGH,
+    priority: PRIORITY.HIGH,
   },
   {
     name: "conda",
@@ -106,44 +117,66 @@ const PACKAGE_MANAGERS: PackageManager[] = [
     installAll: "conda env update -f environment.yml",
     installProd: "conda env update -f environment.yml",
     hasDev: false,
-    priority: PRIORITY_HIGHEST,
+    priority: PRIORITY.HIGHEST,
   },
   // ══════════════════════════════════════════════════════════════════════════
-  // JavaScript / TypeScript
+  // JavaScript / TypeScript (including Deno)
   // ══════════════════════════════════════════════════════════════════════════
   {
+    name: "deno",
+    detect: ["deno.lock"],
+    installAll: "deno install",
+    installProd: "deno install",  // Deno doesn't distinguish dev/prod
+    hasDev: false,
+    priority: PRIORITY.HIGHEST,
+  },
+  {
+    name: "deno",
+    detect: ["deno.json", "deno.jsonc"],
+    installAll: "deno install",
+    installProd: "deno install",
+    hasDev: false,
+    priority: PRIORITY.HIGH,
+  },
+  {
     name: "bun",
-    detect: ["bun.lockb"],
+    detect: ["bun.lockb", "bun.lock"],  // bun.lock is new text format since Bun 1.0
     installAll: "bun install",
     installProd: "bun install --production",
-    priority: PRIORITY_HIGHEST,
+    priority: PRIORITY.HIGHEST,
   },
   {
     name: "bun",
     detect: ["bunfig.toml", "package.json"],
     detectFn: "detectBun",
-    priority: PRIORITY_HIGHEST,
+    priority: PRIORITY.HIGHEST,
   },
   {
     name: "pnpm",
     detect: ["pnpm-lock.yaml"],
     installAll: "pnpm install",
     installProd: "pnpm install --prod",
-    priority: PRIORITY_HIGHEST,
+    priority: PRIORITY.HIGHEST,
   },
   {
     name: "yarn",
     detect: ["yarn.lock"],
-    installAll: "yarn install",
-    installProd: "yarn install --production",
-    priority: PRIORITY_HIGHEST,
+    detectFn: "detectYarn",  // Detect v1 vs v2+ (Berry) for correct commands
+    priority: PRIORITY.HIGHEST,
   },
   {
     name: "npm",
-    detect: ["package-lock.json", "package.json"],
+    detect: ["package-lock.json"],
     installAll: "npm install",
     installProd: "npm install --production",
-    priority: PRIORITY_HIGH,
+    priority: PRIORITY.HIGHEST,
+  },
+  {
+    // Fallback: package.json without lock file - check packageManager field
+    name: "node",
+    detect: ["package.json"],
+    detectFn: "detectNodePackageManager",
+    priority: PRIORITY.HIGH,
   },
   // ══════════════════════════════════════════════════════════════════════════
   // Go
@@ -154,7 +187,7 @@ const PACKAGE_MANAGERS: PackageManager[] = [
     installAll: "go mod download",
     installProd: "go mod download",
     hasDev: false,
-    priority: PRIORITY_HIGH,
+    priority: PRIORITY.HIGH,
   },
   // ══════════════════════════════════════════════════════════════════════════
   // Rust
@@ -165,7 +198,7 @@ const PACKAGE_MANAGERS: PackageManager[] = [
     installAll: "cargo fetch",
     installProd: "cargo fetch",
     hasDev: false,
-    priority: PRIORITY_HIGH,
+    priority: PRIORITY.HIGH,
   },
   // ══════════════════════════════════════════════════════════════════════════
   // Java / Kotlin / Scala
@@ -176,7 +209,7 @@ const PACKAGE_MANAGERS: PackageManager[] = [
     installAll: "mvn dependency:resolve dependency:resolve-plugins -q",
     installProd: "mvn dependency:resolve -q",
     hasDev: false,
-    priority: PRIORITY_HIGH,
+    priority: PRIORITY.HIGH,
   },
   {
     name: "gradle",
@@ -184,7 +217,7 @@ const PACKAGE_MANAGERS: PackageManager[] = [
     installAll: "gradle dependencies --quiet 2>/dev/null || ./gradlew dependencies --quiet",
     installProd: "gradle dependencies --quiet 2>/dev/null || ./gradlew dependencies --quiet",
     hasDev: false,
-    priority: PRIORITY_HIGH,
+    priority: PRIORITY.HIGH,
   },
   {
     name: "sbt",
@@ -192,7 +225,7 @@ const PACKAGE_MANAGERS: PackageManager[] = [
     installAll: "sbt update",
     installProd: "sbt update",
     hasDev: false,
-    priority: PRIORITY_HIGH,
+    priority: PRIORITY.HIGH,
   },
   // ══════════════════════════════════════════════════════════════════════════
   // Ruby
@@ -202,7 +235,7 @@ const PACKAGE_MANAGERS: PackageManager[] = [
     detect: ["Gemfile", "Gemfile.lock"],
     installAll: "bundle install",
     installProd: "bundle install --without development test",
-    priority: PRIORITY_HIGH,
+    priority: PRIORITY.HIGH,
   },
   // ══════════════════════════════════════════════════════════════════════════
   // PHP
@@ -212,7 +245,7 @@ const PACKAGE_MANAGERS: PackageManager[] = [
     detect: ["composer.json", "composer.lock"],
     installAll: "composer install",
     installProd: "composer install --no-dev",
-    priority: PRIORITY_HIGH,
+    priority: PRIORITY.HIGH,
   },
   // ══════════════════════════════════════════════════════════════════════════
   // .NET / C#
@@ -221,7 +254,7 @@ const PACKAGE_MANAGERS: PackageManager[] = [
     name: "dotnet",
     detect: ["*.csproj", "*.fsproj", "*.sln", "packages.config"],
     detectFn: "detectDotnet",
-    priority: PRIORITY_HIGH,
+    priority: PRIORITY.HIGH,
   },
   {
     name: "nuget",
@@ -229,17 +262,25 @@ const PACKAGE_MANAGERS: PackageManager[] = [
     installAll: "nuget restore",
     installProd: "nuget restore",
     hasDev: false,
-    priority: PRIORITY_LOW,
+    priority: PRIORITY.LOW,
   },
   // ══════════════════════════════════════════════════════════════════════════
-  // Elixir / Erlang
+  // Elixir / Erlang / Gleam (BEAM VM languages)
   // ══════════════════════════════════════════════════════════════════════════
+  {
+    name: "gleam",
+    detect: ["gleam.toml"],
+    installAll: "gleam deps download",
+    installProd: "gleam deps download",  // Gleam doesn't distinguish dev/prod
+    hasDev: false,
+    priority: PRIORITY.HIGH,
+  },
   {
     name: "mix",
     detect: ["mix.exs"],
     installAll: "mix deps.get",
     installProd: "MIX_ENV=prod mix deps.get",
-    priority: PRIORITY_HIGH,
+    priority: PRIORITY.HIGH,
   },
   {
     name: "rebar3",
@@ -247,7 +288,7 @@ const PACKAGE_MANAGERS: PackageManager[] = [
     installAll: "rebar3 get-deps",
     installProd: "rebar3 get-deps",
     hasDev: false,
-    priority: PRIORITY_HIGH,
+    priority: PRIORITY.HIGH,
   },
   // ══════════════════════════════════════════════════════════════════════════
   // Haskell
@@ -258,13 +299,13 @@ const PACKAGE_MANAGERS: PackageManager[] = [
     installAll: "stack build --only-dependencies",
     installProd: "stack build --only-dependencies",
     hasDev: false,
-    priority: PRIORITY_HIGHEST,
+    priority: PRIORITY.HIGHEST,
   },
   {
     name: "cabal",
     detect: ["cabal.project", "*.cabal"],
     detectFn: "detectCabal",
-    priority: PRIORITY_HIGH,
+    priority: PRIORITY.HIGH,
   },
   // ══════════════════════════════════════════════════════════════════════════
   // Swift
@@ -275,7 +316,7 @@ const PACKAGE_MANAGERS: PackageManager[] = [
     installAll: "swift package resolve",
     installProd: "swift package resolve",
     hasDev: false,
-    priority: PRIORITY_HIGH,
+    priority: PRIORITY.HIGH,
   },
   // ══════════════════════════════════════════════════════════════════════════
   // Dart / Flutter
@@ -286,7 +327,7 @@ const PACKAGE_MANAGERS: PackageManager[] = [
     installAll: "dart pub get 2>/dev/null || flutter pub get",
     installProd: "dart pub get 2>/dev/null || flutter pub get",
     hasDev: false,
-    priority: PRIORITY_HIGH,
+    priority: PRIORITY.HIGH,
   },
   // ══════════════════════════════════════════════════════════════════════════
   // Lua
@@ -295,7 +336,7 @@ const PACKAGE_MANAGERS: PackageManager[] = [
     name: "luarocks",
     detect: ["*.rockspec"],
     detectFn: "detectLuarocks",
-    priority: PRIORITY_HIGH,
+    priority: PRIORITY.HIGH,
   },
   // ══════════════════════════════════════════════════════════════════════════
   // R
@@ -306,7 +347,7 @@ const PACKAGE_MANAGERS: PackageManager[] = [
     installAll: "Rscript -e 'renv::restore()'",
     installProd: "Rscript -e 'renv::restore()'",
     hasDev: false,
-    priority: PRIORITY_HIGH,
+    priority: PRIORITY.HIGH,
   },
   // ══════════════════════════════════════════════════════════════════════════
   // Julia
@@ -317,7 +358,7 @@ const PACKAGE_MANAGERS: PackageManager[] = [
     installAll: "julia -e 'using Pkg; Pkg.instantiate()'",
     installProd: "julia -e 'using Pkg; Pkg.instantiate()'",
     hasDev: false,
-    priority: PRIORITY_HIGH,
+    priority: PRIORITY.HIGH,
   },
   // ══════════════════════════════════════════════════════════════════════════
   // Clojure
@@ -328,7 +369,7 @@ const PACKAGE_MANAGERS: PackageManager[] = [
     installAll: "lein deps",
     installProd: "lein deps",
     hasDev: false,
-    priority: PRIORITY_HIGH,
+    priority: PRIORITY.HIGH,
   },
   {
     name: "clojure",
@@ -336,7 +377,7 @@ const PACKAGE_MANAGERS: PackageManager[] = [
     installAll: "clojure -P",
     installProd: "clojure -P",
     hasDev: false,
-    priority: PRIORITY_HIGH,
+    priority: PRIORITY.HIGH,
   },
   // ══════════════════════════════════════════════════════════════════════════
   // Zig
@@ -347,7 +388,7 @@ const PACKAGE_MANAGERS: PackageManager[] = [
     installAll: "zig fetch",
     installProd: "zig fetch",
     hasDev: false,
-    priority: PRIORITY_HIGH,
+    priority: PRIORITY.HIGH,
   },
   // ══════════════════════════════════════════════════════════════════════════
   // Nim
@@ -356,7 +397,7 @@ const PACKAGE_MANAGERS: PackageManager[] = [
     name: "nimble",
     detect: ["*.nimble"],
     detectFn: "detectNimble",
-    priority: PRIORITY_HIGH,
+    priority: PRIORITY.HIGH,
   },
   // ══════════════════════════════════════════════════════════════════════════
   // OCaml
@@ -365,7 +406,7 @@ const PACKAGE_MANAGERS: PackageManager[] = [
     name: "opam",
     detect: ["*.opam", "dune-project"],
     detectFn: "detectOpam",
-    priority: PRIORITY_HIGH,
+    priority: PRIORITY.HIGH,
   },
   // ══════════════════════════════════════════════════════════════════════════
   // Perl
@@ -375,7 +416,7 @@ const PACKAGE_MANAGERS: PackageManager[] = [
     detect: ["cpanfile"],
     installAll: "cpanm --installdeps .",
     installProd: "cpanm --installdeps . --without-develop",
-    priority: PRIORITY_HIGH,
+    priority: PRIORITY.HIGH,
   },
   // ══════════════════════════════════════════════════════════════════════════
   // C / C++
@@ -386,7 +427,7 @@ const PACKAGE_MANAGERS: PackageManager[] = [
     installAll: "conan install . --build=missing",
     installProd: "conan install . --build=missing",
     hasDev: false,
-    priority: PRIORITY_HIGH,
+    priority: PRIORITY.HIGH,
   },
   {
     name: "vcpkg",
@@ -394,7 +435,7 @@ const PACKAGE_MANAGERS: PackageManager[] = [
     installAll: "vcpkg install",
     installProd: "vcpkg install",
     hasDev: false,
-    priority: PRIORITY_HIGH,
+    priority: PRIORITY.HIGH,
   },
   // ══════════════════════════════════════════════════════════════════════════
   // Make-based (generic)
@@ -413,14 +454,41 @@ const PACKAGE_MANAGERS: PackageManager[] = [
 
 type DetectFn = (path: string, files: string[]) => DepsInfo | null;
 
+function detectPdmPyproject(path: string, files: string[]): DepsInfo | null {
+  const pyprojectPath = join(path, "pyproject.toml");
+  if (!existsSync(pyprojectPath)) {return null;}
+
+  // Skip if already has pdm.lock (handled by static entry)
+  if (existsSync(join(path, "pdm.lock"))) {return null;}
+
+  // Skip if managed by other tools
+  if (existsSync(join(path, "poetry.lock")) || existsSync(join(path, "uv.lock"))) {
+    return null;
+  }
+
+  const content = readFileSync(pyprojectPath, "utf-8");
+
+  // Check for [tool.pdm] marker
+  if (content.includes("[tool.pdm]")) {
+    return createDepsInfo("pdm", files, "pdm install", "pdm sync --prod", true, PRIORITY.HIGH);
+  }
+
+  return null;
+}
+
 function detectPipPyproject(path: string, files: string[]): DepsInfo | null {
   const pyprojectPath = join(path, "pyproject.toml");
   if (!existsSync(pyprojectPath)) {return null;}
 
   const content = readFileSync(pyprojectPath, "utf-8");
 
-  // Skip if managed by poetry/uv
-  if (existsSync(join(path, "poetry.lock")) || existsSync(join(path, "uv.lock"))) {
+  // Skip if managed by poetry/uv/pdm
+  if (existsSync(join(path, "poetry.lock")) || existsSync(join(path, "uv.lock")) || existsSync(join(path, "pdm.lock"))) {
+    return null;
+  }
+
+  // Skip if pdm project (has [tool.pdm])
+  if (content.includes("[tool.pdm]")) {
     return null;
   }
 
@@ -445,7 +513,7 @@ function detectPipPyproject(path: string, files: string[]): DepsInfo | null {
     "S.run([sys.executable,'-m','pip','install','--break-system-packages']+d,check=1)if d else 0" +
     '"';
 
-  return createDepsInfo("pip", files, installScriptAll, installScriptProd, hasDev, PRIORITY_HIGH);
+  return createDepsInfo("pip", files, installScriptAll, installScriptProd, hasDev, PRIORITY.HIGH);
 }
 
 function detectPipRequirements(path: string, files: string[]): DepsInfo | null {
@@ -472,7 +540,7 @@ function detectPipRequirements(path: string, files: string[]): DepsInfo | null {
       `${pipBase} ${devInstall}`,
       `${pipBase} -r requirements.txt`,
       true,
-      PRIORITY_HIGH
+      PRIORITY.HIGH
     );
   }
 
@@ -482,7 +550,7 @@ function detectPipRequirements(path: string, files: string[]): DepsInfo | null {
     `${pipBase} -r requirements.txt`,
     `${pipBase} -r requirements.txt`,
     false,
-    PRIORITY_HIGH
+    PRIORITY.HIGH
   );
 }
 
@@ -504,7 +572,7 @@ function detectPipSetup(path: string, files: string[]): DepsInfo | null {
     "S.run([sys.executable,'-m','pip','install','--break-system-packages']+d,check=1)if d else 0" +
     '"';
 
-  return createDepsInfo("pip", files, installScript, installScript, false, PRIORITY_HIGH);
+  return createDepsInfo("pip", files, installScript, installScript, false, PRIORITY.HIGH);
 }
 
 function detectDotnet(path: string, _files: string[]): DepsInfo | null {
@@ -519,7 +587,7 @@ function detectDotnet(path: string, _files: string[]): DepsInfo | null {
       "dotnet restore",
       "dotnet restore",
       false,
-      PRIORITY_HIGH
+      PRIORITY.HIGH
     );
   }
   return null;
@@ -539,7 +607,7 @@ function detectCabal(path: string, _files: string[]): DepsInfo | null {
       "cabal update && cabal build --only-dependencies",
       "cabal update && cabal build --only-dependencies",
       false,
-      PRIORITY_HIGH
+      PRIORITY.HIGH
     );
   }
   return null;
@@ -554,7 +622,7 @@ function detectLuarocks(path: string, _files: string[]): DepsInfo | null {
       "luarocks install --only-deps *.rockspec",
       "luarocks install --only-deps *.rockspec",
       false,
-      PRIORITY_HIGH
+      PRIORITY.HIGH
     );
   }
   return null;
@@ -563,7 +631,7 @@ function detectLuarocks(path: string, _files: string[]): DepsInfo | null {
 function detectNimble(path: string, _files: string[]): DepsInfo | null {
   const nimbleFiles = globbySync("*.nimble", { cwd: path });
   if (nimbleFiles.length > 0) {
-    return createDepsInfo("nimble", nimbleFiles, "nimble install -d", "nimble install -d", false, PRIORITY_HIGH);
+    return createDepsInfo("nimble", nimbleFiles, "nimble install -d", "nimble install -d", false, PRIORITY.HIGH);
   }
   return null;
 }
@@ -582,7 +650,7 @@ function detectOpam(path: string, _files: string[]): DepsInfo | null {
       "opam install . --deps-only -y",
       "opam install . --deps-only -y",
       false,
-      PRIORITY_HIGH
+      PRIORITY.HIGH
     );
   }
   return null;
@@ -591,7 +659,7 @@ function detectOpam(path: string, _files: string[]): DepsInfo | null {
 function detectBun(path: string, files: string[]): DepsInfo | null {
   // bunfig.toml varsa kesinlikle bun
   if (existsSync(join(path, "bunfig.toml"))) {
-    return createDepsInfo("bun", files, "bun install", "bun install --production", true, PRIORITY_HIGHEST);
+    return createDepsInfo("bun", files, "bun install", "bun install --production", true, PRIORITY.HIGHEST);
   }
 
   // package.json içinde packageManager field'ı kontrol et
@@ -603,7 +671,7 @@ function detectBun(path: string, files: string[]): DepsInfo | null {
       // Support both "bun" and "bun@x.x.x" formats
       if (pkg.packageManager && typeof pkg.packageManager === "string" &&
           (pkg.packageManager === "bun" || pkg.packageManager.startsWith("bun@"))) {
-        return createDepsInfo("bun", files, "bun install", "bun install --production", true, PRIORITY_HIGHEST);
+        return createDepsInfo("bun", files, "bun install", "bun install --production", true, PRIORITY.HIGHEST);
       }
     } catch {
       // JSON parse hatası - devam et
@@ -611,6 +679,102 @@ function detectBun(path: string, files: string[]): DepsInfo | null {
   }
 
   return null;
+}
+
+/**
+ * Detect Yarn version and return appropriate install commands.
+ * Yarn v1 (Classic): yarn install --production
+ * Yarn v2+ (Berry): yarn workspaces focus --all --production (requires plugin) or yarn install
+ *
+ * Detection: Yarn v2+ lockfiles start with "__metadata:" or have "cacheKey:" lines
+ */
+function detectYarn(path: string, files: string[]): DepsInfo | null {
+  const lockPath = join(path, "yarn.lock");
+  if (!existsSync(lockPath)) {return null;}
+
+  try {
+    // Read first 500 bytes to detect version (efficient for large lockfiles)
+    const content = readFileSync(lockPath, "utf-8").slice(0, 500);
+
+    // Yarn v2+ (Berry) markers
+    const isYarnBerry = content.includes("__metadata:") || content.includes("cacheKey:");
+
+    if (isYarnBerry) {
+      // Yarn Berry: --production flag removed, use nodeLinker or focus
+      // Most reliable cross-version command is just "yarn install"
+      // Production builds should use "yarn workspaces focus --production" but requires plugin
+      return createDepsInfo(
+        "yarn",
+        files,
+        "yarn install",
+        "yarn install",  // Berry doesn't support --production; use workspaces focus if needed
+        true,
+        PRIORITY.HIGHEST
+      );
+    }
+
+    // Yarn v1 (Classic)
+    return createDepsInfo(
+      "yarn",
+      files,
+      "yarn install",
+      "yarn install --production",
+      true,
+      PRIORITY.HIGHEST
+    );
+  } catch {
+    // Fallback to v1 commands
+    return createDepsInfo("yarn", files, "yarn install", "yarn install --production", true, PRIORITY.HIGHEST);
+  }
+}
+
+/**
+ * Detect Node.js package manager from package.json when no lock file exists.
+ * Checks packageManager field (corepack standard) and falls back to npm.
+ *
+ * packageManager field format: "npm@10.2.0", "yarn@4.0.0", "pnpm@8.0.0", "bun@1.0.0"
+ * Also supports bare names: "npm", "yarn", "pnpm", "bun"
+ */
+function detectNodePackageManager(path: string, files: string[]): DepsInfo | null {
+  const packageJsonPath = join(path, "package.json");
+  if (!existsSync(packageJsonPath)) {return null;}
+
+  // Skip if any lock file exists (those have higher priority entries)
+  const lockFiles = ["bun.lockb", "bun.lock", "pnpm-lock.yaml", "yarn.lock", "package-lock.json"];
+  if (lockFiles.some(f => existsSync(join(path, f)))) {return null;}
+
+  // Skip if bunfig.toml exists (handled by detectBun)
+  if (existsSync(join(path, "bunfig.toml"))) {return null;}
+
+  try {
+    const content = readFileSync(packageJsonPath, "utf-8");
+    const pkg = JSON.parse(content);
+
+    // Check packageManager field (corepack standard)
+    if (pkg.packageManager && typeof pkg.packageManager === "string") {
+      const pm = pkg.packageManager.toLowerCase();
+
+      // Package manager configs: [name, installAll, installProd]
+      const managers: Record<string, [string, string, string]> = {
+        "bun": ["bun", "bun install", "bun install --production"],
+        "pnpm": ["pnpm", "pnpm install", "pnpm install --prod"],
+        "yarn": ["yarn", "yarn install", "yarn install --production"],
+        "npm": ["npm", "npm install", "npm install --production"],
+      };
+
+      for (const [prefix, [name, installAll, installProd]] of Object.entries(managers)) {
+        if (pm === prefix || pm.startsWith(`${prefix}@`)) {
+          return createDepsInfo(name, files, installAll, installProd, true, PRIORITY.HIGH);
+        }
+      }
+    }
+
+    // No packageManager field - fallback to npm (most common default)
+    return createDepsInfo("npm", files, "npm install", "npm install --production", true, PRIORITY.LOW);
+  } catch {
+    // JSON parse error - fallback to npm
+    return createDepsInfo("npm", files, "npm install", "npm install --production", true, PRIORITY.LOW);
+  }
 }
 
 function detectMake(path: string, files: string[]): DepsInfo | null {
@@ -633,6 +797,7 @@ function detectMake(path: string, files: string[]): DepsInfo | null {
 
 // Detection function registry
 const DETECT_FUNCTIONS: Record<string, DetectFn> = {
+  detectPdmPyproject,
   detectPipPyproject,
   detectPipRequirements,
   detectPipSetup,
@@ -642,6 +807,8 @@ const DETECT_FUNCTIONS: Record<string, DetectFn> = {
   detectNimble,
   detectOpam,
   detectBun,
+  detectYarn,
+  detectNodePackageManager,
   detectMake,
 };
 
@@ -704,7 +871,7 @@ export function detectDependencies(path: string): DepsInfo[] {
         pm.installAll ?? "",
         pm.installProd ?? "",
         pm.hasDev ?? true,
-        pm.priority ?? PRIORITY_HIGH
+        pm.priority ?? PRIORITY.HIGH
       )
     );
     detectedManagers.add(pm.name);

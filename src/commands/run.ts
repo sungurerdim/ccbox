@@ -162,7 +162,7 @@ async function executeContainer(
     }
 
     returncode = result.exitCode ?? 0;
-  } catch (error) {
+  } catch (error: unknown) {
     const err = error as { exitCode?: number };
     returncode = err.exitCode ?? 1;
   }
@@ -241,22 +241,25 @@ async function buildAndRun(
     quiet?: boolean;
     appendSystemPrompt?: string;
     unrestricted?: boolean;
+    progress?: string;
   } = {}
 ): Promise<void> {
+  const { progress = "auto" } = options;
+
   console.log();
   console.log(chalk.blue(`[${chalk.bold(projectName)}] -> ccbox/${selectedStack}`));
 
   // Ensure base image exists (required for all stacks)
   if (!imageExists(LanguageStack.BASE)) {
     console.log(chalk.bold("First-time setup: building base image..."));
-    if (!(await buildImage(LanguageStack.BASE))) {
+    if (!(await buildImage(LanguageStack.BASE, { progress }))) {
       process.exit(1);
     }
     console.log();
   }
 
   // Ensure stack image is ready
-  if (!(await ensureImageReady(selectedStack, false))) {
+  if (!(await ensureImageReady(selectedStack, false, { progress }))) {
     process.exit(1);
   }
 
@@ -268,7 +271,8 @@ async function buildAndRun(
       projectName,
       selectedStack,
       depsList,
-      resolvedDepsMode
+      resolvedDepsMode,
+      { progress }
     )) ?? undefined;
     if (!builtProjectImage) {
       console.log(chalk.yellow("Warning: Failed to build project image, continuing without deps"));
@@ -306,6 +310,8 @@ export async function run(
     unattended?: boolean;
     prune?: boolean;
     unrestricted?: boolean;
+    verbose?: boolean;
+    progress?: string;
   } = {}
 ): Promise<void> {
   const {
@@ -320,6 +326,8 @@ export async function run(
     unattended = false,
     prune = true,
     unrestricted = false,
+    verbose = false,
+    progress = "auto",
   } = options;
 
   if (!(await checkDocker())) {
@@ -339,12 +347,24 @@ export async function run(
   const projectName = basename(projectPath);
 
   // Detect recommended stack first (no prompt yet)
-  const detection = detectProjectType(projectPath);
+  const detection = detectProjectType(projectPath, verbose);
   let initialStack: LanguageStack;
   if (stackName && stackName !== "auto") {
     initialStack = stackName as LanguageStack;
   } else {
     initialStack = detection.recommendedStack;
+  }
+
+  // Show detection details in verbose mode
+  if (verbose && detection.detectedLanguages.length > 0) {
+    console.log(chalk.dim("Detection:"));
+    for (const lang of detection.detectedLanguages) {
+      const trigger = detection.detectionDetails?.[lang] || "pattern match";
+      console.log(chalk.dim(`  ${lang} → ${trigger}`));
+    }
+    console.log(chalk.dim(`  → Stack: ${initialStack}`));
+  } else if (verbose) {
+    console.log(chalk.dim(`Detection: no languages found → ${initialStack}`));
   }
 
   // Phase 1: Try existing project image (skip prompts if found)
@@ -405,5 +425,6 @@ export async function run(
     quiet,
     appendSystemPrompt,
     unrestricted,
+    progress,
   });
 }

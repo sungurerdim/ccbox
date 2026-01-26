@@ -118,18 +118,21 @@ ccbox prune [-f]         # Deep clean ccbox resources
 | `-d` | Debug mode (entrypoint logs) |
 | `-dd` | Verbose debug (+ stream output) |
 | `-U, --unrestricted` | Remove CPU/priority limits |
+| `--progress <mode>` | Docker build output (auto/plain/tty) |
 
 ## Security
 
 ccbox provides strong isolation:
 
-- Container runs as non-root user
+- Container runs as non-root user with host-matching UID/GID
 - `--cap-drop=ALL` - all Linux capabilities dropped
 - `--security-opt=no-new-privileges` - no privilege escalation
 - `--pids-limit=2048` - fork bomb protection
 - Tmpfs for `/tmp` - no disk residue
 - Path validation - directory traversal prevention
 - Project directory is the only mounted volume
+
+> For detailed architecture documentation, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## How It Works
 

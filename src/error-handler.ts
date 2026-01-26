@@ -1,0 +1,318 @@
+/**
+ * Unified error handling utilities for ccbox.
+ *
+ * Provides standardized error diagnosis, logging, and retry logic
+ * for Docker operations and container failures.
+ */
+
+import { log, style } from "./logger.js";
+
+/** Known Docker/container exit codes with their meanings and suggestions. */
+export interface ExitCodeInfo {
+  code: number;
+  name: string;
+  description: string;
+  suggestion?: string;
+  severity: "info" | "warn" | "error";
+}
+
+/** Exit code database for container failures. */
+const EXIT_CODES: Record<number, ExitCodeInfo> = {
+  0: {
+    code: 0,
+    name: "SUCCESS",
+    description: "Container exited successfully",
+    severity: "info",
+  },
+  1: {
+    code: 1,
+    name: "GENERAL_ERROR",
+    description: "General error or command failure",
+    suggestion: "Check container logs for details",
+    severity: "error",
+  },
+  2: {
+    code: 2,
+    name: "MISUSE",
+    description: "Shell builtin misuse or permission error",
+    suggestion: "Check file permissions and command syntax",
+    severity: "error",
+  },
+  126: {
+    code: 126,
+    name: "NOT_EXECUTABLE",
+    description: "Command not executable",
+    suggestion: "Check file permissions (chmod +x)",
+    severity: "error",
+  },
+  127: {
+    code: 127,
+    name: "NOT_FOUND",
+    description: "Command not found",
+    suggestion: "Verify the command exists in container PATH",
+    severity: "error",
+  },
+  128: {
+    code: 128,
+    name: "INVALID_EXIT",
+    description: "Invalid exit argument",
+    severity: "error",
+  },
+  130: {
+    code: 130,
+    name: "SIGINT",
+    description: "Interrupted by Ctrl+C",
+    severity: "info",
+  },
+  137: {
+    code: 137,
+    name: "OOM_KILLED",
+    description: "Container was killed (OOM or manual stop)",
+    suggestion: "Try: ccbox --unrestricted (removes memory limits)",
+    severity: "warn",
+  },
+  139: {
+    code: 139,
+    name: "SEGFAULT",
+    description: "Container crashed (segmentation fault)",
+    suggestion: "Check for memory corruption or native code issues",
+    severity: "error",
+  },
+  143: {
+    code: 143,
+    name: "SIGTERM",
+    description: "Container terminated by signal",
+    severity: "info",
+  },
+};
+
+/**
+ * Get information about an exit code.
+ */
+export function getExitCodeInfo(code: number): ExitCodeInfo {
+  return (
+    EXIT_CODES[code] ?? {
+      code,
+      name: "UNKNOWN",
+      description: `Unknown exit code ${code}`,
+      suggestion: "Check container logs for details",
+      severity: "warn" as const,
+    }
+  );
+}
+
+/**
+ * Check if an exit code indicates a transient/retryable failure.
+ */
+export function isRetryable(code: number): boolean {
+  // Transient failures that might succeed on retry
+  const retryableCodes = new Set([
+    137, // OOM (might be temporary resource pressure)
+    // Network-related would go here but container exit codes don't expose them directly
+  ]);
+  return retryableCodes.has(code);
+}
+
+/**
+ * Check if an exit code indicates user-initiated termination (not an error).
+ */
+export function isUserTermination(code: number): boolean {
+  return code === 130 || code === 143; // SIGINT (Ctrl+C) or SIGTERM
+}
+
+/**
+ * Check if an exit code indicates success.
+ */
+export function isSuccess(code: number): boolean {
+  return code === 0;
+}
+
+/**
+ * Log an exit code with appropriate styling and suggestions.
+ */
+export function logExitCode(code: number, context?: string): void {
+  const info = getExitCodeInfo(code);
+
+  // Skip logging for user termination (normal exit)
+  if (isUserTermination(code)) {
+    log.dim(info.description);
+    return;
+  }
+
+  // Skip success
+  if (isSuccess(code)) {
+    return;
+  }
+
+  // Format message with context
+  const contextStr = context ? ` (${context})` : "";
+
+  switch (info.severity) {
+    case "error":
+      log.error(`${info.description}${contextStr}`);
+      break;
+    case "warn":
+      log.warn(`${info.description}${contextStr}`);
+      break;
+    default:
+      log.dim(`${info.description}${contextStr}`);
+  }
+
+  if (info.suggestion) {
+    log.dim(info.suggestion);
+  }
+}
+
+/**
+ * Log an error with context.
+ *
+ * @param error - The error object
+ * @param operation - What operation was being performed
+ * @param details - Additional context (optional)
+ */
+export function logError(
+  error: unknown,
+  operation: string,
+  details?: Record<string, unknown>
+): void {
+  const message = error instanceof Error ? error.message : String(error);
+
+  log.error(`Failed to ${operation}: ${message}`);
+
+  if (details) {
+    const detailsStr = Object.entries(details)
+      .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+      .join(", ");
+    log.dim(`Context: ${detailsStr}`);
+  }
+
+  // Log stack trace in debug mode
+  if (error instanceof Error && error.stack) {
+    log.debug(error.stack);
+  }
+}
+
+/**
+ * Log Docker command error with extracted details.
+ */
+export function logDockerError(
+  error: unknown,
+  command: string,
+  args: string[]
+): void {
+  const execaError = error as {
+    stderr?: string;
+    shortMessage?: string;
+    message?: string;
+    exitCode?: number;
+  };
+
+  const exitCode = execaError.exitCode ?? 1;
+  const cmdStr = `docker ${command} ${args.slice(0, 3).join(" ")}...`;
+
+  log.error(`Docker command failed: ${cmdStr}`);
+
+  if (exitCode !== 1) {
+    logExitCode(exitCode, "docker");
+  }
+
+  // Extract meaningful error from stderr
+  if (execaError.stderr) {
+    const stderr = execaError.stderr.trim();
+    const firstLine = stderr.split("\n")[0] ?? stderr;
+    if (firstLine.length > 0 && firstLine.length < 200) {
+      log.dim(`Error: ${firstLine}`);
+    }
+  } else if (execaError.shortMessage) {
+    log.dim(`Error: ${execaError.shortMessage}`);
+  }
+}
+
+/** Retry configuration. */
+export interface RetryConfig {
+  /** Maximum number of attempts (including first try). */
+  maxAttempts: number;
+  /** Initial delay in milliseconds. */
+  initialDelayMs: number;
+  /** Multiplier for exponential backoff. */
+  backoffMultiplier: number;
+  /** Maximum delay in milliseconds. */
+  maxDelayMs: number;
+}
+
+/** Default retry configuration. */
+export const DEFAULT_RETRY_CONFIG: RetryConfig = {
+  maxAttempts: 3,
+  initialDelayMs: 1000,
+  backoffMultiplier: 2,
+  maxDelayMs: 10000,
+};
+
+/**
+ * Execute an async operation with retry logic and exponential backoff.
+ *
+ * @param operation - Async function to execute
+ * @param shouldRetry - Function to determine if error is retryable
+ * @param config - Retry configuration
+ * @returns Result of successful operation
+ * @throws Last error if all retries exhausted
+ */
+export async function withRetry<T>(
+  operation: () => Promise<T>,
+  shouldRetry: (error: unknown, attempt: number) => boolean,
+  config: Partial<RetryConfig> = {}
+): Promise<T> {
+  const cfg = { ...DEFAULT_RETRY_CONFIG, ...config };
+  let lastError: unknown;
+  let delay = cfg.initialDelayMs;
+
+  for (let attempt = 1; attempt <= cfg.maxAttempts; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+
+      if (attempt === cfg.maxAttempts || !shouldRetry(error, attempt)) {
+        throw error;
+      }
+
+      log.dim(`Retry ${attempt}/${cfg.maxAttempts - 1} in ${delay}ms...`);
+      await sleep(delay);
+
+      delay = Math.min(delay * cfg.backoffMultiplier, cfg.maxDelayMs);
+    }
+  }
+
+  throw lastError;
+}
+
+/**
+ * Sleep for specified milliseconds.
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Format error for user display (actionable message).
+ */
+export function formatUserError(error: unknown, operation: string): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return `${style.red("Error:")} Failed to ${operation}\n${style.dim(message)}`;
+}
+
+/**
+ * Exit process with error message and code.
+ * Always logs context before exiting.
+ */
+export function exitWithError(
+  message: string,
+  code: number = 1,
+  suggestion?: string
+): never {
+  log.error(message);
+  if (suggestion) {
+    log.dim(suggestion);
+  }
+  process.exit(code);
+}

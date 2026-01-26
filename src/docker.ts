@@ -53,7 +53,7 @@ export async function safeDockerRun(
       stdout: String(result.stdout ?? ""),
       stderr: String(result.stderr ?? ""),
     };
-  } catch (error) {
+  } catch (error: unknown) {
     if (error instanceof DockerError) {throw error;}
 
     const err = error as NodeJS.ErrnoException & { timedOut?: boolean };
@@ -272,7 +272,7 @@ export async function buildImage(
       success: result.exitCode === 0,
       output: String(result.all ?? ""),
     };
-  } catch (error) {
+  } catch (error: unknown) {
     const err = error as { all?: string };
     return {
       success: false,
@@ -304,7 +304,7 @@ export async function runContainer(
     } as ExecaOptions);
 
     return result.exitCode ?? 0;
-  } catch (error) {
+  } catch (error: unknown) {
     const err = error as { exitCode?: number };
     return err.exitCode ?? 1;
   }

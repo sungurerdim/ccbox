@@ -5,7 +5,7 @@
  */
 
 // === Version ===
-export const VERSION = "1.0.0"; // Package version
+export const VERSION = "0.1.0"; // Package version
 
 // === Docker Timeouts (milliseconds) ===
 export const DOCKER_COMMAND_TIMEOUT = 30_000; // Quick docker commands (info, inspect, ps)
@@ -42,3 +42,10 @@ export const TMPFS_MODE = "1777"; // Tmpfs permissions (sticky bit)
 
 // Resource limits
 export const DEFAULT_PIDS_LIMIT = 2048; // Process limit per container (fork bomb protection)
+
+// === Package Manager Priority (higher = run first) ===
+export const PRIORITY = {
+  HIGHEST: 10, // Lock files (most reliable)
+  HIGH: 5,     // Standard package managers
+  LOW: 3,      // Fallback package managers
+} as const;
