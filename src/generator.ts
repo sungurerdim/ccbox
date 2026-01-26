@@ -243,6 +243,40 @@ else
     fi
 fi
 
+# ══════════════════════════════════════════════════════════════════════════════
+# WSL Session Compatibility Bridge
+# WSL paths (/mnt/d/...) encode differently than Docker paths (/d/...)
+# Create symlinks between encodings so sessions are visible across environments
+# ══════════════════════════════════════════════════════════════════════════════
+if [[ -n "$CCBOX_WSL_ORIGINAL_PATH" && -d "/ccbox/.claude" ]]; then
+    _log_verbose "Setting up WSL session bridge..."
+
+    # Calculate encodings: replace / and . with -
+    _wsl_encoded=$(echo "$CCBOX_WSL_ORIGINAL_PATH" | tr '/.' '--' | sed 's/^-//')
+    _target_encoded=$(echo "$PWD" | tr '/.' '--' | sed 's/^-//')
+
+    if [[ "$_wsl_encoded" != "$_target_encoded" ]]; then
+        _log_verbose "WSL encoding: $_wsl_encoded"
+        _log_verbose "Target encoding: $_target_encoded"
+
+        # Create symlinks in all path-encoded directories
+        for _subdir in projects file-history todos shell-snapshots; do
+            _base_dir="/ccbox/.claude/$_subdir"
+            if [[ -d "$_base_dir" ]]; then
+                # If WSL-encoded exists but target doesn't, link target -> WSL
+                if [[ -d "$_base_dir/$_wsl_encoded" && ! -e "$_base_dir/$_target_encoded" ]]; then
+                    ln -s "$_wsl_encoded" "$_base_dir/$_target_encoded" 2>/dev/null || true
+                    _log "WSL bridge: $_subdir/$_target_encoded -> $_wsl_encoded"
+                # If target exists but WSL-encoded doesn't, link WSL -> target
+                elif [[ -d "$_base_dir/$_target_encoded" && ! -e "$_base_dir/$_wsl_encoded" ]]; then
+                    ln -s "$_target_encoded" "$_base_dir/$_wsl_encoded" 2>/dev/null || true
+                    _log "WSL bridge: $_subdir/$_wsl_encoded -> $_target_encoded"
+                fi
+            fi
+        done
+    fi
+fi
+
 # Git performance optimizations (I/O reduction)
 git config --global core.fileMode false 2>/dev/null || true
 git config --global --add safe.directory '*' 2>/dev/null || true
