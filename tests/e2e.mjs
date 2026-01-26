@@ -80,7 +80,9 @@ async function testAsync(name, fn) {
 
 function cli(args, options = {}) {
   try {
-    const stdout = execSync(`bun run ${ROOT}/src/cli.ts ${args}`, {
+    // Try bun first, fall back to tsx if bun not available
+    const runtime = process.env.BUN_INSTALL ? "bun run" : "npx tsx";
+    const stdout = execSync(`${runtime} ${ROOT}/src/cli.ts ${args}`, {
       encoding: "utf8",
       timeout: options.timeout || 60000,
       env: { ...process.env, NO_COLOR: "1" },

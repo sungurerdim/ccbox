@@ -1,6 +1,6 @@
 {
   "name": "ccbox",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Secure Docker sandbox for Claude Code CLI",
   "type": "module",
   "private": true,
@@ -10,11 +10,12 @@
     "build": "bun build src/cli.ts --outfile dist/ccbox.js --target bun --minify",
     "build:binary": "bun run scripts/build.ts",
     "build:binary:all": "bun run scripts/build.ts --all",
-    "test": "bun tests/verify.mjs",
-    "test:e2e": "bun tests/e2e.mjs",
-    "test:all": "bun tests/verify.mjs && bun tests/e2e.mjs",
+    "test": "npx tsx tests/verify.mjs",
+    "test:e2e": "npx tsx tests/e2e.mjs",
+    "test:all": "npx tsx tests/verify.mjs && npx tsx tests/e2e.mjs",
     "lint": "eslint src",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "circular": "npx madge --circular src/"
   },
   "keywords": [
     "claude",
@@ -49,6 +50,7 @@
     "@typescript-eslint/eslint-plugin": "^8.53.1",
     "@typescript-eslint/parser": "^8.53.1",
     "eslint": "^9.39.2",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }
 }

@@ -135,7 +135,7 @@ async function getGitConfigValue(key: string): Promise<string> {
       // Sanitize to prevent environment variable injection
       return sanitizeEnvValue(String(result.stdout ?? ""));
     }
-  } catch (error) {
+  } catch (error: unknown) {
     const err = error as { code?: string; timedOut?: boolean };
     if (err.code === "ENOENT") {
       console.log(chalk.dim("Git not found in PATH"));

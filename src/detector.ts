@@ -11,18 +11,21 @@ import { LanguageStack } from "./config.js";
 export interface DetectionResult {
   recommendedStack: LanguageStack;
   detectedLanguages: string[];
+  /** Optional: files that triggered each detection (for verbose mode) */
+  detectionDetails?: Record<string, string>;
 }
 
 /** File patterns for language detection (exact names or glob with *) */
 const LANGUAGE_PATTERNS: Record<string, string[]> = {
   // Core languages
-  python: ["pyproject.toml", "setup.py", "requirements.txt", "Pipfile", "poetry.lock", "uv.lock", "setup.cfg"],
+  python: ["pyproject.toml", "setup.py", "requirements.txt", "Pipfile", "poetry.lock", "uv.lock", "pdm.lock", "setup.cfg"],
   node: ["package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml"],
-  bun: ["bun.lockb", "bunfig.toml"],  // Bun-specific (also check packageManager)
+  bun: ["bun.lockb", "bun.lock", "bunfig.toml"],  // bun.lock is text format since v1.0
+  deno: ["deno.json", "deno.jsonc", "deno.lock"],  // Deno runtime
   typescript: ["tsconfig.json", "tsconfig.base.json", "tsconfig.*.json"],
   go: ["go.mod", "go.sum"],
   rust: ["Cargo.toml", "Cargo.lock"],
-  java: ["pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"],
+  java: ["pom.xml", "build.gradle", "build.gradle.kts", "gradle.lock", "settings.gradle", "settings.gradle.kts"],
 
   // Extended languages
   scala: ["build.sbt", "project/build.properties"],
@@ -43,6 +46,7 @@ const LANGUAGE_PATTERNS: Record<string, string[]> = {
   julia: ["Project.toml", "Manifest.toml"],
   zig: ["build.zig", "build.zig.zon"],
   nim: ["*.nimble", "nim.cfg", "*.nim"],
+  gleam: ["gleam.toml", "manifest.toml"],  // Erlang-based functional language
 };
 
 /** Check if a file matches a pattern (supports * prefix wildcard) */
@@ -91,18 +95,37 @@ function detectPackageManager(directory: string): string | null {
 /**
  * Detect the project type based on files in the directory.
  *
+ * Detection strategy:
+ * 1. Check package.json#packageManager field (most reliable for JS ecosystem)
+ * 2. Scan for language-specific config files (pyproject.toml, go.mod, Cargo.toml, etc.)
+ * 3. Map detected languages to optimal stack (e.g., bun/node/typescript → WEB)
+ *
  * @param directory - Project root directory path.
+ * @param verbose - If true, include detection details (which file triggered each detection).
  * @returns Detection result with recommended stack and detected languages.
+ * @throws Never throws - returns BASE stack if directory doesn't exist or is unreadable.
  */
-export function detectProjectType(directory: string): DetectionResult {
+export function detectProjectType(directory: string, verbose = false): DetectionResult {
+  // Defensive: verify directory exists before scanning
+  if (!existsSync(directory)) {
+    return {
+      recommendedStack: LanguageStack.BASE,
+      detectedLanguages: [],
+      ...(verbose && { detectionDetails: { error: "directory not found" } }),
+    };
+  }
+
   const detected: string[] = [];
+  const details: Record<string, string> = {};
 
   // Check packageManager field first (most reliable for JS ecosystem)
   const pkgManager = detectPackageManager(directory);
   if (pkgManager === "bun") {
     detected.push("bun");
+    if (verbose) { details.bun = "package.json#packageManager=bun"; }
   } else if (pkgManager === "pnpm" || pkgManager === "yarn" || pkgManager === "npm") {
     detected.push("node");
+    if (verbose) { details.node = `package.json#packageManager=${pkgManager}`; }
   }
 
   // Scan for language patterns
@@ -113,6 +136,7 @@ export function detectProjectType(directory: string): DetectionResult {
     for (const pattern of patterns) {
       if (hasMatchingFile(directory, pattern)) {
         detected.push(lang);
+        if (verbose) { details[lang] = pattern; }
         break;
       }
     }
@@ -120,10 +144,16 @@ export function detectProjectType(directory: string): DetectionResult {
 
   const stack = determineStack(detected);
 
-  return {
+  const result: DetectionResult = {
     recommendedStack: stack,
     detectedLanguages: detected,
   };
+
+  if (verbose) {
+    result.detectionDetails = details;
+  }
+
+  return result;
 }
 
 /**
@@ -153,9 +183,9 @@ function determineStack(languages: string[]): LanguageStack {
   if (has("cpp")) { return LanguageStack.CPP; }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // Web/scripting languages (bun/node/typescript all map to WEB)
+  // Web/scripting languages (bun/node/deno/typescript all map to WEB)
   // ═══════════════════════════════════════════════════════════════════════════
-  if (has("bun") || has("node") || has("typescript")) { return LanguageStack.WEB; }
+  if (has("bun") || has("node") || has("deno") || has("typescript")) { return LanguageStack.WEB; }
   if (has("python")) { return LanguageStack.PYTHON; }
   if (has("lua")) { return LanguageStack.LUA; }
 
@@ -172,9 +202,9 @@ function determineStack(languages: string[]): LanguageStack {
   if (has("dart")) { return LanguageStack.DART; }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // Functional languages (combined: Haskell + OCaml + Elixir)
+  // Functional languages (combined: Haskell + OCaml + Elixir + Gleam)
   // ═══════════════════════════════════════════════════════════════════════════
-  if (has("elixir") || has("haskell") || has("ocaml")) { return LanguageStack.FUNCTIONAL; }
+  if (has("elixir") || has("haskell") || has("ocaml") || has("gleam")) { return LanguageStack.FUNCTIONAL; }
 
   // ═══════════════════════════════════════════════════════════════════════════
   // Data science languages

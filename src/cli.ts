@@ -9,7 +9,7 @@ import chalk from "chalk";
 import { Command } from "commander";
 
 import { VERSION, MAX_PROMPT_LENGTH, MAX_SYSTEM_PROMPT_LENGTH, VALID_MODELS } from "./constants.js";
-import { LanguageStack, STACK_INFO, imageExists } from "./config.js";
+import { LanguageStack, STACK_INFO, imageExists, filterStacks } from "./config.js";
 import { ValidationError } from "./errors.js";
 import { checkDocker, ERR_DOCKER_NOT_RUNNING } from "./utils.js";
 import { run } from "./commands/run.js";
@@ -98,6 +98,8 @@ program
   .option("--append-system-prompt <prompt>", "Append custom instructions to Claude's system prompt")
   .option("--no-prune", "Skip automatic cleanup of stale Docker resources")
   .option("-U, --unrestricted", "Remove CPU/priority limits (use full system resources)")
+  .option("-v, --verbose", "Show detection details (which files triggered stack selection)")
+  .option("--progress <mode>", "Docker build progress mode (auto|plain|tty)", "auto")
   .action(async (options) => {
     // Change directory if --chdir/-C specified (like git -C)
     if (options.chdir) {
@@ -109,7 +111,7 @@ program
       options.prompt = validatePrompt(options.prompt);
       options.appendSystemPrompt = validateSystemPrompt(options.appendSystemPrompt);
       options.model = validateModel(options.model);
-    } catch (e) {
+    } catch (e: unknown) {
       if (e instanceof ValidationError) {
         console.log(chalk.red(`Error: ${e.message}`));
         process.exit(1);
@@ -139,6 +141,8 @@ program
       unattended: options.yes,
       prune: options.prune !== false,
       unrestricted: options.unrestricted,
+      verbose: options.verbose,
+      progress: options.progress,
     });
   });
 
@@ -278,11 +282,22 @@ program
 program
   .command("stacks")
   .description("List available language stacks")
-  .action(() => {
-    console.log(chalk.bold("Available Stacks"));
+  .option("-f, --filter <term>", "Filter by category (core/combined/usecase) or search term")
+  .action((options: { filter?: string }) => {
+    const stacks = options.filter
+      ? filterStacks(options.filter)
+      : Object.values(LanguageStack);
+
+    if (stacks.length === 0) {
+      console.log(chalk.yellow(`No stacks found matching '${options.filter}'`));
+      console.log(chalk.dim("Try: --filter=core, --filter=python, --filter=web"));
+      return;
+    }
+
+    console.log(chalk.bold(options.filter ? `Stacks matching '${options.filter}'` : "Available Stacks"));
     console.log("----------------------------");
 
-    for (const stack of Object.values(LanguageStack)) {
+    for (const stack of stacks) {
       const { description, sizeMB } = STACK_INFO[stack];
       console.log(`  ${chalk.cyan(stack)}`);
       console.log(`    ${description} (~${sizeMB}MB)`);
@@ -290,7 +305,7 @@ program
 
     console.log();
     console.log(chalk.dim("Usage: ccbox --stack=go"));
-    console.log(chalk.dim("All stacks include: Python + Node.js + lint/test tools"));
+    console.log(chalk.dim("Filter categories: core, combined, usecase"));
   });
 
 // Parse and run

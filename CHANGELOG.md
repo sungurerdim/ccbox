@@ -7,9 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-01-26
+
+Initial public release of ccbox - secure Docker sandbox for Claude Code.
+
 ### Added
 
-- **Expanded stack system**: 20 language stacks (up from 7)
+- **Docker-based isolation**: Run Claude Code in secure Docker containers
+- **20 language stacks**: Comprehensive stack support
   - Core stacks (11): base, python, web, go, rust, java, cpp, dotnet, swift, dart, lua
   - Combined stacks (4): jvm, functional, scripting, systems
   - Use-case stacks (5): data, ai, mobile, game, fullstack
@@ -20,60 +25,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `cpp` → systems, game
   - `dart` → mobile
   - `java` → jvm
-- **Claude Code native binary**: Updated installation to use official native binary
-  - No Node.js/Bun dependency in container
-  - Binary moved to `/usr/local/bin` for non-root access
-- **TypeScript detection**: Added tsconfig.json to language patterns
-
-### Changed
-
-- **Native binary distribution**: Switched from npm to standalone binaries
-  - No more Node.js dependency for end users
-  - Direct download via `curl | bash` (Unix) or `irm | iex` (Windows)
-  - Cross-platform binaries: Linux (x64/arm64), macOS (x64/arm64), Windows (x64)
-- **Base image**: Changed from `node:lts-slim` to `debian:bookworm-slim`
-- **Build system**: Migrated from TypeScript/tsc to Bun
-  - `bun build --compile` for standalone executables
-  - Faster development with `bun run dev`
-  - TypeScript executed directly without compilation step
-- **CI/CD**: GitHub Actions workflow updated for Bun builds
-- **Tests**: Test suite updated to use Bun runtime
-
-### Removed
-
-- **`full` stack**: Replaced with use-case specific stacks (ai, mobile, game, fullstack)
-- npm package distribution (now native binary only)
-- `postinstall` script (path normalization now runs at startup)
-- Node.js runtime dependency in base image
-
-## [1.0.0] - 2025-01-15
-
-### Added
-
-- **Docker-based isolation**: Run Claude Code in secure Docker containers
-- **Multi-stack support**: 7 pre-configured stacks
-  - `minimal`: Node.js + Python + tools (no CCO)
-  - `base`: minimal + CCO (default)
-  - `go`: Go + golangci-lint + CCO
-  - `rust`: Rust + clippy + rustfmt + CCO
-  - `java`: JDK (Temurin LTS) + Maven + CCO
-  - `web`: base + pnpm (fullstack)
-  - `full`: base + Go + Rust + Java
+- **FUSE path mapping**: Cross-platform path translation via FUSE filesystem
+  - Pre-compiled binaries (no gcc dependency)
+  - Supports project .claude directory
+  - Prevents host filesystem modification
 - **Auto-detection**: 55+ package managers, automatic stack recommendation
 - **Dependency installation**: Auto-detect and install project dependencies
-  - Python: pip, poetry, pipenv, uv, conda
-  - Node.js: npm, pnpm, yarn, bun
-  - Go, Rust, Java, Ruby, PHP, .NET, Elixir, and more
+  - Python: pip, poetry, pipenv, uv, pdm, conda
+  - Node.js: npm, pnpm, yarn, bun, deno
+  - Go, Rust, Java, Ruby, PHP, .NET, Elixir, Gleam, and more
   - Flags: `--deps`, `--deps-prod`, `--no-deps`
 - **Cross-platform support**: Windows, macOS, Linux, WSL2, ARM64
 - **Docker auto-start**: Start Docker Desktop if not running (Windows/macOS)
 - **Git config auto-detection**: Detect git user.name/email from host
 - **Dynamic UID/GID mapping**: Automatic user ID remapping for file permissions
-- **Commands**: run, stacks, update, clean, prune
+- **Commands**: run (default), stacks, update, clean, prune
 - **Prompt mode**: Non-interactive with `-p/--prompt`
 - **Debug modes**: `-d` (basic) and `-dd` (verbose + stream)
-- **Bare mode**: `--bare` for vanilla Claude Code without CCO
+- **Fresh mode**: `--fresh` for clean slate (auth only)
 - **Unattended mode**: `-y/--yes` for automated operation
+- **Progress control**: `--progress` flag for Docker build output
+- **Unrestricted mode**: `-U/--unrestricted` for full system resources
+- **Unified logging**: Logger abstraction with levels (debug, info, warn, error)
+- **Error handling**: Unified error handler with exit code diagnostics and retry logic
 
 ### Security
 
@@ -84,7 +58,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tmpfs for temp directories (no disk residue)
 - Path validation prevents directory traversal attacks
 - Git credentials via environment variables (not mounted files)
-- Non-root container user
+- Non-root container user (ccbox)
+- Read-only FUSE mount for path translation
 
 ### Performance
 
@@ -94,12 +69,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DNS optimization: `--dns-opt ndots:1`
 - Node.js compile cache for faster startups
 - Git optimizations (preloadindex, fscache, commitgraph)
+- Pre-compiled FUSE binaries (amd64/arm64)
 
-### Notes
+### Technical
 
-- TypeScript rewrite (previously Python)
+- TypeScript codebase with strict mode
 - CLI framework: Commander.js
 - Runtime: Bun (native binary)
+- Test suite: 167 tests covering all modules
+- Modular architecture: dockerfile-gen, docker-runtime, error-handler, logger
 
-[Unreleased]: https://github.com/sungurerdim/ccbox/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/sungurerdim/ccbox/releases/tag/v1.0.0
+[Unreleased]: https://github.com/sungurerdim/ccbox/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/sungurerdim/ccbox/releases/tag/v0.1.0
