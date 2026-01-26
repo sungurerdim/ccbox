@@ -77,7 +77,15 @@ ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \\
     NODE_ENV=production \\
     # Git performance: disable advice messages, use parallel index
     GIT_ADVICE=0 \\
-    GIT_INDEX_THREADS=0
+    GIT_INDEX_THREADS=0 \\
+    # Disk I/O reduction: redirect caches to tmpfs (/tmp is tmpfs at runtime)
+    npm_config_cache=/tmp/.npm \\
+    YARN_CACHE_FOLDER=/tmp/.yarn \\
+    PIP_CACHE_DIR=/tmp/.pip \\
+    UV_CACHE_DIR=/tmp/.uv \\
+    # Disable analytics/telemetry (reduces disk writes)
+    CHECKPOINT_DISABLE=1 \\
+    DO_NOT_TRACK=1
 `;
 
 // FUSE filesystem - pre-compiled binaries for kernel-level path transformation
@@ -293,7 +301,8 @@ RUN ARCH=\$(dpkg --print-architecture | sed 's/amd64/x64/;s/arm64/arm64/') \\
 # Corepack 0.31.0+ required for npm key rotation compatibility
 RUN npm install -g corepack@latest \\
     && corepack enable \\
-    && corepack prepare pnpm@latest --activate
+    && corepack prepare pnpm@latest --activate \\
+    && npm cache clean --force
 
 # Bun (fast JavaScript runtime) - install then copy to /usr/local/bin
 # HOME=/root is set in base, so installer will use /root/.bun
@@ -457,7 +466,8 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | \\
     && ln -s /opt/.ghcup/bin/ghci /usr/local/bin/ghci \\
     && ln -s /opt/.ghcup/bin/cabal /usr/local/bin/cabal \\
     && ln -s /opt/.ghcup/bin/stack /usr/local/bin/stack \\
-    && ln -s /opt/.ghcup/bin/ghcup /usr/local/bin/ghcup
+    && ln -s /opt/.ghcup/bin/ghcup /usr/local/bin/ghcup \\
+    && rm -rf /opt/.ghcup/cache /opt/.ghcup/tmp
 
 # opam (OCaml package manager) - use system opam, configure for non-root
 RUN apt-get update && apt-get install -y --no-install-recommends \\
@@ -575,7 +585,8 @@ RUN UV_BREAK_SYSTEM_PACKAGES=1 uv pip install --system \\
 RUN UV_BREAK_SYSTEM_PACKAGES=1 uv pip install --system torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
 # TensorFlow (CPU version)
-RUN UV_BREAK_SYSTEM_PACKAGES=1 uv pip install --system tensorflow
+RUN UV_BREAK_SYSTEM_PACKAGES=1 uv pip install --system tensorflow \\
+    && rm -rf /root/.cache/uv /root/.cache/pip
 `;
 }
 
@@ -587,8 +598,9 @@ FROM ccbox/dart
 
 LABEL org.opencontainers.image.title="ccbox/mobile"
 
-# Flutter SDK
+# Flutter SDK (remove .git to save ~100MB)
 RUN git clone https://github.com/flutter/flutter.git -b stable /opt/flutter --depth 1 \\
+    && rm -rf /opt/flutter/.git \\
     && /opt/flutter/bin/flutter precache \\
     && /opt/flutter/bin/flutter config --no-analytics
 ENV PATH="/opt/flutter/bin:$PATH"
@@ -635,14 +647,9 @@ LABEL org.opencontainers.image.title="ccbox/fullstack"
 
 ${PYTHON_TOOLS_BASE}
 
-# Database clients (PostgreSQL, MySQL, SQLite)
+# Database clients (PostgreSQL, MySQL, SQLite) + Redis CLI
 RUN apt-get update && apt-get install -y --no-install-recommends \\
-    postgresql-client default-mysql-client sqlite3 \\
-    && rm -rf /var/lib/apt/lists/*
-
-# Redis CLI
-RUN apt-get update && apt-get install -y --no-install-recommends \\
-    redis-tools \\
+    postgresql-client default-mysql-client sqlite3 redis-tools \\
     && rm -rf /var/lib/apt/lists/*
 `;
 }

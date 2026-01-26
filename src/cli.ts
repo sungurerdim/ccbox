@@ -308,5 +308,5 @@ program
     console.log(chalk.dim("Filter categories: core, combined, usecase"));
   });
 
-// Parse and run
-program.parse();
+// Parse and run (async for proper error handling in async actions)
+program.parseAsync();
