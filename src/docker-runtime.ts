@@ -26,52 +26,28 @@ const CONTAINER_CONSTRAINTS = {
 /** Generate container awareness prompt with current constraints. */
 export function buildContainerAwarenessPrompt(persistentPaths: string): string {
   const { pidsLimit } = CONTAINER_CONSTRAINTS;
-
-  // Detect host OS for better guidance
   const hostOS = platform() === "win32" ? "Windows" : platform() === "darwin" ? "macOS" : "Linux";
 
+  const windowsNote = hostOS === "Windows"
+    ? `\nPath format: D:\\GitHub\\x → /d/GitHub/x (auto-translated)\n`
+    : "";
+
   return `
-[CCBOX CONTAINER ENVIRONMENT]
+[CCBOX CONTAINER]
 
-You are in an isolated Linux container (Debian). The host is ${hostOS}.
+Isolated Debian container. Host: ${hostOS}.
+${windowsNote}
+PERSISTENCE:
+  ✓ ${persistentPaths} — survives container exit
+  ✗ /tmp, /root, /etc, apt packages, global installs — ephemeral
 
-CRITICAL RULES:
-1. This is LINUX - use bash syntax, forward slashes, no Windows commands
-2. Only ${persistentPaths} persist - everything else is deleted on exit
-3. No Docker/systemd/GUI available - container has limited capabilities
+CONSTRAINTS:
+  • No Docker-in-Docker, systemd, or GUI
+  • Local installs only: npm install (not -g), pip install -t .
+  • Process limit: ${pidsLimit}
+  • /tmp is noexec — use $TMPDIR for executables
 
-COMMAND PATTERNS (use these, they work correctly):
-  git -C /path status              # NOT: cd /path && git status
-  npm --prefix /path install       # NOT: cd /path && npm install
-  python3 /path/script.py          # absolute paths always work
-  rg "pattern" /path               # ripgrep for fast search
-
-${hostOS === "Windows" ? `WINDOWS HOST: Paths are auto-translated (D:\\\\GitHub\\\\x → /d/GitHub/x)
-  NEVER use: cd /d, backslashes, cmd.exe syntax, PowerShell commands
-` : ""}
-FILESYSTEM:
-  PERSISTENT: ${persistentPaths}
-    → project files, node_modules/, venv/, target/, .git/ all saved
-  EPHEMERAL: /tmp, /root, /etc, /usr, apt packages, global installs
-    → lost on exit, use project-local alternatives
-
-AVAILABLE TOOLS:
-  git, gh (GitHub CLI), curl, wget, ssh, jq, yq, rg (ripgrep), fd
-  python3, pip3, gcc, make + stack-specific tools (node, cargo, go, etc.)
-
-LIMITATIONS:
-  ✗ docker, docker-compose, podman (no Docker-in-Docker)
-  ✗ systemctl, service (no init system)
-  ✗ npm -g, pip install --user (use local: npm install, pip install -t)
-  ✗ apt install (lost on exit - most tools pre-installed)
-  △ /tmp has noexec - use $TMPDIR for executable temp files
-  △ Max ${pidsLimit} processes - avoid excessive parallelism
-
-WHEN SOMETHING FAILS:
-  - Path error? Use absolute Linux paths, check translation
-  - Command not found? Try: which <cmd>, or use npx/pipx
-  - Permission denied? You're 'node' user, not root
-  - Can't install? Check if pre-installed or use project-local install
+TOOLS: git, gh, curl, wget, ssh, jq, yq, rg, fd, python3, pip3, gcc, make + stack tools
 `.trim();
 }
 
