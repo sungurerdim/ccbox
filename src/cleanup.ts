@@ -86,24 +86,22 @@ export async function removeCcboxContainers(): Promise<number> {
 /**
  * Remove all ccbox images (stacks + project images).
  * Cleans up all image naming conventions:
- * - ccbox/base, ccbox/web (stack images)
- * - ccbox.projectname/web (project images)
- * - ccbox-projectname (legacy project images)
- * - ccbox:base (legacy stack images)
+ * - ccbox_web:latest (stack images)
+ * - ccbox_web:projectname (project images)
+ * - ccbox/base, ccbox.project/web (legacy formats)
  */
 export async function removeCcboxImages(): Promise<number> {
   // Collect all unique ccbox images first to avoid double-counting
   const imagesToRemove = new Set<string>();
 
-  // Add stack images - new format (ccbox/base) and old format (ccbox:base)
+  // Add stack images - current format (ccbox_base:latest)
   for (const stack of Object.values(LanguageStack)) {
     imagesToRemove.add(getImageName(stack));
-    imagesToRemove.add(`ccbox:${stack}`);
   }
 
-  // Add all ccbox-prefixed images (project images + any others)
-  // Covers: ccbox/, ccbox., ccbox-, ccbox:
-  for (const prefix of ["ccbox/", "ccbox.", "ccbox-", "ccbox:"]) {
+  // Add all ccbox-prefixed images (project images + legacy formats)
+  // Covers: ccbox_ (current), ccbox/, ccbox., ccbox-, ccbox: (legacy)
+  for (const prefix of ["ccbox_", "ccbox/", "ccbox.", "ccbox-", "ccbox:"]) {
     const images = await listImages(prefix);
     for (const image of images) {
       imagesToRemove.add(image);
