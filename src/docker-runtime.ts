@@ -223,9 +223,9 @@ export function buildClaudeArgs(options: {
 
   if (options.quiet || options.prompt) {
     args.push("--print");
-    if (stream) {
-      args.push("--output-format", "stream-json");
-    }
+    // Always use stream-json in prompt mode to avoid stdout buffering issues on Windows
+    // Without this, output gets stuck in buffer and never displays
+    args.push("--output-format", "stream-json");
   }
 
   if (options.prompt) {
@@ -448,16 +448,21 @@ export function getDockerRunCmd(
   const isInteractive = !prompt && !options.quiet;
   const isTTY = process.stdin.isTTY ?? false;
 
-  if (isInteractive && isTTY) {
-    // Use -it for interactive mode (requires proper TTY)
-    // On Windows: use Windows Terminal (wt.exe) for best compatibility
-    cmd.push("-it");
-  } else if (isInteractive) {
-    // Interactive but no TTY detected - still try with -it
-    // This handles edge cases where TTY detection fails
-    cmd.push("-it");
+  if (isInteractive) {
+    if (platform() === "win32") {
+      // Windows: Always use -it, but check if ConPTY is available
+      // Windows Terminal and modern PowerShell support ConPTY
+      // Legacy cmd.exe may have issues - user should use Windows Terminal
+      cmd.push("-it");
+    } else if (isTTY) {
+      // Unix with TTY - standard interactive mode
+      cmd.push("-it");
+    } else {
+      // Unix without TTY (piped/scripted) - try anyway
+      cmd.push("-it");
+    }
   } else {
-    // Non-interactive (prompt mode) - stdin only
+    // Non-interactive (prompt mode) - stdin only, no TTY needed
     cmd.push("-i");
   }
 

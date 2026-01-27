@@ -278,8 +278,13 @@ if [[ -n "$CCBOX_WSL_ORIGINAL_PATH" && -d "/ccbox/.claude" ]]; then
 fi
 
 # Git performance optimizations (I/O reduction)
-git config --global core.fileMode false 2>/dev/null || true
-git config --global --add safe.directory '*' 2>/dev/null || true
+# Use --system for settings that must apply to all users (root runs this, ccbox runs claude)
+# Use --global for user-specific settings (will be inherited when gosu switches to ccbox)
+# CRITICAL: Add wildcard safe.directory to allow any mounted path (quotes prevent shell expansion)
+git config --system --add safe.directory "*" 2>/dev/null || true
+git config --system core.fileMode false 2>/dev/null || true
+# Also add current project directory explicitly (belt and suspenders)
+git config --system --add safe.directory "$PWD" 2>/dev/null || true
 git config --global core.preloadindex true 2>/dev/null || true
 git config --global core.fscache true 2>/dev/null || true
 git config --global core.untrackedcache true 2>/dev/null || true
@@ -290,6 +295,19 @@ git config --global gc.auto 0 2>/dev/null || true
 git config --global credential.helper 'cache --timeout=86400' 2>/dev/null || true
 git config --global pack.threads 0 2>/dev/null || true
 git config --global index.threads 0 2>/dev/null || true
+
+# Copy root's gitconfig to ccbox user so performance settings are inherited
+if [[ -f /root/.gitconfig && -n "$CCBOX_UID" ]]; then
+    cp /root/.gitconfig /ccbox/.gitconfig 2>/dev/null || true
+    chown "$CCBOX_UID:$CCBOX_GID" /ccbox/.gitconfig 2>/dev/null || true
+fi
+
+# If project has .git, ensure it's recognized despite path/ownership differences
+if [[ -d "$PWD/.git" ]]; then
+    _log "Git repository detected at $PWD"
+    # Add this specific directory as safe (belt and suspenders with --system '*')
+    git config --global --add safe.directory "$PWD" 2>/dev/null || true
+fi
 
 # Create temp directory in cache (exec allowed, ephemeral tmpfs)
 mkdir -p /ccbox/.cache/tmp 2>/dev/null || true

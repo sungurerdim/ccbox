@@ -99,43 +99,62 @@ install_ccbox() {
     success "Installed ccbox to $target"
 }
 
-# Check if install directory is in PATH and warn if not
+# Check if install directory is in PATH and add if not
 check_path() {
     if [[ ":$PATH:" == *":$INSTALL_DIR:"* ]]; then
         return 0
     fi
 
-    warn ""
-    warn "WARNING: $INSTALL_DIR is not in your PATH"
-    warn ""
-    warn "Add it to your shell profile:"
-    echo ""
+    info "Adding $INSTALL_DIR to PATH..."
 
-    # Detect shell and provide specific instructions
+    local profile_file=""
+    local path_line="export PATH=\"$INSTALL_DIR:\$PATH\""
+
+    # Detect shell and profile file
     case "${SHELL:-/bin/bash}" in
         */zsh)
-            echo "  echo 'export PATH=\"$INSTALL_DIR:\$PATH\"' >> ~/.zshrc"
-            echo "  source ~/.zshrc"
+            profile_file="$HOME/.zshrc"
             ;;
         */bash)
             if [[ "$(uname -s)" == "Darwin" ]]; then
-                echo "  echo 'export PATH=\"$INSTALL_DIR:\$PATH\"' >> ~/.bash_profile"
-                echo "  source ~/.bash_profile"
+                # macOS uses .bash_profile for login shells
+                profile_file="$HOME/.bash_profile"
             else
-                echo "  echo 'export PATH=\"$INSTALL_DIR:\$PATH\"' >> ~/.bashrc"
-                echo "  source ~/.bashrc"
+                profile_file="$HOME/.bashrc"
             fi
             ;;
         */fish)
-            echo "  echo 'set -gx PATH \"$INSTALL_DIR\" \$PATH' >> ~/.config/fish/config.fish"
-            echo "  source ~/.config/fish/config.fish"
+            profile_file="$HOME/.config/fish/config.fish"
+            path_line="set -gx PATH \"$INSTALL_DIR\" \$PATH"
             ;;
         *)
-            echo "  export PATH=\"$INSTALL_DIR:\$PATH\""
-            echo ""
-            echo "  Add the above line to your shell profile (~/.profile, ~/.bashrc, etc.)"
+            profile_file="$HOME/.profile"
             ;;
     esac
+
+    # Check if already added (avoid duplicates)
+    if [[ -f "$profile_file" ]] && grep -q "$INSTALL_DIR" "$profile_file" 2>/dev/null; then
+        info "PATH entry already exists in $profile_file"
+        return 0
+    fi
+
+    # Create profile file if it doesn't exist
+    if [[ ! -f "$profile_file" ]]; then
+        mkdir -p "$(dirname "$profile_file")"
+        touch "$profile_file"
+    fi
+
+    # Add PATH entry
+    echo "" >> "$profile_file"
+    echo "# Added by ccbox installer" >> "$profile_file"
+    echo "$path_line" >> "$profile_file"
+
+    success "Added to $profile_file"
+    warn ""
+    warn "Run this to use ccbox immediately:"
+    echo "  source $profile_file"
+    warn ""
+    warn "Or open a new terminal window."
     echo ""
 }
 
