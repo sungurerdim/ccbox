@@ -86,7 +86,7 @@ export async function buildImage(
   // Check if this stack depends on base image
   const dependency = STACK_DEPENDENCIES[stack];
   if (dependency !== null && !imageExists(dependency)) {
-    console.log(chalk.dim(`Building dependency: ccbox/${dependency}...`));
+    console.log(chalk.dim(`Building dependency: ccbox_${dependency}:latest...`));
     if (!(await buildImage(dependency, options))) {
       console.log(chalk.red(`Failed to build dependency ccbox/${dependency}`));
       return false;
@@ -173,7 +173,7 @@ export function getProjectImageName(projectName: string, stack: LanguageStack): 
     .toLowerCase()
     .replace(/[^a-z0-9_-]/g, "-")
     .slice(0, 110);
-  return `ccbox.${safeName}/${stack}`;
+  return `ccbox_${stack}:${safeName}`;
 }
 
 /**
@@ -295,7 +295,7 @@ export async function getInstalledCcboxImages(): Promise<Set<string>> {
     if (result.exitCode !== 0) {return new Set();}
 
     const allImages = String(result.stdout ?? "").trim().split("\n");
-    return new Set(allImages.filter((img: string) => img.startsWith("ccbox:")));
+    return new Set(allImages.filter((img: string) => img.startsWith("ccbox_")));
   } catch {
     return new Set();
   }

@@ -207,7 +207,7 @@ export function getClaudeConfigDir(config: Config): string {
 
 /** Get Docker image name for a language stack. */
 export function getImageName(stack: LanguageStack): string {
-  return `ccbox/${stack}`;
+  return `ccbox_${stack}:latest`;
 }
 
 /** Check if Docker image exists for stack. */
