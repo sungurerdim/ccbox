@@ -190,19 +190,19 @@ test("getClaudeConfigDir expands ~", () => {
 
 // Bug prevented: Image name format must match docker naming rules
 test("getImageName format is docker-compatible", () =>
-  /^ccbox\/[a-z]+$/.test(getImageName(LanguageStack.BASE)));
+  /^ccbox_[a-z]+:latest$/.test(getImageName(LanguageStack.BASE)));
 
 // Bug prevented: Container name uniqueness for parallel execution
 test("getContainerName generates unique names", () => {
   const name1 = getContainerName("my-project");
   const name2 = getContainerName("my-project");
-  return name1 !== name2 && name1.startsWith("ccbox.");
+  return name1 !== name2 && name1.startsWith("ccbox_");
 });
 
 // Bug prevented: Special chars in project names breaking docker commands
 test("getContainerName sanitizes special chars", () => {
   const name = getContainerName("My Project@2.0!", false);
-  return /^ccbox\.[a-z0-9-]+$/.test(name);
+  return /^ccbox_[a-z0-9-]+$/.test(name);
 });
 
 // Bug prevented: Case-insensitive stack parsing for CLI usability
@@ -561,7 +561,7 @@ const build = await importModule(join(ROOT, "src/build.ts"));
 // Bug prevented: Invalid docker image name = docker build failure
 test("getProjectImageName produces docker-compatible format", () => {
   const name = build.getProjectImageName("my-project", LanguageStack.BASE);
-  return /^ccbox\.[a-z0-9-]+\/[a-z]+$/.test(name);
+  return /^ccbox_[a-z]+:[a-z0-9-]+$/.test(name);
 });
 
 // Bug prevented: Special chars in project name = broken docker commands
@@ -937,8 +937,8 @@ test("buildProjectImage function accepts options parameter", () => {
 // Bug prevented: getProjectImageName producing invalid Docker image names
 test("getProjectImageName produces valid image name", () => {
   const name = build.getProjectImageName("my-project", "web");
-  // Docker image names must be lowercase, can contain a-z0-9.-_/
-  return /^[a-z0-9][a-z0-9._\-/]*$/.test(name) && name.includes("my-project");
+  // Docker image names: repository:tag format, lowercase, can contain a-z0-9.-_/:
+  return /^ccbox_[a-z]+:[a-z0-9-]+$/.test(name) && name.includes("my-project");
 });
 
 // Bug prevented: Special characters in project name breaking image name
