@@ -200,7 +200,7 @@ ${ENTRYPOINT_SETUP}
 function pythonDockerfile(): string {
   return `# syntax=docker/dockerfile:1
 # ccbox/python - Python dev tools (ruff, mypy, pytest, uv)
-FROM ccbox/base
+FROM ccbox_base:latest
 
 LABEL org.opencontainers.image.title="ccbox/python"
 ${PYTHON_TOOLS_BASE}
@@ -286,7 +286,7 @@ ${ENTRYPOINT_SETUP}
 function webDockerfile(): string {
   return `# syntax=docker/dockerfile:1
 # ccbox/web - Node.js + Bun + TypeScript + test tools (fullstack)
-FROM ccbox/base
+FROM ccbox_base:latest
 
 LABEL org.opencontainers.image.title="ccbox/web"
 
@@ -320,7 +320,7 @@ RUN npm install -g typescript eslint vitest prettier @types/node \\
 function cppDockerfile(): string {
   return `# syntax=docker/dockerfile:1
 # ccbox/cpp - C++ + CMake + build tools
-FROM ccbox/base
+FROM ccbox_base:latest
 
 LABEL org.opencontainers.image.title="ccbox/cpp"
 
@@ -337,7 +337,7 @@ RUN pip3 install --break-system-packages conan
 function dotnetDockerfile(): string {
   return `# syntax=docker/dockerfile:1
 # ccbox/dotnet - .NET SDK + quality tools
-FROM ccbox/base
+FROM ccbox_base:latest
 
 LABEL org.opencontainers.image.title="ccbox/dotnet"
 
@@ -359,7 +359,7 @@ RUN dotnet tool install --tool-path /opt/dotnet-tools dotnet-reportgenerator-glo
 function swiftDockerfile(): string {
   return `# syntax=docker/dockerfile:1
 # ccbox/swift - Swift + quality tools
-FROM ccbox/base
+FROM ccbox_base:latest
 
 LABEL org.opencontainers.image.title="ccbox/swift"
 
@@ -382,7 +382,7 @@ RUN SWIFTLINT_VER=\$(curl -sfL https://api.github.com/repos/realm/SwiftLint/rele
 function dartDockerfile(): string {
   return `# syntax=docker/dockerfile:1
 # ccbox/dart - Dart + quality tools (built-in: dart analyze, dart format, dart test)
-FROM ccbox/base
+FROM ccbox_base:latest
 
 LABEL org.opencontainers.image.title="ccbox/dart"
 
@@ -405,7 +405,7 @@ RUN dart pub global activate dart_code_metrics 2>/dev/null || true \\
 function luaDockerfile(): string {
   return `# syntax=docker/dockerfile:1
 # ccbox/lua - Lua + LuaRocks + quality tools
-FROM ccbox/base
+FROM ccbox_base:latest
 
 LABEL org.opencontainers.image.title="ccbox/lua"
 
@@ -427,7 +427,7 @@ RUN luarocks install luacheck \\
 function jvmDockerfile(): string {
   return `# syntax=docker/dockerfile:1
 # ccbox/jvm - Java + Scala + Clojure + Kotlin
-FROM ccbox/java
+FROM ccbox_java:latest
 
 LABEL org.opencontainers.image.title="ccbox/jvm"
 
@@ -450,7 +450,7 @@ RUN KOTLIN_VER=\$(curl -sfL https://api.github.com/repos/JetBrains/kotlin/releas
 function functionalDockerfile(): string {
   return `# syntax=docker/dockerfile:1
 # ccbox/functional - Haskell + OCaml + Elixir/Erlang
-FROM ccbox/base
+FROM ccbox_base:latest
 
 LABEL org.opencontainers.image.title="ccbox/functional"
 
@@ -486,7 +486,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \\
 function scriptingDockerfile(): string {
   return `# syntax=docker/dockerfile:1
 # ccbox/scripting - Ruby + PHP + Perl + quality tools (web backends)
-FROM ccbox/base
+FROM ccbox_base:latest
 
 LABEL org.opencontainers.image.title="ccbox/scripting"
 
@@ -518,7 +518,7 @@ function systemsDockerfile(): string {
   return `# syntax=docker/dockerfile:1
 # ccbox/systems - C++ + Zig + Nim (systems programming)
 # Extends cpp stack - includes CMake, Clang, Conan
-FROM ccbox/cpp
+FROM ccbox_cpp:latest
 
 LABEL org.opencontainers.image.title="ccbox/systems"
 
@@ -545,7 +545,7 @@ function dataDockerfile(): string {
   return `# syntax=docker/dockerfile:1
 # ccbox/data - Python + R + Julia (data science)
 # Extends python stack - includes uv, ruff, pytest, mypy
-FROM ccbox/python
+FROM ccbox_python:latest
 
 LABEL org.opencontainers.image.title="ccbox/data"
 
@@ -569,7 +569,7 @@ function aiDockerfile(): string {
   return `# syntax=docker/dockerfile:1
 # ccbox/ai - Python + Jupyter + PyTorch + TensorFlow (ML/AI)
 # Extends python stack - includes uv, ruff, pytest, mypy
-FROM ccbox/python
+FROM ccbox_python:latest
 
 LABEL org.opencontainers.image.title="ccbox/ai"
 
@@ -594,7 +594,7 @@ function mobileDockerfile(): string {
   return `# syntax=docker/dockerfile:1
 # ccbox/mobile - Dart + Flutter SDK + Android tools
 # Extends dart stack - includes Dart SDK
-FROM ccbox/dart
+FROM ccbox_dart:latest
 
 LABEL org.opencontainers.image.title="ccbox/mobile"
 
@@ -619,7 +619,7 @@ function gameDockerfile(): string {
   return `# syntax=docker/dockerfile:1
 # ccbox/game - C++ + SDL2 + Lua + OpenGL (game development)
 # Extends cpp stack - includes CMake, Clang, Conan
-FROM ccbox/cpp
+FROM ccbox_cpp:latest
 
 LABEL org.opencontainers.image.title="ccbox/game"
 
@@ -641,7 +641,7 @@ function fullstackDockerfile(): string {
   return `# syntax=docker/dockerfile:1
 # ccbox/fullstack - Node.js + Python + PostgreSQL client
 # Extends web stack - includes Node.js, TypeScript, eslint, vitest
-FROM ccbox/web
+FROM ccbox_web:latest
 
 LABEL org.opencontainers.image.title="ccbox/fullstack"
 
