@@ -229,7 +229,7 @@ ccbox clean -f  # Remove Docker images (optional)
 <summary><b>Windows</b></summary>
 
 ```powershell
-Remove-Item "$HOME\.local\bin\ccbox.exe"
+Remove-Item "$env:LOCALAPPDATA\Microsoft\WindowsApps\ccbox.exe"
 ccbox clean -f  # Remove Docker images (optional)
 ```
 
