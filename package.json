@@ -5,6 +5,9 @@
   "type": "module",
   "private": true,
   "packageManager": "bun",
+  "bin": {
+    "ccbox": "src/cli.ts"
+  },
   "scripts": {
     "dev": "bun run src/cli.ts",
     "build": "bun build src/cli.ts --outfile dist/ccbox.js --target bun --minify",
