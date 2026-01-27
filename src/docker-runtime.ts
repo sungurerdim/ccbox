@@ -7,14 +7,14 @@
 
 import { existsSync, readFileSync, readlinkSync } from "node:fs";
 import { platform } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { env } from "node:process";
 
 import type { Config } from "./config.js";
 import { getClaudeConfigDir, getContainerName, getImageName, LanguageStack } from "./config.js";
 import { DEFAULT_PIDS_LIMIT } from "./constants.js";
 import type { DepsInfo } from "./deps.js";
-import { resolveForDocker, normalizeProjectDirName } from "./paths.js";
+import { resolveForDocker } from "./paths.js";
 
 // Container constraints (SSOT - used for both docker run and prompt generation)
 const CONTAINER_CONSTRAINTS = {
@@ -432,15 +432,13 @@ export function getDockerRunCmd(
     projectImage?: string;
     depsList?: DepsInfo[];
     unrestricted?: boolean;
+    envVars?: string[];
   } = {}
 ): string[] {
   const imageName = options.projectImage ?? getImageName(stack);
   const claudeConfig = getClaudeConfigDir(config);
   const prompt = transformSlashCommand(options.prompt);
   const containerName = getContainerName(projectName);
-  // Normalize directory name for cross-platform compatibility
-  // Preserves unicode/special chars but applies NFC normalization and removes control chars
-  const dirName = normalizeProjectDirName(basename(projectPath));
   const dockerProjectPath = resolveForDocker(resolve(projectPath));
 
   const cmd = ["docker", "run", "--rm"];
@@ -585,6 +583,15 @@ export function getDockerRunCmd(
   }
 
   addGitEnv(cmd, config);
+
+  // User-provided environment variables (added last to allow overrides)
+  if (options.envVars && options.envVars.length > 0) {
+    for (const envVar of options.envVars) {
+      if (envVar.includes("=")) {
+        cmd.push("-e", envVar);
+      }
+    }
+  }
 
   cmd.push(imageName);
 
