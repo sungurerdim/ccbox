@@ -118,7 +118,31 @@ ccbox prune [-f]         # Deep clean ccbox resources
 | `-d` | Debug mode (entrypoint logs) |
 | `-dd` | Verbose debug (+ stream output) |
 | `-U, --unrestricted` | Remove CPU/priority limits |
+| `-e, --env <K=V>` | Pass env vars to container (can override defaults) |
 | `--progress <mode>` | Docker build output (auto/plain/tty) |
+
+### Environment Variables
+
+Pass custom environment variables to the container with `-e`. Variables are added **after** ccbox defaults, allowing you to override them:
+
+```bash
+# Disable Claude Code's task system
+ccbox -e CLAUDE_CODE_ENABLE_TASKS=false
+
+# Multiple variables
+ccbox -e MY_API_KEY=secret -e DEBUG=1
+
+# Override ccbox defaults
+ccbox -e FORCE_COLOR=0 -e CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70
+```
+
+**Common overrides:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CLAUDE_CODE_ENABLE_TASKS` | `true` | Enable/disable task management system |
+| `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` | `85` | Context compaction threshold (%) |
+| `FORCE_COLOR` | `1` | Force colored output |
 
 ## Security
 

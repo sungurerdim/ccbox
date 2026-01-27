@@ -100,6 +100,7 @@ program
   .option("-U, --unrestricted", "Remove CPU/priority limits (use full system resources)")
   .option("-v, --verbose", "Show detection details (which files triggered stack selection)")
   .option("--progress <mode>", "Docker build progress mode (auto|plain|tty)", "auto")
+  .option("-e, --env <KEY=VALUE...>", "Pass environment variables to container (can override defaults)")
   .action(async (options) => {
     // Change directory if --chdir/-C specified (like git -C)
     if (options.chdir) {
@@ -143,6 +144,7 @@ program
       unrestricted: options.unrestricted,
       verbose: options.verbose,
       progress: options.progress,
+      envVars: options.env,
     });
   });
 

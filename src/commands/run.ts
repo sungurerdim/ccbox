@@ -102,6 +102,7 @@ async function executeContainer(
     projectImage?: string;
     depsList?: DepsInfo[];
     unrestricted?: boolean;
+    envVars?: string[];
   } = {}
 ): Promise<void> {
   const {
@@ -115,6 +116,7 @@ async function executeContainer(
     projectImage,
     depsList,
     unrestricted = false,
+    envVars,
   } = options;
 
   console.log(chalk.dim("Starting Claude Code..."));
@@ -131,6 +133,7 @@ async function executeContainer(
     projectImage,
     depsList,
     unrestricted,
+    envVars,
   });
 
   // Debug: print docker command
@@ -193,6 +196,7 @@ async function tryRunExistingImage(
     quiet?: boolean;
     appendSystemPrompt?: string;
     unrestricted?: boolean;
+    envVars?: string[];
   } = {}
 ): Promise<boolean> {
   if (!(await projectImageExists(projectName, stack))) {
@@ -242,6 +246,7 @@ async function buildAndRun(
     appendSystemPrompt?: string;
     unrestricted?: boolean;
     progress?: string;
+    envVars?: string[];
   } = {}
 ): Promise<void> {
   const { progress = "auto" } = options;
@@ -312,6 +317,7 @@ export async function run(
     unrestricted?: boolean;
     verbose?: boolean;
     progress?: string;
+    envVars?: string[];
   } = {}
 ): Promise<void> {
   const {
@@ -328,6 +334,7 @@ export async function run(
     unrestricted = false,
     verbose = false,
     progress = "auto",
+    envVars,
   } = options;
 
   if (!(await checkDocker())) {
@@ -378,6 +385,7 @@ export async function run(
       quiet,
       appendSystemPrompt,
       unrestricted,
+      envVars,
     })
   ) {
     return;
@@ -426,5 +434,6 @@ export async function run(
     appendSystemPrompt,
     unrestricted,
     progress,
+    envVars,
   });
 }
