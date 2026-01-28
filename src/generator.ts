@@ -266,7 +266,7 @@ fi
 # ══════════════════════════════════════════════════════════════════════════════
 
 # Claude Code path encoding function
-# Matches Claude's exact encoding: replace : / \ . and space with -
+# Matches Claude's exact encoding: replace : / \\ . and space with -
 # IMPORTANT: Leading - is PRESERVED (from leading /)
 # Examples:
 #   /d/GitHub/project    -> -d-GitHub-project
@@ -314,7 +314,7 @@ if [[ -n "$CCBOX_WSL_ORIGINAL_PATH" && -d "/ccbox/.claude" ]]; then
 fi
 
 # Windows bridge: D:/... encodes as D--... vs /d/... as d-...
-# Native Windows Claude uses: D:\GitHub\project -> D--GitHub-project
+# Native Windows Claude uses: D:/GitHub/project -> D--GitHub-project
 # ccbox/Docker uses: /d/GitHub/project -> d-GitHub-project
 # NOTE: Uses CCBOX_WIN_ORIGINAL_BRIDGE (not PATH) to avoid fakepath.so picking it up
 # fakepath.so doesn't work with Bun (bypasses glibc), so we only use symlink bridges
