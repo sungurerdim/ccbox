@@ -18,7 +18,12 @@ import { fileURLToPath } from "node:url";
 import { LanguageStack } from "./config.js";
 import type { DepsInfo, DepsMode } from "./deps.js";
 import { getInstallCommands } from "./deps.js";
-import { FUSE_BINARY_AMD64, FUSE_BINARY_ARM64 } from "./fuse-binaries.js";
+import {
+  FUSE_BINARY_AMD64,
+  FUSE_BINARY_ARM64,
+  FAKEPATH_BINARY_AMD64,
+  FAKEPATH_BINARY_ARM64,
+} from "./fuse-binaries.js";
 
 // Import and re-export from dockerfile-gen.ts
 import { generateDockerfile, DOCKERFILE_GENERATORS } from "./dockerfile-gen.js";
@@ -849,7 +854,15 @@ chmod 755 /usr/local/bin/ccbox-fuse
     writeFileSync(join(buildDir, "ccbox-fuse.c"), fuseContent, { encoding: "utf-8" });
   }
 
-  // Copy fakepath.c for path translation support
+  // Write pre-compiled fakepath.so binary (no gcc needed)
+  // Architecture is detected at build time via Docker's TARGETARCH
+  const fakepathBinaryAmd64 = Buffer.from(FAKEPATH_BINARY_AMD64, "base64");
+  const fakepathBinaryArm64 = Buffer.from(FAKEPATH_BINARY_ARM64, "base64");
+
+  writeFileSync(join(buildDir, "fakepath-amd64.so"), fakepathBinaryAmd64, { mode: 0o755 });
+  writeFileSync(join(buildDir, "fakepath-arm64.so"), fakepathBinaryArm64, { mode: 0o755 });
+
+  // Also keep fakepath.c for source builds if needed
   const fakepathSrc = join(__dirname, "..", "native", "fakepath.c");
   if (existsSync(fakepathSrc)) {
     const fakepathContent = readFileSync(fakepathSrc, "utf-8");
