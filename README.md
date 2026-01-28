@@ -211,6 +211,27 @@ D:/GitHub/project         ↔    /d/GitHub/project
 
 </details>
 
+<details>
+<summary><b>WSL session compatibility (symlink bridge)</b></summary>
+
+WSL and Docker encode project paths differently in Claude's session storage:
+
+| Environment | Path | Encoded as |
+|-------------|------|------------|
+| WSL | `/mnt/d/GitHub/project` | `mnt-d-GitHub-project` |
+| ccbox/Docker | `/d/GitHub/project` | `d-GitHub-project` |
+
+Claude stores sessions in `.claude/projects/<encoded-path>/`. Without bridging, sessions created in WSL wouldn't appear in ccbox (and vice versa).
+
+**What ccbox does:** Automatically creates symlinks between both encodings:
+```
+.claude/projects/d-GitHub-project → mnt-d-GitHub-project
+```
+
+**Result:** Sessions created in WSL are visible in ccbox, and sessions created in ccbox are visible in WSL. You can switch between environments freely without losing your conversation history.
+
+</details>
+
 ## Troubleshooting
 
 <details>
