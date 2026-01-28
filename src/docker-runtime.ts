@@ -234,6 +234,14 @@ function addMinimalMounts(cmd: string[], claudeConfig: string): void {
     }
   }
 
+  // Mount ~/.claude.json for onboarding state (hasCompletedOnboarding flag)
+  const homeDir = join(claudeConfig, "..");
+  const claudeJsonHost = join(homeDir, ".claude.json");
+  if (existsSync(claudeJsonHost)) {
+    const dockerClaudeJson = resolveForDocker(claudeJsonHost);
+    cmd.push("-v", `${dockerClaudeJson}:/ccbox/.claude.json:rw`);
+  }
+
   // Signal minimal mount mode
   cmd.push("-e", "CCBOX_MINIMAL_MOUNT=1");
 }
@@ -496,6 +504,16 @@ export function getDockerRunCmd(
     } else {
       cmd.push("--device", "/dev/fuse");
     }
+  }
+
+  // Mount ~/.claude.json for onboarding state (hasCompletedOnboarding flag)
+  // This file is at $HOME/.claude.json, OUTSIDE the .claude/ directory
+  // Without it, Claude Code will restart onboarding in new project directories
+  const homeDir = join(claudeConfig, "..");
+  const claudeJsonHost = join(homeDir, ".claude.json");
+  if (existsSync(claudeJsonHost)) {
+    const dockerClaudeJson = resolveForDocker(claudeJsonHost);
+    cmd.push("-v", `${dockerClaudeJson}:/ccbox/.claude.json:rw`);
   }
 
   // Working directory - use host path for session compatibility
