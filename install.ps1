@@ -4,7 +4,7 @@
     ccbox installer for Windows
 
 .DESCRIPTION
-    Downloads and installs ccbox binary for Windows.
+    Downloads and installs ccbox binary and wrapper for Windows.
     Installs to WindowsApps directory which is already in PATH by default.
 
 .EXAMPLE
@@ -41,8 +41,10 @@ function Install-Ccbox {
         [string]$Ver
     )
 
-    $binaryName = "ccbox-$Ver-$Platform.exe"
-    $downloadUrl = "https://github.com/$Repo/releases/download/$Ver/$binaryName"
+    $binaryName = "ccbox-bin-$Ver-$Platform.exe"
+    $binaryUrl = "https://github.com/$Repo/releases/download/$Ver/$binaryName"
+    $wrapperCmdUrl = "https://raw.githubusercontent.com/$Repo/$Ver/scripts/wrapper/ccbox.cmd"
+    $wrapperPs1Url = "https://raw.githubusercontent.com/$Repo/$Ver/scripts/wrapper/ccbox.ps1"
 
     Write-Info "Downloading ccbox $Ver for $Platform..."
 
@@ -51,18 +53,33 @@ function Install-Ccbox {
         New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     }
 
-    $target = Join-Path $InstallDir "ccbox.exe"
+    $targetBinary = Join-Path $InstallDir "ccbox-bin.exe"
+    $targetCmd = Join-Path $InstallDir "ccbox.cmd"
+    $targetPs1 = Join-Path $InstallDir "ccbox.ps1"
 
     try {
-        Invoke-WebRequest -Uri $downloadUrl -OutFile $target -UseBasicParsing
+        # Download binary
+        Write-Info "  Downloading ccbox-bin.exe..."
+        Invoke-WebRequest -Uri $binaryUrl -OutFile $targetBinary -UseBasicParsing
+
+        # Download wrapper .cmd
+        Write-Info "  Downloading ccbox.cmd..."
+        Invoke-WebRequest -Uri $wrapperCmdUrl -OutFile $targetCmd -UseBasicParsing
+
+        # Download wrapper .ps1
+        Write-Info "  Downloading ccbox.ps1..."
+        Invoke-WebRequest -Uri $wrapperPs1Url -OutFile $targetPs1 -UseBasicParsing
     }
     catch {
         Write-Err "Failed to download ccbox"
-        Write-Err "URL: $downloadUrl"
+        Write-Err "Binary URL: $binaryUrl"
         throw
     }
 
-    Write-Success "Installed ccbox to $target"
+    Write-Success "Installed ccbox to $InstallDir"
+    Write-Host "  - ccbox.cmd (launcher)"
+    Write-Host "  - ccbox.ps1 (wrapper)"
+    Write-Host "  - ccbox-bin.exe (binary)"
 }
 
 function Test-InPath {

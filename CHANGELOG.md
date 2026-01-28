@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-01-26
+## [0.1.0] - 2026-01-28
 
 Initial public release of ccbox - secure Docker sandbox for Claude Code.
 
@@ -39,7 +39,13 @@ Initial public release of ccbox - secure Docker sandbox for Claude Code.
 - **Docker auto-start**: Start Docker Desktop if not running (Windows/macOS)
 - **Git config auto-detection**: Detect git user.name/email from host
 - **Dynamic UID/GID mapping**: Automatic user ID remapping for file permissions
-- **Commands**: run (default), stacks, update, clean, prune
+- **Wrapper pattern**: Two-layer architecture (ccbox wrapper + ccbox-bin binary)
+  - `ccbox update`: Self-update binary from GitHub releases
+  - `ccbox uninstall`: Complete removal with self-delete
+  - `ccbox version`: Show wrapper and binary versions
+  - `ccbox version --check`: Check for available updates
+  - Wrapper scripts: Linux/Mac (`ccbox.sh`), Windows (`ccbox.cmd` + `ccbox.ps1`)
+- **Commands**: run (default), rebuild, clean, stacks, update, uninstall, version
 - **Prompt mode**: Non-interactive with `-p/--prompt`
 - **Debug modes**: `-d` (basic) and `-dd` (verbose + stream)
 - **Fresh mode**: `--fresh` for clean slate (auth only)
@@ -76,7 +82,7 @@ Initial public release of ccbox - secure Docker sandbox for Claude Code.
 - TypeScript codebase with strict mode
 - CLI framework: Commander.js
 - Runtime: Bun (native binary)
-- Test suite: 167 tests covering all modules
+- Test suite: 194 tests covering all modules
 - Modular architecture: dockerfile-gen, docker-runtime, error-handler, logger
 
 [Unreleased]: https://github.com/sungurerdim/ccbox/compare/v0.1.0...HEAD

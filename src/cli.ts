@@ -17,7 +17,6 @@ import { buildImage } from "./build.js";
 import {
   removeCcboxContainers,
   removeCcboxImages,
-  pruneSystem,
   cleanTempFiles,
 } from "./cleanup.js";
 
@@ -173,9 +172,9 @@ program
     });
   });
 
-// Update command
+// Rebuild command (rebuild Docker images with latest Claude Code)
 program
-  .command("update")
+  .command("rebuild")
   .description("Rebuild Docker image(s) with latest Claude Code")
   .option("-s, --stack <stack>", "Stack to rebuild")
   .option("-a, --all", "Rebuild all installed images")
@@ -201,7 +200,7 @@ program
     }
 
     if (stacksToBuild.length === 0) {
-      console.log(chalk.yellow("No images to update."));
+      console.log(chalk.yellow("No images to rebuild."));
       return;
     }
 
@@ -210,67 +209,33 @@ program
     }
   });
 
-// Clean command
+// Clean command (unified: default removes containers+images, --deep adds temp files, --system does docker system prune)
 program
   .command("clean")
-  .description("Remove ccbox containers and images")
+  .description("Remove ccbox containers, images, and temp files")
   .option("-f, --force", "Skip confirmation")
+  .option("--deep", "Deep clean: also remove temp build files")
   .action(async (options) => {
     if (!(await checkDocker())) {
       console.log(ERR_DOCKER_NOT_RUNNING);
       process.exit(1);
     }
 
-    if (!options.force) {
-      const { confirm } = await import("@inquirer/prompts");
-      const confirmed = await confirm({
-        message: "Remove all ccbox containers and images?",
-        default: false,
-      });
-      if (!confirmed) {return;}
-    }
-
-    console.log(chalk.dim("Removing containers..."));
-    const containersRemoved = await removeCcboxContainers();
-
-    console.log(chalk.dim("Removing images..."));
-    const imagesRemoved = await removeCcboxImages();
-
-    console.log(chalk.green("Cleanup complete"));
-    if (containersRemoved || imagesRemoved) {
-      const parts: string[] = [];
-      if (containersRemoved) {parts.push(`${containersRemoved} container(s)`);}
-      if (imagesRemoved) {parts.push(`${imagesRemoved} image(s)`);}
-      console.log(chalk.dim(`Removed: ${parts.join(", ")}`));
-    }
-  });
-
-// Prune command
-program
-  .command("prune")
-  .description("Deep clean: remove ccbox or entire Docker system resources")
-  .option("-f, --force", "Skip confirmation")
-  .option("--system", "Clean entire Docker system (all unused containers, images, volumes, cache)")
-  .action(async (options) => {
-    if (!(await checkDocker())) {
-      console.log(ERR_DOCKER_NOT_RUNNING);
-      process.exit(1);
-    }
-
-    if (options.system) {
-      await pruneSystem();
-      return;
-    }
+    const isDeep = !!options.deep;
 
     if (!options.force) {
       const { confirm } = await import("@inquirer/prompts");
-      console.log(chalk.yellow("This will remove ALL ccbox resources:"));
-      console.log("  - All ccbox containers (running + stopped)");
-      console.log("  - All ccbox images (stacks + project images)");
-      console.log("  - Temporary build files (/tmp/ccbox)");
+      if (isDeep) {
+        console.log(chalk.yellow("This will remove ALL ccbox resources:"));
+        console.log("  - All ccbox containers (running + stopped)");
+        console.log("  - All ccbox images (stacks + project images)");
+        console.log("  - Temporary build files (/tmp/ccbox)");
+      } else {
+        console.log(chalk.yellow("This will remove ccbox containers and images."));
+      }
       console.log();
       const confirmed = await confirm({
-        message: "Continue with deep clean?",
+        message: isDeep ? "Continue with deep clean?" : "Remove all ccbox containers and images?",
         default: false,
       });
       if (!confirmed) {
@@ -279,21 +244,21 @@ program
       }
     }
 
-    // 1. Stop and remove ALL ccbox containers (including running ones)
     console.log(chalk.dim("Removing containers..."));
     const containersRemoved = await removeCcboxContainers();
 
-    // 2. Remove ALL ccbox images (stacks + project images)
     console.log(chalk.dim("Removing images..."));
     const imagesRemoved = await removeCcboxImages();
 
-    // 3. Clean up ccbox build directory
-    console.log(chalk.dim("Removing temp files..."));
-    const tmpdirRemoved = cleanTempFiles();
+    let tmpdirRemoved = 0;
+    if (isDeep) {
+      console.log(chalk.dim("Removing temp files..."));
+      tmpdirRemoved = cleanTempFiles();
+    }
 
     // Summary
     console.log();
-    console.log(chalk.green("Deep clean complete"));
+    console.log(chalk.green(isDeep ? "Deep clean complete" : "Cleanup complete"));
     const parts: string[] = [];
     if (containersRemoved) {parts.push(`${containersRemoved} container(s)`);}
     if (imagesRemoved) {parts.push(`${imagesRemoved} image(s)`);}
