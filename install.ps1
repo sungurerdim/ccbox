@@ -17,18 +17,36 @@
 #>
 
 $ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"
 
 # Configuration
 $Repo = "sungurerdim/ccbox"
-# WindowsApps is in PATH by default on Windows 10/11
 $DefaultInstallDir = "$env:LOCALAPPDATA\Microsoft\WindowsApps"
 $InstallDir = if ($env:CCBOX_INSTALL_DIR) { $env:CCBOX_INSTALL_DIR } else { $DefaultInstallDir }
 $Version = $env:CCBOX_VERSION
 
-function Write-Info { param($Message) Write-Host $Message -ForegroundColor Blue }
-function Write-Success { param($Message) Write-Host $Message -ForegroundColor Green }
-function Write-Warn { param($Message) Write-Host $Message -ForegroundColor Yellow }
-function Write-Err { param($Message) Write-Host $Message -ForegroundColor Red }
+# Output helpers
+function Write-Step {
+    param($Label, $Value)
+    Write-Host "  $Label" -ForegroundColor DarkGray -NoNewline
+    Write-Host "  $Value"
+}
+
+function Write-Task {
+    param($Message)
+    Write-Host "  $Message" -NoNewline -ForegroundColor White
+}
+
+function Write-Done {
+    Write-Host " done" -ForegroundColor Green
+}
+
+function Write-Fail {
+    param($Message)
+    Write-Host " failed" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  $Message" -ForegroundColor Red
+}
 
 function Get-LatestVersion {
     $response = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest"
@@ -46,9 +64,6 @@ function Install-Ccbox {
     $wrapperCmdUrl = "https://raw.githubusercontent.com/$Repo/$Ver/scripts/wrapper/ccbox.cmd"
     $wrapperPs1Url = "https://raw.githubusercontent.com/$Repo/$Ver/scripts/wrapper/ccbox.ps1"
 
-    Write-Info "Downloading ccbox $Ver for $Platform..."
-
-    # Create install directory if it doesn't exist
     if (!(Test-Path $InstallDir)) {
         New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     }
@@ -58,28 +73,32 @@ function Install-Ccbox {
     $targetPs1 = Join-Path $InstallDir "ccbox.ps1"
 
     try {
-        # Download binary
-        Write-Info "  Downloading ccbox-bin.exe..."
+        Write-Task "Downloading ccbox-bin.exe ..."
         Invoke-WebRequest -Uri $binaryUrl -OutFile $targetBinary -UseBasicParsing
+        Write-Done
 
-        # Download wrapper .cmd
-        Write-Info "  Downloading ccbox.cmd..."
+        Write-Task "Downloading ccbox.cmd ..."
         Invoke-WebRequest -Uri $wrapperCmdUrl -OutFile $targetCmd -UseBasicParsing
+        Write-Done
 
-        # Download wrapper .ps1
-        Write-Info "  Downloading ccbox.ps1..."
+        Write-Task "Downloading ccbox.ps1 ..."
         Invoke-WebRequest -Uri $wrapperPs1Url -OutFile $targetPs1 -UseBasicParsing
+        Write-Done
     }
     catch {
-        Write-Err "Failed to download ccbox"
-        Write-Err "Binary URL: $binaryUrl"
+        Write-Fail $_.Exception.Message
         throw
     }
 
-    Write-Success "Installed ccbox to $InstallDir"
-    Write-Host "  - ccbox.cmd (launcher)"
-    Write-Host "  - ccbox.ps1 (wrapper)"
-    Write-Host "  - ccbox-bin.exe (binary)"
+    Write-Host ""
+    Write-Host "  Installed to " -NoNewline -ForegroundColor DarkGray
+    Write-Host $InstallDir
+    Write-Host "    ccbox.cmd     " -NoNewline -ForegroundColor Cyan
+    Write-Host "launcher" -ForegroundColor DarkGray
+    Write-Host "    ccbox.ps1     " -NoNewline -ForegroundColor Cyan
+    Write-Host "wrapper" -ForegroundColor DarkGray
+    Write-Host "    ccbox-bin.exe " -NoNewline -ForegroundColor Cyan
+    Write-Host "binary" -ForegroundColor DarkGray
 }
 
 function Test-InPath {
@@ -87,20 +106,16 @@ function Test-InPath {
     $systemPath = [Environment]::GetEnvironmentVariable("PATH", "Machine")
     $fullPath = "$userPath;$systemPath"
 
-    # Check if install directory is in PATH
     if ($fullPath -like "*$InstallDir*") {
         return
     }
 
-    Write-Warn ""
-    Write-Warn "WARNING: $InstallDir is not in your PATH"
-    Write-Warn ""
-    Write-Warn "Add it to your PATH by running this command in PowerShell (as Administrator):"
     Write-Host ""
+    Write-Host "  PATH " -NoNewline -ForegroundColor Yellow
+    Write-Host "$InstallDir is not in your PATH" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  Run as Administrator:" -ForegroundColor DarkGray
     Write-Host "  [Environment]::SetEnvironmentVariable('PATH', `"$InstallDir;`" + [Environment]::GetEnvironmentVariable('PATH', 'User'), 'User')"
-    Write-Host ""
-    Write-Warn "Or add it manually via: Settings > System > About > Advanced system settings > Environment Variables"
-    Write-Host ""
 }
 
 function Test-Docker {
@@ -108,44 +123,48 @@ function Test-Docker {
         $null = Get-Command docker -ErrorAction Stop
     }
     catch {
-        Write-Warn ""
-        Write-Warn "Docker is required but not found."
-        Write-Warn "Install Docker: https://docs.docker.com/get-docker/"
+        Write-Host ""
+        Write-Host "  Docker " -NoNewline -ForegroundColor Yellow
+        Write-Host "not found - install from https://docs.docker.com/get-docker/" -ForegroundColor Yellow
     }
 }
 
 function Main {
+    # Banner
     Write-Host ""
-    Write-Info "ccbox Installer"
+    Write-Host "  ccbox" -ForegroundColor White -NoNewline
+    Write-Host " installer" -ForegroundColor DarkGray
     Write-Host ""
 
     # Detect platform
     $arch = if ([Environment]::Is64BitOperatingSystem) { "x64" } else { "x86" }
     $platform = "windows-$arch"
-    Write-Info "Detected platform: $platform"
 
     # Get version
     if (!$Version) {
-        Write-Info "Fetching latest version..."
         $Version = Get-LatestVersion
     }
-    Write-Info "Version: $Version"
+
+    # Info
+    Write-Step "Platform" $platform
+    Write-Step "Version " $Version
     Write-Host ""
 
     # Install
     Install-Ccbox -Platform $platform -Ver $Version
 
-    # Check PATH and warn if needed
+    # Check PATH
     Test-InPath
 
     # Check Docker
     Test-Docker
 
+    # Footer
     Write-Host ""
-    Write-Success "Installation complete!"
-    Write-Host ""
-    Write-Host "Get started:"
-    Write-Host "  ccbox --help"
+    Write-Host "  Done! " -NoNewline -ForegroundColor Green
+    Write-Host "Run " -NoNewline -ForegroundColor DarkGray
+    Write-Host "ccbox --help" -NoNewline -ForegroundColor White
+    Write-Host " to get started." -ForegroundColor DarkGray
     Write-Host ""
 }
 
