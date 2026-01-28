@@ -50,17 +50,43 @@ Initial public release of ccbox - secure Docker sandbox for Claude Code.
 - **Unattended mode**: `-y/--yes` for automated operation
 - **Progress control**: `--progress` flag for Docker build output
 - **Unrestricted mode**: `-U/--unrestricted` for full system resources
+- **Build cache**: `--cache` flag to use Docker build cache for faster rebuilds
 - **Unified logging**: Logger abstraction with levels (debug, info, warn, error)
 - **Error handling**: Unified error handler with exit code diagnostics and retry logic
+
+### Fixed
+
+- **FUSE buffer overflow**: `transform_to_container_alloc` and `transform_to_host_alloc` allocation
+  now based on actual mapping expansion ratio instead of fixed multipliers
+- **FUSE data integrity**: `ccbox_write` merge path checks `pread` return value; zeroes
+  uninitialized bytes on short reads
+- **FUSE race condition**: Offset writes protected with `flock(LOCK_EX/LOCK_UN)` to prevent
+  concurrent read-modify-write corruption
+- **FUSE path truncation**: `get_source_path` returns `-ENAMETOOLONG` on `snprintf` overflow
+  instead of silently truncating (all ~15 call sites updated)
+- **FUSE utimensat**: Replaced `utimensat(0, ...)` (stdin fd) with `utimensat(AT_FDCWD, ...)`
+- **FUSE .jsonl support**: `needs_transform` now matches `.jsonl` files (session logs)
+- **FUSE mount timeout**: Replaced fixed `sleep 0.5` with poll loop (100ms intervals, 5s timeout)
+- **FUSE comma in paths**: `pathmap`/`dirmap` passed via `CCBOX_PATH_MAP`/`CCBOX_DIR_MAP`
+  environment variables instead of FUSE `-o` options to avoid comma parsing issues
+- **Env var injection**: User-provided `--env` values validated (POSIX key names, newline/null removal)
+- **Symlink traversal**: `validateProjectPath` rejects symlinks via `lstatSync`
+- **N+1 image queries**: `removeCcboxImages` calls `listImages()` once instead of per-image
+- **Build failure cleanup**: `buildProjectImage` removes partial images on failure
+- **Type safety**: `docker.ts` error handling uses `instanceof Error` guard instead of bare cast
+- **Bounds check**: `getDockerDiskUsage` uses safe optional chaining instead of `!` assertions
+- **Dead code**: Removed unused `generateCcboxFuseC()` (~450 lines of embedded C copy)
+- **Unused parameter**: Removed `depsList` from `getDockerRunCmd` options type
 
 ### Security
 
 - Container isolation with project-only mounting
 - `--cap-drop=ALL` drops all Linux capabilities
+- `--cap-add=SYS_ADMIN` for FUSE (replaces `--privileged` on all platforms including Windows)
 - `--security-opt=no-new-privileges` prevents privilege escalation
 - `--pids-limit=2048` protects against fork bombs
 - Tmpfs for temp directories (no disk residue)
-- Path validation prevents directory traversal attacks
+- Path validation prevents directory traversal and symlink attacks
 - Git credentials via environment variables (not mounted files)
 - Non-root container user (ccbox)
 - Read-only FUSE mount for path translation
@@ -74,6 +100,10 @@ Initial public release of ccbox - secure Docker sandbox for Claude Code.
 - Node.js compile cache for faster startups
 - Git optimizations (preloadindex, fscache, commitgraph)
 - Pre-compiled FUSE binaries (amd64/arm64)
+- Directory listing cached for glob-based language detection (single `readdirSync`)
+- Path normalization uses single regex instead of iterative replacement
+- Rebuild `--all` uses single Docker call instead of per-stack `execSync`
+- Tmpfs sizes extracted to named constants (`CONTAINER_CONSTRAINTS.tmpfs`)
 
 ### Technical
 

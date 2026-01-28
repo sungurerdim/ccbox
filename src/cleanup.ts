@@ -108,18 +108,12 @@ export async function removeCcboxImages(): Promise<number> {
     }
   }
 
-  // Remove images and count only successful removals
-  // Check if image exists before counting as removed
+  // Remove images - single listImages call instead of per-image queries
+  const existingImages = new Set(await listImages());
   let removed = 0;
   for (const image of imagesToRemove) {
-    // Check if image actually exists before trying to remove
-    const exists = (await listImages()).includes(image);
-    if (exists && await removeImage(image, true)) {
-      // Verify it was actually removed
-      const stillExists = (await listImages()).includes(image);
-      if (!stillExists) {
-        removed++;
-      }
+    if (existingImages.has(image) && await removeImage(image, true)) {
+      removed++;
     }
   }
 
@@ -152,9 +146,9 @@ export async function getDockerDiskUsage(): Promise<Record<string, string>> {
     if (result.exitCode === 0) {
       for (const line of result.stdout.trim().split("\n")) {
         const parts = line.split("\t");
-        if (parts.length >= 3) {
-          const resourceType = parts[0]!.toLowerCase();
-          const reclaimable = parts[2]!;
+        const resourceType = parts[0]?.toLowerCase();
+        const reclaimable = parts[2];
+        if (parts.length >= 3 && resourceType && reclaimable) {
           if (resourceType.includes("images")) {
             usage.images = reclaimable;
           } else if (resourceType.includes("containers")) {
@@ -168,7 +162,7 @@ export async function getDockerDiskUsage(): Promise<Record<string, string>> {
       }
     }
   } catch {
-    console.log(chalk.dim("Docker disk usage unavailable"));
+    // Non-fatal: disk usage is informational only
   }
 
   return usage;

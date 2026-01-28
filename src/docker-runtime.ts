@@ -13,7 +13,7 @@ import { env } from "node:process";
 import type { Config } from "./config.js";
 import { getClaudeConfigDir, getContainerName, getImageName, LanguageStack } from "./config.js";
 import { DEFAULT_PIDS_LIMIT } from "./constants.js";
-import type { DepsInfo } from "./deps.js";
+
 import { resolveForDocker } from "./paths.js";
 
 // Container constraints (SSOT - used for both docker run and prompt generation)
@@ -21,6 +21,12 @@ const CONTAINER_CONSTRAINTS = {
   pidsLimit: DEFAULT_PIDS_LIMIT,         // from constants.ts
   capDrop: "ALL",                        // Linux capabilities
   ephemeralPaths: ["/tmp", "/var/tmp", "~/.cache"],
+  tmpfs: {
+    tmp: "512m",       // General temp files
+    varTmp: "256m",    // Secondary temp
+    run: "64m",        // Runtime files (PID, sockets)
+    shm: "256m",       // Shared memory
+  },
 } as const;
 
 /** Generate container awareness prompt with current constraints. */
@@ -337,7 +343,7 @@ function addSecurityOptions(cmd: string[]): void {
     "--cap-add=SYS_ADMIN",  // FUSE: mount filesystem in userspace
     `--pids-limit=${pidsLimit}`,
     "--init",
-    "--shm-size=256m",
+    `--shm-size=${CONTAINER_CONSTRAINTS.tmpfs.shm}`,
     "--ulimit",
     "nofile=65535:65535",
     "--memory-swappiness=0"
@@ -350,13 +356,11 @@ function addSecurityOptions(cmd: string[]): void {
  * All temp files go to RAM - zero SSD wear, 15-20x faster.
  */
 function addTmpfsMounts(cmd: string[]): void {
+  const { tmpfs } = CONTAINER_CONSTRAINTS;
   cmd.push(
-    // General temp files (512MB, no exec for security)
-    "--tmpfs", "/tmp:rw,size=512m,mode=1777,noexec,nosuid,nodev",
-    // Secondary temp (256MB)
-    "--tmpfs", "/var/tmp:rw,size=256m,mode=1777,noexec,nosuid,nodev",
-    // Runtime files - PID files, sockets (exec required)
-    "--tmpfs", "/run:rw,size=64m,mode=755"
+    "--tmpfs", `/tmp:rw,size=${tmpfs.tmp},mode=1777,noexec,nosuid,nodev`,
+    "--tmpfs", `/var/tmp:rw,size=${tmpfs.varTmp},mode=1777,noexec,nosuid,nodev`,
+    "--tmpfs", `/run:rw,size=${tmpfs.run},mode=755`
   );
 }
 
@@ -433,7 +437,6 @@ export function getDockerRunCmd(
     quiet?: boolean;
     appendSystemPrompt?: string;
     projectImage?: string;
-    depsList?: DepsInfo[];
     unrestricted?: boolean;
     envVars?: string[];
   } = {}
@@ -486,29 +489,10 @@ export function getDockerRunCmd(
   // Project mount (always) - mount to host-like path for session compatibility
   cmd.push("-v", `${dockerProjectPath}:${hostProjectPath}:rw`);
 
-  // Session compatibility bridges for cross-environment session sharing
-  // Different environments encode project paths differently in .claude/projects/
+  // Session bridge is handled by FUSE dirmap (directory name translation)
+  // inside the container, no host-side junctions needed.
   const originalPath = resolve(projectPath);
-
-  // WSL session bridge: /mnt/d/... encodes as mnt-d-... vs /d/... as d-...
   const wslMatch = originalPath.match(/^\/mnt\/([a-z])(\/.*)?$/i);
-  if (wslMatch) {
-    cmd.push("-e", `CCBOX_WSL_ORIGINAL_PATH=${originalPath}`);
-  }
-
-  // Windows session bridge: D:\... encodes as D--... vs /d/... as d-...
-  // Native Windows Claude uses backslash paths with drive letter (D:\GitHub\project)
-  // Docker/ccbox uses POSIX paths (/d/GitHub/project)
-  // NOTE: CCBOX_WIN_ORIGINAL_PATH is used for session bridge symlinks only,
-  // NOT for fakepath.so transformation. Bun bypasses glibc (uses direct syscalls),
-  // so LD_PRELOAD-based fakepath.so doesn't work for input functions (lstat, open, etc.)
-  // Session compatibility is handled via symlink bridges in entrypoint instead.
-  const winMatch = dockerProjectPath.match(/^([A-Za-z]):[/\\]/);
-  if (winMatch && platform() === "win32") {
-    // Pass original Windows path for session bridge symlinks (NOT for fakepath.so)
-    // Format: D:/GitHub/project (forward slashes for shell compatibility)
-    cmd.push("-e", `CCBOX_WIN_ORIGINAL_BRIDGE=${dockerProjectPath}`);
-  }
 
   // Claude config mount
   // - Base image: minimal mount (only credentials + settings for vanilla experience)
@@ -527,13 +511,8 @@ export function getDockerRunCmd(
     cmd.push("-v", `${dockerClaudeConfig}:/ccbox/.claude:rw`);
 
     // FUSE device access for kernel-level path transformation
-    // Windows Docker Desktop requires --privileged for /dev/fuse access
-    // Linux/macOS can use --device /dev/fuse with SYS_ADMIN capability
-    if (platform() === "win32") {
-      cmd.push("--privileged");
-    } else {
-      cmd.push("--device", "/dev/fuse");
-    }
+    // All platforms use --device /dev/fuse with SYS_ADMIN capability (added in addSecurityOptions)
+    cmd.push("--device", "/dev/fuse");
   }
 
   // Mount ~/.claude.json for onboarding state (hasCompletedOnboarding flag)
@@ -559,10 +538,8 @@ export function getDockerRunCmd(
   // User mapping
   addUserMapping(cmd);
 
-  // Security options (skip if already privileged)
-  if (platform() !== "win32" || useMinimalMount) {
-    addSecurityOptions(cmd);
-  }
+  // Security options (always applied - no more --privileged)
+  addSecurityOptions(cmd);
   addTmpfsMounts(cmd);
   addLogOptions(cmd);
   addDnsOptions(cmd);
@@ -629,13 +606,37 @@ export function getDockerRunCmd(
     cmd.push("-e", `CCBOX_PATH_MAP=${pathMappings.join(";")}`);
   }
 
+  // Directory name mapping for session bridge (FUSE dirmap)
+  // Claude Code encodes project paths as directory names: [:/\. ] → -
+  // Container sees /d/GitHub/ccbox → encodes as -d-GitHub-ccbox
+  // Native Windows sees D:\GitHub\ccbox → encodes as D--GitHub-ccbox
+  // FUSE translates between these so sessions are shared
+  if (dockerProjectPath !== hostProjectPath) {
+    const encodePath = (p: string): string => p.replace(/[:/\\. ]/g, "-");
+    const containerEncoded = encodePath(hostProjectPath);
+    const nativeEncoded = encodePath(resolve(projectPath));
+    if (containerEncoded !== nativeEncoded) {
+      cmd.push("-e", `CCBOX_DIR_MAP=${containerEncoded}:${nativeEncoded}`);
+    }
+  }
+
   addGitEnv(cmd, config);
 
   // User-provided environment variables (added last to allow overrides)
   if (options.envVars && options.envVars.length > 0) {
     for (const envVar of options.envVars) {
-      if (envVar.includes("=")) {
-        cmd.push("-e", envVar);
+      const eqIdx = envVar.indexOf("=");
+      if (eqIdx > 0) {
+        const key = envVar.slice(0, eqIdx);
+        const value = envVar.slice(eqIdx + 1);
+        // Validate key: only alphanumeric + underscore (POSIX env var names)
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+          continue; // Skip invalid env var names
+        }
+        // Sanitize value: remove newlines and null bytes to prevent injection
+        // eslint-disable-next-line no-control-regex
+        const safeValue = value.replace(/[\r\n\x00]/g, "");
+        cmd.push("-e", `${key}=${safeValue}`);
       }
     }
   }

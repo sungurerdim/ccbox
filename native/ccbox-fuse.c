@@ -18,8 +18,10 @@
 #include <ctype.h>
 #include <limits.h>
 #include <stddef.h>
+#include <sys/file.h>
 
 #define MAX_MAPPINGS 32
+#define MAX_DIR_MAPPINGS 32
 #define MAX_PATH_LEN 4096
 
 typedef struct {
@@ -29,9 +31,18 @@ typedef struct {
     int is_unc, is_wsl;
 } PathMapping;
 
+/* Directory name mapping for session bridge (container encoding <-> native encoding) */
+typedef struct {
+    char *container_name;  /* e.g. -d-GitHub-ccbox (container sees /d/GitHub/ccbox) */
+    char *native_name;     /* e.g. D--GitHub-ccbox (Windows native encoding) */
+    size_t container_len, native_len;
+} DirMapping;
+
 static char *source_dir = NULL;
 static PathMapping mappings[MAX_MAPPINGS];
 static int mapping_count = 0;
+static DirMapping dir_mappings[MAX_DIR_MAPPINGS];
+static int dir_mapping_count = 0;
 
 static char *normalize_path(const char *path) {
     if (!path) return NULL;
@@ -47,18 +58,59 @@ static char *normalize_path(const char *path) {
 static int needs_transform(const char *path) {
     if (!path || mapping_count == 0) return 0;
     const char *dot = strrchr(path, '.');
-    return dot && strcasecmp(dot, ".json") == 0;
+    return dot && (strcasecmp(dot, ".json") == 0 || strcasecmp(dot, ".jsonl") == 0);
 }
 
-static void get_source_path(char *dest, const char *path, size_t destsize) {
-    snprintf(dest, destsize, "%s%s", source_dir, path);
+static int get_source_path(char *dest, const char *path, size_t destsize) {
+    int n;
+    if (dir_mapping_count > 0 && path && path[0] == '/') {
+        /* Check each path segment for container_name -> native_name translation */
+        char translated[MAX_PATH_LEN];
+        size_t ti = 0;
+        const char *p = path;
+
+        while (*p && ti < MAX_PATH_LEN - 1) {
+            if (*p == '/') {
+                translated[ti++] = *p++;
+                /* Check if the segment after '/' matches a container_name */
+                int matched = 0;
+                for (int m = 0; m < dir_mapping_count && !matched; m++) {
+                    size_t clen = dir_mappings[m].container_len;
+                    if (strncmp(p, dir_mappings[m].container_name, clen) == 0 &&
+                        (p[clen] == '/' || p[clen] == '\0')) {
+                        /* Replace container_name with native_name */
+                        size_t nlen = dir_mappings[m].native_len;
+                        if (ti + nlen < MAX_PATH_LEN) {
+                            memcpy(translated + ti, dir_mappings[m].native_name, nlen);
+                            ti += nlen;
+                            p += clen;
+                            matched = 1;
+                        }
+                    }
+                }
+            } else {
+                translated[ti++] = *p++;
+            }
+        }
+        translated[ti] = '\0';
+        n = snprintf(dest, destsize, "%s%s", source_dir, translated);
+    } else {
+        n = snprintf(dest, destsize, "%s%s", source_dir, path);
+    }
+    if (n < 0 || (size_t)n >= destsize) return -ENAMETOOLONG;
+    return 0;
 }
 
 /* Transform Windows paths in JSON content to Linux paths */
 /* Returns new buffer that caller must free, or NULL if no transform needed */
 static char *transform_to_container_alloc(const char *buf, size_t len, size_t *newlen) {
     if (!buf || len == 0 || mapping_count == 0) { *newlen = len; return NULL; }
-    char *work = malloc(len * 2 + 1);
+    /* Allocation based on max expansion ratio of mappings */
+    size_t max_to = 0;
+    for (int m = 0; m < mapping_count; m++)
+        if (mappings[m].to_len > max_to) max_to = mappings[m].to_len;
+    size_t alloc = len * (max_to > 2 ? max_to : 2) + 1;
+    char *work = malloc(alloc);
     if (!work) { *newlen = len; return NULL; }
     size_t wi = 0, i = 0;
     int any_transform = 0;
@@ -111,8 +163,14 @@ static char *transform_to_container_alloc(const char *buf, size_t len, size_t *n
 /* Converts /ccbox/... paths back to C:\\Users\\... format for host filesystem */
 static char *transform_to_host_alloc(const char *buf, size_t len, size_t *newlen) {
     if (!buf || len == 0 || mapping_count == 0) { *newlen = len; return NULL; }
-    /* Allocate extra space for backslash escaping (worst case: each / becomes \\) */
-    char *work = malloc(len * 4 + 1);
+    /* Allocation: each mapping replacement can expand to from_len*2 (backslash-escaped) */
+    size_t max_expand = 0;
+    for (int m = 0; m < mapping_count; m++) {
+        size_t e = mappings[m].from_len * 2;
+        if (e > max_expand) max_expand = e;
+    }
+    size_t alloc = len * 2 + (max_expand + 1) * mapping_count + 1;
+    char *work = malloc(alloc);
     if (!work) { *newlen = len; return NULL; }
     size_t wi = 0, i = 0;
     int any_transform = 0;
@@ -164,14 +222,16 @@ static char *transform_to_host_alloc(const char *buf, size_t len, size_t *newlen
 static int ccbox_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi) {
     (void)fi;
     char fpath[MAX_PATH_LEN];
-    get_source_path(fpath, path, sizeof(fpath));
+    int rc = get_source_path(fpath, path, sizeof(fpath));
+    if (rc) return rc;
     return lstat(fpath, stbuf) == -1 ? -errno : 0;
 }
 
 static int ccbox_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags) {
     (void)offset; (void)fi; (void)flags;
     char fpath[MAX_PATH_LEN];
-    get_source_path(fpath, path, sizeof(fpath));
+    int rc = get_source_path(fpath, path, sizeof(fpath));
+    if (rc) return rc;
     DIR *dp = opendir(fpath);
     if (!dp) return -errno;
     struct dirent *de;
@@ -179,7 +239,15 @@ static int ccbox_readdir(const char *path, void *buf, fuse_fill_dir_t filler, of
         struct stat st = {0};
         st.st_ino = de->d_ino;
         st.st_mode = de->d_type << 12;
-        if (filler(buf, de->d_name, &st, 0, 0)) break;
+        /* Reverse translate: native_name -> container_name for readdir */
+        const char *name = de->d_name;
+        for (int m = 0; m < dir_mapping_count; m++) {
+            if (strcmp(de->d_name, dir_mappings[m].native_name) == 0) {
+                name = dir_mappings[m].container_name;
+                break;
+            }
+        }
+        if (filler(buf, name, &st, 0, 0)) break;
     }
     closedir(dp);
     return 0;
@@ -187,7 +255,8 @@ static int ccbox_readdir(const char *path, void *buf, fuse_fill_dir_t filler, of
 
 static int ccbox_open(const char *path, struct fuse_file_info *fi) {
     char fpath[MAX_PATH_LEN];
-    get_source_path(fpath, path, sizeof(fpath));
+    int rc = get_source_path(fpath, path, sizeof(fpath));
+    if (rc) return rc;
     int fd = open(fpath, fi->flags);
     if (fd == -1) return -errno;
     fi->fh = fd;
@@ -244,19 +313,24 @@ static int ccbox_write(const char *path, const char *buf, size_t size, off_t off
                 return res == -1 ? -errno : (int)size;
             } else {
                 /* Complex case: writing at offset - need to merge with existing content */
+                /* Lock to prevent read-modify-write race */
+                flock(fi->fh, LOCK_EX);
                 struct stat st;
-                if (fstat(fi->fh, &st) == -1) { free(transformed); return -errno; }
+                if (fstat(fi->fh, &st) == -1) { flock(fi->fh, LOCK_UN); free(transformed); return -errno; }
                 size_t filesize = st.st_size;
                 size_t total = (offset + newlen > filesize) ? offset + newlen : filesize;
                 char *merged = malloc(total);
-                if (!merged) { free(transformed); return -ENOMEM; }
+                if (!merged) { flock(fi->fh, LOCK_UN); free(transformed); return -ENOMEM; }
                 /* Read existing content */
-                pread(fi->fh, merged, filesize, 0);
+                ssize_t rd = pread(fi->fh, merged, filesize, 0);
+                if (rd < 0) { flock(fi->fh, LOCK_UN); free(merged); free(transformed); return -errno; }
+                if ((size_t)rd < filesize) memset(merged + rd, 0, filesize - rd);
                 /* Overlay transformed content at offset */
                 memcpy(merged + offset, transformed, newlen);
                 /* Write back */
                 ssize_t res = pwrite(fi->fh, merged, total, 0);
                 if (res >= 0) ftruncate(fi->fh, total);
+                flock(fi->fh, LOCK_UN);
                 free(merged);
                 free(transformed);
                 return res == -1 ? -errno : (int)size;
@@ -270,23 +344,25 @@ static int ccbox_write(const char *path, const char *buf, size_t size, off_t off
 static int ccbox_release(const char *path, struct fuse_file_info *fi) { (void)path; close(fi->fh); return 0; }
 static int ccbox_flush(const char *path, struct fuse_file_info *fi) { (void)path; return close(dup(fi->fh)) == -1 ? -errno : 0; }
 static int ccbox_fsync(const char *path, int isdatasync, struct fuse_file_info *fi) { (void)path; return (isdatasync ? fdatasync(fi->fh) : fsync(fi->fh)) == -1 ? -errno : 0; }
-static int ccbox_statfs(const char *path, struct statvfs *stbuf) { char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return statvfs(fpath, stbuf) == -1 ? -errno : 0; }
-static int ccbox_access(const char *path, int mask) { char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return access(fpath, mask) == -1 ? -errno : 0; }
+static int ccbox_statfs(const char *path, struct statvfs *stbuf) { char fpath[MAX_PATH_LEN]; int rc = get_source_path(fpath, path, sizeof(fpath)); if (rc) return rc; return statvfs(fpath, stbuf) == -1 ? -errno : 0; }
+static int ccbox_access(const char *path, int mask) { char fpath[MAX_PATH_LEN]; int rc = get_source_path(fpath, path, sizeof(fpath)); if (rc) return rc; return access(fpath, mask) == -1 ? -errno : 0; }
 static int ccbox_mkdir(const char *path, mode_t mode) {
     struct fuse_context *ctx = fuse_get_context();
     char fpath[MAX_PATH_LEN];
-    get_source_path(fpath, path, sizeof(fpath));
+    int rc = get_source_path(fpath, path, sizeof(fpath));
+    if (rc) return rc;
     if (mkdir(fpath, mode) == -1) return -errno;
     // Set ownership to calling process (not FUSE daemon)
     chown(fpath, ctx->uid, ctx->gid);
     return 0;
 }
-static int ccbox_unlink(const char *path) { char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return unlink(fpath) == -1 ? -errno : 0; }
-static int ccbox_rmdir(const char *path) { char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return rmdir(fpath) == -1 ? -errno : 0; }
+static int ccbox_unlink(const char *path) { char fpath[MAX_PATH_LEN]; int rc = get_source_path(fpath, path, sizeof(fpath)); if (rc) return rc; return unlink(fpath) == -1 ? -errno : 0; }
+static int ccbox_rmdir(const char *path) { char fpath[MAX_PATH_LEN]; int rc = get_source_path(fpath, path, sizeof(fpath)); if (rc) return rc; return rmdir(fpath) == -1 ? -errno : 0; }
 static int ccbox_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
     struct fuse_context *ctx = fuse_get_context();
     char fpath[MAX_PATH_LEN];
-    get_source_path(fpath, path, sizeof(fpath));
+    int rc = get_source_path(fpath, path, sizeof(fpath));
+    if (rc) return rc;
     int fd = open(fpath, fi->flags, mode);
     if (fd == -1) return -errno;
     fi->fh = fd;
@@ -294,22 +370,23 @@ static int ccbox_create(const char *path, mode_t mode, struct fuse_file_info *fi
     fchown(fd, ctx->uid, ctx->gid);
     return 0;
 }
-static int ccbox_truncate(const char *path, off_t size, struct fuse_file_info *fi) { char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return (fi ? ftruncate(fi->fh, size) : truncate(fpath, size)) == -1 ? -errno : 0; }
-static int ccbox_utimens(const char *path, const struct timespec ts[2], struct fuse_file_info *fi) { (void)fi; char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return utimensat(0, fpath, ts, AT_SYMLINK_NOFOLLOW) == -1 ? -errno : 0; }
-static int ccbox_chmod(const char *path, mode_t mode, struct fuse_file_info *fi) { (void)fi; char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return chmod(fpath, mode) == -1 ? -errno : 0; }
-static int ccbox_chown(const char *path, uid_t uid, gid_t gid, struct fuse_file_info *fi) { (void)fi; char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return lchown(fpath, uid, gid) == -1 ? -errno : 0; }
-static int ccbox_rename(const char *from, const char *to, unsigned int flags) { if (flags) return -EINVAL; char ff[MAX_PATH_LEN], ft[MAX_PATH_LEN]; get_source_path(ff, from, sizeof(ff)); get_source_path(ft, to, sizeof(ft)); return rename(ff, ft) == -1 ? -errno : 0; }
+static int ccbox_truncate(const char *path, off_t size, struct fuse_file_info *fi) { char fpath[MAX_PATH_LEN]; int rc = get_source_path(fpath, path, sizeof(fpath)); if (rc) return rc; return (fi ? ftruncate(fi->fh, size) : truncate(fpath, size)) == -1 ? -errno : 0; }
+static int ccbox_utimens(const char *path, const struct timespec ts[2], struct fuse_file_info *fi) { (void)fi; char fpath[MAX_PATH_LEN]; int rc = get_source_path(fpath, path, sizeof(fpath)); if (rc) return rc; return utimensat(AT_FDCWD, fpath, ts, AT_SYMLINK_NOFOLLOW) == -1 ? -errno : 0; }
+static int ccbox_chmod(const char *path, mode_t mode, struct fuse_file_info *fi) { (void)fi; char fpath[MAX_PATH_LEN]; int rc = get_source_path(fpath, path, sizeof(fpath)); if (rc) return rc; return chmod(fpath, mode) == -1 ? -errno : 0; }
+static int ccbox_chown(const char *path, uid_t uid, gid_t gid, struct fuse_file_info *fi) { (void)fi; char fpath[MAX_PATH_LEN]; int rc = get_source_path(fpath, path, sizeof(fpath)); if (rc) return rc; return lchown(fpath, uid, gid) == -1 ? -errno : 0; }
+static int ccbox_rename(const char *from, const char *to, unsigned int flags) { if (flags) return -EINVAL; char ff[MAX_PATH_LEN], ft[MAX_PATH_LEN]; int rc = get_source_path(ff, from, sizeof(ff)); if (rc) return rc; rc = get_source_path(ft, to, sizeof(ft)); if (rc) return rc; return rename(ff, ft) == -1 ? -errno : 0; }
 static int ccbox_symlink(const char *target, const char *linkpath) {
     struct fuse_context *ctx = fuse_get_context();
     char fpath[MAX_PATH_LEN];
-    get_source_path(fpath, linkpath, sizeof(fpath));
+    int rc = get_source_path(fpath, linkpath, sizeof(fpath));
+    if (rc) return rc;
     if (symlink(target, fpath) == -1) return -errno;
     // Set ownership to calling process (not FUSE daemon)
     lchown(fpath, ctx->uid, ctx->gid);
     return 0;
 }
-static int ccbox_readlink(const char *path, char *buf, size_t size) { char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); ssize_t res = readlink(fpath, buf, size - 1); if (res == -1) return -errno; buf[res] = '\0'; return 0; }
-static int ccbox_link(const char *from, const char *to) { char ff[MAX_PATH_LEN], ft[MAX_PATH_LEN]; get_source_path(ff, from, sizeof(ff)); get_source_path(ft, to, sizeof(ft)); return link(ff, ft) == -1 ? -errno : 0; }
+static int ccbox_readlink(const char *path, char *buf, size_t size) { char fpath[MAX_PATH_LEN]; int rc = get_source_path(fpath, path, sizeof(fpath)); if (rc) return rc; ssize_t res = readlink(fpath, buf, size - 1); if (res == -1) return -errno; buf[res] = '\0'; return 0; }
+static int ccbox_link(const char *from, const char *to) { char ff[MAX_PATH_LEN], ft[MAX_PATH_LEN]; int rc = get_source_path(ff, from, sizeof(ff)); if (rc) return rc; rc = get_source_path(ft, to, sizeof(ft)); if (rc) return rc; return link(ff, ft) == -1 ? -errno : 0; }
 
 static const struct fuse_operations ccbox_oper = {
     .getattr = ccbox_getattr, .readdir = ccbox_readdir, .open = ccbox_open, .read = ccbox_read,
@@ -351,11 +428,38 @@ static void parse_pathmap(const char *pathmap) {
     free(copy);
 }
 
-struct ccbox_config { char *source; char *pathmap; };
+struct ccbox_config { char *source; char *pathmap; char *dirmap; };
+
+static void parse_dirmap(const char *dirmap) {
+    if (!dirmap || !*dirmap) return;
+    char *copy = strdup(dirmap);
+    if (!copy) return;
+    char *saveptr = NULL, *entry = strtok_r(copy, ";", &saveptr);
+    while (entry && dir_mapping_count < MAX_DIR_MAPPINGS) {
+        char *sep = strchr(entry, ':');
+        if (sep) {
+            *sep = '\0';
+            DirMapping *dm = &dir_mappings[dir_mapping_count];
+            dm->container_name = strdup(entry);
+            dm->native_name = strdup(sep + 1);
+            if (dm->container_name && dm->native_name) {
+                dm->container_len = strlen(dm->container_name);
+                dm->native_len = strlen(dm->native_name);
+                dir_mapping_count++;
+            } else {
+                free(dm->container_name);
+                free(dm->native_name);
+            }
+        }
+        entry = strtok_r(NULL, ";", &saveptr);
+    }
+    free(copy);
+}
 
 static struct fuse_opt ccbox_opts[] = {
     {"source=%s", offsetof(struct ccbox_config, source), 0},
     {"pathmap=%s", offsetof(struct ccbox_config, pathmap), 0},
+    {"dirmap=%s", offsetof(struct ccbox_config, dirmap), 0},
     FUSE_OPT_END
 };
 
@@ -367,7 +471,10 @@ int main(int argc, char *argv[]) {
     source_dir = conf.source;
     size_t slen = strlen(source_dir);
     while (slen > 1 && source_dir[slen-1] == '/') source_dir[--slen] = '\0';
-    if (conf.pathmap) parse_pathmap(conf.pathmap);
+    const char *pathmap = conf.pathmap ? conf.pathmap : getenv("CCBOX_PATH_MAP");
+    const char *dirmap = conf.dirmap ? conf.dirmap : getenv("CCBOX_DIR_MAP");
+    if (pathmap) parse_pathmap(pathmap);
+    if (dirmap) parse_dirmap(dirmap);
     fuse_opt_add_arg(&args, "-o");
     fuse_opt_add_arg(&args, "default_permissions");
     if (getuid() == 0) { fuse_opt_add_arg(&args, "-o"); fuse_opt_add_arg(&args, "allow_other"); }

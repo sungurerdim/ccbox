@@ -101,7 +101,6 @@ async function executeContainer(
     quiet?: boolean;
     appendSystemPrompt?: string;
     projectImage?: string;
-    depsList?: DepsInfo[];
     unrestricted?: boolean;
     envVars?: string[];
   } = {}
@@ -115,7 +114,6 @@ async function executeContainer(
     quiet = false,
     appendSystemPrompt,
     projectImage,
-    depsList,
     unrestricted = false,
     envVars,
   } = options;
@@ -132,7 +130,6 @@ async function executeContainer(
     quiet,
     appendSystemPrompt,
     projectImage,
-    depsList,
     unrestricted,
     envVars,
   });
@@ -215,13 +212,9 @@ async function tryRunExistingImage(
     return true;
   }
 
-  // Detect deps for cache mounts (no prompt)
-  const depsList = !options.fresh ? detectDependencies(projectPath) : [];
-
   await executeContainer(config, projectPath, projectName, stack, {
     ...options,
     projectImage,
-    depsList,
   });
   return true;
 }
@@ -247,10 +240,11 @@ async function buildAndRun(
     appendSystemPrompt?: string;
     unrestricted?: boolean;
     progress?: string;
+    cache?: boolean;
     envVars?: string[];
   } = {}
 ): Promise<void> {
-  const { progress = "auto" } = options;
+  const { progress = "auto", cache = false } = options;
 
   log.newline();
   log.blue(`[${projectName}] -> ccbox/${selectedStack}`);
@@ -259,7 +253,7 @@ async function buildAndRun(
   if (!imageExists(LanguageStack.BASE)) {
     log.bold("First-time setup: building base image...");
     try {
-      await buildImage(LanguageStack.BASE, { progress });
+      await buildImage(LanguageStack.BASE, { progress, cache });
     } catch (error) {
       if (error instanceof ImageBuildError) {
         log.error(error.message);
@@ -271,7 +265,7 @@ async function buildAndRun(
 
   // Ensure stack image is ready
   try {
-    await ensureImageReady(selectedStack, false, { progress });
+    await ensureImageReady(selectedStack, false, { progress, cache });
   } catch (error) {
     if (error instanceof ImageBuildError) {
       log.error(error.message);
@@ -288,7 +282,7 @@ async function buildAndRun(
       selectedStack,
       depsList,
       resolvedDepsMode,
-      { progress }
+      { progress, cache }
     )) ?? undefined;
     if (!builtProjectImage) {
       log.warn("Failed to build project image, continuing without deps");
@@ -303,7 +297,6 @@ async function buildAndRun(
   await executeContainer(config, projectPath, projectName, selectedStack, {
     ...options,
     projectImage: builtProjectImage,
-    depsList: resolvedDepsMode !== "skip" ? depsList : undefined,
   });
 }
 
@@ -328,6 +321,7 @@ export async function run(
     unrestricted?: boolean;
     verbose?: boolean;
     progress?: string;
+    cache?: boolean;
     envVars?: string[];
     timeout?: number;
     buildTimeout?: number;
@@ -347,6 +341,7 @@ export async function run(
     unrestricted = false,
     verbose = false,
     progress = "auto",
+    cache = false,
     envVars,
     timeout: _timeout,
     buildTimeout: _buildTimeout,
@@ -455,6 +450,7 @@ export async function run(
     appendSystemPrompt,
     unrestricted,
     progress,
+    cache,
     envVars,
   });
 }
