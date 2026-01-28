@@ -261,9 +261,14 @@ fi
 # ══════════════════════════════════════════════════════════════════════════════
 
 # Claude Code path encoding function
-# Matches Claude's exact encoding: replace : / \ . and space with -, remove leading -
+# Matches Claude's exact encoding: replace : / \ . and space with -
+# IMPORTANT: Leading - is PRESERVED (from leading /)
+# Examples:
+#   /d/GitHub/project    -> -d-GitHub-project
+#   D:/GitHub/project    -> D--GitHub-project
+#   /mnt/d/GitHub/project -> -mnt-d-GitHub-project
 _encode_path() {
-    echo "$1" | tr ':./\\ ' '-----' | sed 's/^-//'
+    echo "$1" | tr ':./\\ ' '-----'
 }
 
 # Helper function to create bidirectional symlinks for session directories
