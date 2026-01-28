@@ -58,9 +58,6 @@ native/*.o
 *.msi
 ccbox
 
-# Allow wrapper scripts
-!scripts/wrapper/ccbox.cmd
-
 # Windows artifacts
 nul
 *.lnk

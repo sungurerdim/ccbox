@@ -73,9 +73,9 @@ jobs:
         run: |
           VERSION="${{ github.ref_name }}"
           if [[ "${{ matrix.platform }}" == windows-* ]]; then
-            echo "name=ccbox-bin-${VERSION}-${{ matrix.platform }}.exe" >> $GITHUB_OUTPUT
+            echo "name=ccbox-${VERSION}-${{ matrix.platform }}.exe" >> $GITHUB_OUTPUT
           else
-            echo "name=ccbox-bin-${VERSION}-${{ matrix.platform }}" >> $GITHUB_OUTPUT
+            echo "name=ccbox-${VERSION}-${{ matrix.platform }}" >> $GITHUB_OUTPUT
           fi
 
       - name: Build binary
@@ -89,25 +89,17 @@ jobs:
           name: ${{ steps.artifact.outputs.name }}
           path: dist/${{ steps.artifact.outputs.name }}
 
-  # Create GitHub Release with all binaries and wrapper scripts
+  # Create GitHub Release with all binaries
   release:
     needs: build
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
-
-      - name: Copy wrapper scripts to dist
-        run: |
-          cp scripts/wrapper/ccbox.sh dist/
-          cp scripts/wrapper/ccbox.cmd dist/
 
       - name: List artifacts
         run: ls -la dist/

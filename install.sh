@@ -68,46 +68,28 @@ install_ccbox() {
     local platform="$1"
     local version="$2"
 
-    local binary_name="ccbox-bin-${version}-${platform}"
+    local binary_name="ccbox-${version}-${platform}"
     local binary_url="https://github.com/${REPO}/releases/download/${version}/${binary_name}"
-    local wrapper_url="https://raw.githubusercontent.com/${REPO}/${version}/scripts/wrapper/ccbox.sh"
 
-    local tmp_binary tmp_wrapper
-    tmp_binary=$(mktemp)
-    tmp_wrapper=$(mktemp)
-    trap 'rm -f "$tmp_binary" "$tmp_wrapper"' EXIT
+    local tmp_file
+    tmp_file=$(mktemp)
+    trap 'rm -f "$tmp_file"' EXIT
 
-    # Download binary
-    task "Downloading ccbox-bin"
-    if curl -fsSL "$binary_url" -o "$tmp_binary"; then
+    task "Downloading ccbox"
+    if curl -fsSL "$binary_url" -o "$tmp_file"; then
         done_
     else
         fail_ "URL: $binary_url"
         exit 1
     fi
 
-    # Download wrapper
-    task "Downloading ccbox wrapper"
-    if curl -fsSL "$wrapper_url" -o "$tmp_wrapper"; then
-        done_
-    else
-        fail_ "URL: $wrapper_url"
-        exit 1
-    fi
-
-    # Install
     mkdir -p "$INSTALL_DIR"
-
-    mv "$tmp_binary" "$INSTALL_DIR/ccbox-bin"
-    chmod +x "$INSTALL_DIR/ccbox-bin"
-
-    mv "$tmp_wrapper" "$INSTALL_DIR/ccbox"
+    mv "$tmp_file" "$INSTALL_DIR/ccbox"
     chmod +x "$INSTALL_DIR/ccbox"
 
     echo ""
     echo -e "  ${DIM}Installed to${NC}  $INSTALL_DIR"
-    echo -e "    ${CYAN}ccbox${NC}      ${DIM}wrapper${NC}"
-    echo -e "    ${CYAN}ccbox-bin${NC}  ${DIM}binary${NC}"
+    echo -e "    ${CYAN}ccbox${NC}  ${DIM}$(du -h "$INSTALL_DIR/ccbox" 2>/dev/null | cut -f1 || echo "binary")${NC}"
 }
 
 # Check if install directory is in PATH and add if not
@@ -163,16 +145,13 @@ check_docker() {
 
 # Main
 main() {
-    # Banner
     echo ""
     echo -e "  ${BOLD}ccbox${NC} ${DIM}installer${NC}"
     echo ""
 
-    # Detect platform
     local platform
     platform=$(detect_platform)
 
-    # Get version
     local version
     if [[ -n "$VERSION" ]]; then
         version="$VERSION"
@@ -180,21 +159,14 @@ main() {
         version=$(get_latest_version)
     fi
 
-    # Info
     step "Platform" "$platform"
     step "Version " "$version"
     echo ""
 
-    # Install
     install_ccbox "$platform" "$version"
-
-    # Check PATH
     check_path
-
-    # Check Docker
     check_docker
 
-    # Footer
     echo ""
     echo -e "  ${GREEN}Done!${NC} ${DIM}Run${NC} ccbox --help ${DIM}to get started.${NC}"
     echo ""

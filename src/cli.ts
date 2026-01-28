@@ -19,6 +19,7 @@ import {
   removeCcboxImages,
   cleanTempFiles,
 } from "./cleanup.js";
+import { selfUpdate, selfUninstall, showVersion } from "./upgrade.js";
 
 /**
  * Validate and normalize prompt parameter.
@@ -298,6 +299,33 @@ program
     console.log();
     console.log(chalk.dim("Usage: ccbox --stack=go"));
     console.log(chalk.dim("Filter categories: core, combined, usecase"));
+  });
+
+// Update command (self-update binary)
+program
+  .command("update")
+  .description("Update ccbox to the latest version")
+  .option("-f, --force", "Skip confirmation")
+  .action(async (options) => {
+    await selfUpdate(!!options.force);
+  });
+
+// Uninstall command
+program
+  .command("uninstall")
+  .description("Remove ccbox from this system")
+  .option("-f, --force", "Skip confirmation")
+  .action(async (options) => {
+    await selfUninstall(!!options.force);
+  });
+
+// Version command
+program
+  .command("version")
+  .description("Show version and check for updates")
+  .option("-c, --check", "Check for updates")
+  .action(async (options) => {
+    await showVersion(!!options.check);
   });
 
 // Parse and run (async for proper error handling in async actions)
