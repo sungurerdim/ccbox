@@ -65,26 +65,35 @@ get_latest_version() {
     echo "$latest"
 }
 
-# Download and install binary
+# Download and install ccbox
 install_ccbox() {
     local platform="$1"
     local version="$2"
-    local download_url binary_name tmp_file
+    local binary_url wrapper_url binary_name tmp_binary tmp_wrapper
 
-    # Construct download URL
-    binary_name="ccbox-${version}-${platform}"
-    download_url="https://github.com/${REPO}/releases/download/${version}/${binary_name}"
+    # Construct download URLs
+    binary_name="ccbox-bin-${version}-${platform}"
+    binary_url="https://github.com/${REPO}/releases/download/${version}/${binary_name}"
+    wrapper_url="https://raw.githubusercontent.com/${REPO}/${version}/scripts/wrapper/ccbox.sh"
 
     info "Downloading ccbox ${version} for ${platform}..."
 
-    # Create temp file
-    tmp_file=$(mktemp)
-    trap 'rm -f "$tmp_file"' EXIT
+    # Create temp files
+    tmp_binary=$(mktemp)
+    tmp_wrapper=$(mktemp)
+    trap 'rm -f "$tmp_binary" "$tmp_wrapper"' EXIT
 
-    # Download
-    if ! curl -fsSL "$download_url" -o "$tmp_file"; then
-        error "Failed to download ccbox"
-        error "URL: $download_url"
+    # Download binary
+    if ! curl -fsSL "$binary_url" -o "$tmp_binary"; then
+        error "Failed to download ccbox-bin"
+        error "URL: $binary_url"
+        exit 1
+    fi
+
+    # Download wrapper
+    if ! curl -fsSL "$wrapper_url" -o "$tmp_wrapper"; then
+        error "Failed to download wrapper script"
+        error "URL: $wrapper_url"
         exit 1
     fi
 
@@ -92,11 +101,18 @@ install_ccbox() {
     mkdir -p "$INSTALL_DIR"
 
     # Install binary
-    local target="$INSTALL_DIR/ccbox"
-    mv "$tmp_file" "$target"
-    chmod +x "$target"
+    local target_binary="$INSTALL_DIR/ccbox-bin"
+    mv "$tmp_binary" "$target_binary"
+    chmod +x "$target_binary"
 
-    success "Installed ccbox to $target"
+    # Install wrapper
+    local target_wrapper="$INSTALL_DIR/ccbox"
+    mv "$tmp_wrapper" "$target_wrapper"
+    chmod +x "$target_wrapper"
+
+    success "Installed ccbox to $INSTALL_DIR"
+    echo "  - ccbox (wrapper)"
+    echo "  - ccbox-bin (binary)"
 }
 
 # Check if install directory is in PATH and add if not

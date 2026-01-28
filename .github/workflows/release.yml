@@ -16,19 +16,19 @@ jobs:
         include:
           - os: ubuntu-latest
             target: bun-linux-x64
-            artifact: ccbox-linux-x64
+            platform: linux-x64
           - os: ubuntu-latest
             target: bun-linux-arm64
-            artifact: ccbox-linux-arm64
+            platform: linux-arm64
           - os: macos-latest
             target: bun-darwin-x64
-            artifact: ccbox-darwin-x64
+            platform: darwin-x64
           - os: macos-latest
             target: bun-darwin-arm64
-            artifact: ccbox-darwin-arm64
+            platform: darwin-arm64
           - os: windows-latest
             target: bun-windows-x64
-            artifact: ccbox-windows-x64.exe
+            platform: windows-x64
 
     runs-on: ${{ matrix.os }}
 
@@ -47,18 +47,29 @@ jobs:
       - name: Type check
         run: bun run typecheck
 
+      - name: Set artifact name
+        id: artifact
+        shell: bash
+        run: |
+          VERSION="${{ github.ref_name }}"
+          if [[ "${{ matrix.platform }}" == windows-* ]]; then
+            echo "name=ccbox-bin-${VERSION}-${{ matrix.platform }}.exe" >> $GITHUB_OUTPUT
+          else
+            echo "name=ccbox-bin-${VERSION}-${{ matrix.platform }}" >> $GITHUB_OUTPUT
+          fi
+
       - name: Build binary
         run: |
           mkdir -p dist
-          bun build src/cli.ts --compile --target ${{ matrix.target }} --outfile dist/${{ matrix.artifact }} --minify
+          bun build src/cli.ts --compile --target ${{ matrix.target }} --outfile dist/${{ steps.artifact.outputs.name }} --minify
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: dist/${{ matrix.artifact }}
+          name: ${{ steps.artifact.outputs.name }}
+          path: dist/${{ steps.artifact.outputs.name }}
 
-  # Create GitHub Release with all binaries
+  # Create GitHub Release with all binaries and wrapper scripts
   release:
     needs: build
     runs-on: ubuntu-latest
@@ -72,6 +83,12 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+
+      - name: Copy wrapper scripts to dist
+        run: |
+          cp scripts/wrapper/ccbox.sh dist/
+          cp scripts/wrapper/ccbox.cmd dist/
+          cp scripts/wrapper/ccbox.ps1 dist/
 
       - name: List artifacts
         run: ls -la dist/
