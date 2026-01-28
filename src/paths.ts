@@ -10,7 +10,7 @@
  *   It should NOT import from: cli, generator
  */
 
-import { existsSync, statSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, statSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { platform, env } from "node:process";
@@ -78,13 +78,8 @@ export function isWsl(): boolean {
  * @returns Normalized path with single forward slashes.
  */
 function normalizePathSeparators(pathStr: string): string {
-  // Convert backslashes to forward slashes
-  let normalized = pathStr.replace(/\\/g, "/");
-
-  // Remove all duplicate slashes
-  while (normalized.includes("//")) {
-    normalized = normalized.replace(/\/\//g, "/");
-  }
+  // Convert backslashes to forward slashes and collapse duplicate slashes
+  let normalized = pathStr.replace(/\\/g, "/").replace(/\/{2,}/g, "/");
 
   // Remove trailing slash (unless it's root)
   if (normalized.length > 1) {
@@ -296,7 +291,13 @@ export function validateProjectPath(path: string): string {
     throw new PathError(`Project path does not exist: ${projectPath}`);
   }
 
-  const stats = statSync(projectPath);
+  const stats = lstatSync(projectPath);
+
+  // Security: reject symlinks to prevent symlink-based path traversal
+  if (stats.isSymbolicLink()) {
+    throw new PathError(`Project path cannot be a symlink: ${projectPath}`);
+  }
+
   if (!stats.isDirectory()) {
     throw new PathError(`Project path must be a directory: ${projectPath}`);
   }
@@ -571,3 +572,4 @@ export function sanitizeForDocker(name: string, maxLength = 50): string {
 
   return safe || "project";
 }
+

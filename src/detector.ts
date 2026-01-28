@@ -58,6 +58,22 @@ function matchesPattern(filename: string, pattern: string): boolean {
   return filename === pattern;
 }
 
+/** Cached directory listing for glob patterns (avoids repeated readdirSync) */
+let _dirCacheKey = "";
+let _dirCacheFiles: string[] = [];
+
+function getDirFiles(directory: string): string[] {
+  if (_dirCacheKey === directory) { return _dirCacheFiles; }
+  try {
+    const entries = readdirSync(directory, { withFileTypes: true });
+    _dirCacheFiles = entries.filter((f) => f.isFile()).map((f) => f.name);
+  } catch {
+    _dirCacheFiles = [];
+  }
+  _dirCacheKey = directory;
+  return _dirCacheFiles;
+}
+
 /** Check if directory contains files matching the pattern */
 function hasMatchingFile(directory: string, pattern: string): boolean {
   // Exact match - fast path
@@ -65,13 +81,8 @@ function hasMatchingFile(directory: string, pattern: string): boolean {
     return existsSync(join(directory, pattern));
   }
 
-  // Glob pattern - need to scan directory
-  try {
-    const files = readdirSync(directory, { withFileTypes: true });
-    return files.some((f) => f.isFile() && matchesPattern(f.name, pattern));
-  } catch {
-    return false;
-  }
+  // Glob pattern - use cached directory listing
+  return getDirFiles(directory).some((name) => matchesPattern(name, pattern));
 }
 
 /** Check package.json for packageManager field */

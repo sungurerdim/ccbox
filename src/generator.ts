@@ -200,17 +200,31 @@ _setup_fuse_overlay() {
     fi
 
     # Build FUSE options
+    # pathmap/dirmap passed via env vars (CCBOX_PATH_MAP, CCBOX_DIR_MAP) to avoid
+    # FUSE -o comma parsing issues when paths contain commas
     local fuse_opts="source=$tmp_source,allow_other"
     [[ -n "$CCBOX_UID" ]] && fuse_opts="$fuse_opts,uid=$CCBOX_UID"
     [[ -n "$CCBOX_GID" ]] && fuse_opts="$fuse_opts,gid=$CCBOX_GID"
-    [[ -n "$CCBOX_PATH_MAP" ]] && fuse_opts="$fuse_opts,pathmap=$CCBOX_PATH_MAP"
 
     _log_verbose "FUSE ($label): $tmp_source -> $mount_point (in-place overlay)"
 
     # Mount FUSE over original path (in-place overlay)
     nohup /usr/local/bin/ccbox-fuse -f -o "$fuse_opts" "$mount_point" </dev/null >/dev/null 2>&1 &
     local fuse_pid=$!
-    sleep 0.5  # Wait for FUSE to initialize
+
+    # Poll for FUSE mount readiness instead of fixed sleep
+    local waited=0
+    while ! mountpoint -q "$mount_point" 2>/dev/null; do
+        sleep 0.1
+        waited=$((waited + 1))
+        if [[ $waited -ge 50 ]]; then
+            _log "FUSE mount timeout: $label"
+            kill $fuse_pid 2>/dev/null || true
+            umount "$tmp_source" 2>/dev/null || true
+            rmdir "$tmp_source" 2>/dev/null
+            return 1
+        fi
+    done
 
     # Verify mount
     if mountpoint -q "$mount_point" 2>/dev/null; then
@@ -259,78 +273,6 @@ else
     fi
 fi
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Session Compatibility Bridges
-# Different environments encode project paths differently in .claude/projects/
-# Create symlinks between encodings so sessions are visible across environments
-# ══════════════════════════════════════════════════════════════════════════════
-
-# Claude Code path encoding function
-# Matches Claude's exact encoding: replace : / \\ . and space with -
-# IMPORTANT: Leading - is PRESERVED (from leading /)
-# Examples:
-#   /d/GitHub/project    -> -d-GitHub-project
-#   D:/GitHub/project    -> D--GitHub-project
-#   /mnt/d/GitHub/project -> -mnt-d-GitHub-project
-_encode_path() {
-    echo "$1" | tr ':./\\ ' '-----'
-}
-
-# Create session bridge symlinks between path encodings
-# Proactive: creates symlinks even if directories don't exist yet.
-# When Claude Code creates the directory, the symlink resolves automatically.
-_create_session_bridge() {
-    local source_encoded="$1"
-    local target_encoded="$2"
-    local bridge_name="$3"
-
-    if [[ "$source_encoded" == "$target_encoded" ]]; then
-        return 0
-    fi
-
-    _log_verbose "$bridge_name encoding: $source_encoded"
-    _log_verbose "Target encoding: $target_encoded"
-
-    for _subdir in projects file-history todos shell-snapshots; do
-        _base_dir="/ccbox/.claude/$_subdir"
-        mkdir -p "$_base_dir"
-
-        if [[ -d "$_base_dir/$source_encoded" ]]; then
-            # Source dir exists (e.g. native client created it) -> point target to source
-            if [[ ! -e "$_base_dir/$target_encoded" ]]; then
-                ln -s "$source_encoded" "$_base_dir/$target_encoded" 2>/dev/null || true
-                _log "$bridge_name bridge: $_subdir/$target_encoded -> $source_encoded"
-            fi
-        else
-            # Source dir doesn't exist -> point source to target (proactive)
-            # Claude Code will create target_encoded (from $PWD), source symlink resolves to it
-            if [[ ! -e "$_base_dir/$source_encoded" ]]; then
-                ln -s "$target_encoded" "$_base_dir/$source_encoded" 2>/dev/null || true
-                _log "$bridge_name bridge: $_subdir/$source_encoded -> $target_encoded"
-            fi
-        fi
-    done
-}
-
-# WSL bridge: /mnt/d/... encodes as mnt-d-... vs /d/... as d-...
-if [[ -n "$CCBOX_WSL_ORIGINAL_PATH" && -d "/ccbox/.claude" ]]; then
-    _log_verbose "Setting up WSL session bridge..."
-    _wsl_encoded=$(_encode_path "$CCBOX_WSL_ORIGINAL_PATH")
-    _target_encoded=$(_encode_path "$PWD")
-    _create_session_bridge "$_wsl_encoded" "$_target_encoded" "WSL"
-fi
-
-# Windows bridge: D:/... encodes as D--... vs /d/... as d-...
-# Native Windows Claude uses: D:/GitHub/project -> D--GitHub-project
-# ccbox/Docker uses: /d/GitHub/project -> d-GitHub-project
-# NOTE: Uses CCBOX_WIN_ORIGINAL_BRIDGE (not PATH) to avoid fakepath.so picking it up
-# fakepath.so doesn't work with Bun (bypasses glibc), so we only use symlink bridges
-if [[ -n "$CCBOX_WIN_ORIGINAL_BRIDGE" && -d "/ccbox/.claude" ]]; then
-    _log_verbose "Setting up Windows session bridge..."
-    _win_encoded=$(_encode_path "$CCBOX_WIN_ORIGINAL_BRIDGE")
-    _target_encoded=$(_encode_path "$PWD")
-    _create_session_bridge "$_win_encoded" "$_target_encoded" "Windows"
-fi
 
 # Git performance optimizations (I/O reduction)
 # Use --system for settings that must apply to all users (root runs this, ccbox runs claude)
@@ -403,18 +345,10 @@ fi
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Path Translation via LD_PRELOAD (fakepath.so) - DISABLED
-# NOTE: fakepath.so doesn't work with Bun runtime because Bun bypasses glibc
-# using direct syscalls (io_uring on Linux). LD_PRELOAD only intercepts glibc
-# functions, not kernel syscalls.
-#
-# Session compatibility is now handled via symlink bridges instead.
-# The CCBOX_WIN_ORIGINAL_BRIDGE variable is used for symlink creation only,
-# not for fakepath.so transformation.
-#
-# Keeping fakepath.so in the image for potential future use with non-Bun tools.
+# fakepath.so doesn't work with Bun (bypasses glibc via direct syscalls).
+# Session compatibility is handled host-side via NTFS junctions (paths.ts).
 # ══════════════════════════════════════════════════════════════════════════════
 FAKEPATH_PRELOAD=""
-# fakepath.so disabled - Bun bypasses glibc, symlink bridges handle session compat
 
 # Run Claude Code
 if [[ -t 1 ]]; then
@@ -427,392 +361,6 @@ fi
 }
 
 
-/**
- * Generate ccbox-fuse.c content for FUSE filesystem.
- * This is embedded for compiled binary compatibility.
- * FUSE provides kernel-level path transformation that works with direct syscalls (Bun/Zig).
- * @internal Reserved for future use when running from compiled binary
- */
-export function generateCcboxFuseC(): string {
-  return `/**
- * ccbox-fuse: FUSE filesystem for transparent cross-platform path mapping
- * Provides kernel-level path transformation that works with io_uring and direct syscalls
- * This is REQUIRED for Bun-based Claude Code which bypasses glibc
- * Compile: gcc -Wall -O2 -o ccbox-fuse ccbox-fuse.c $(pkg-config fuse3 --cflags --libs)
- */
-#define FUSE_USE_VERSION 31
-#include <fuse3/fuse.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <sys/statvfs.h>
-#include <dirent.h>
-#include <errno.h>
-#include <ctype.h>
-#include <limits.h>
-#include <stddef.h>
-
-#define MAX_MAPPINGS 32
-#define MAX_PATH_LEN 4096
-
-typedef struct {
-    char *from, *to;
-    size_t from_len, to_len;
-    char drive;
-    int is_unc, is_wsl;
-} PathMapping;
-
-static char *source_dir = NULL;
-static PathMapping mappings[MAX_MAPPINGS];
-static int mapping_count = 0;
-
-static char *normalize_path(const char *path) {
-    if (!path) return NULL;
-    char *norm = strdup(path);
-    if (!norm) return NULL;
-    for (char *p = norm; *p; p++) if (*p == '\\\\') *p = '/';
-    if (norm[0] && norm[1] == ':') norm[0] = tolower(norm[0]);
-    size_t len = strlen(norm);
-    while (len > 1 && norm[len-1] == '/') norm[--len] = '\\0';
-    return norm;
-}
-
-static int needs_transform(const char *path) {
-    if (!path || mapping_count == 0) return 0;
-    const char *dot = strrchr(path, '.');
-    return dot && strcasecmp(dot, ".json") == 0;
-}
-
-static void get_source_path(char *dest, const char *path, size_t destsize) {
-    snprintf(dest, destsize, "%s%s", source_dir, path);
-}
-
-/* Transform Windows paths in JSON content to Linux paths */
-/* Returns new buffer that caller must free, or NULL if no transform needed */
-static char *transform_to_container_alloc(const char *buf, size_t len, size_t *newlen) {
-    if (!buf || len == 0 || mapping_count == 0) { *newlen = len; return NULL; }
-    char *work = malloc(len * 2 + 1);
-    if (!work) { *newlen = len; return NULL; }
-    size_t wi = 0, i = 0;
-    int any_transform = 0;
-    while (i < len && buf[i]) {
-        int matched = 0;
-        /* Check for drive letter pattern like C: or D: */
-        if (i + 2 < len && isalpha(buf[i]) && buf[i+1] == ':') {
-            char drive = tolower(buf[i]);
-            for (int m = 0; m < mapping_count && !matched; m++) {
-                if (mappings[m].drive == drive) {
-                    /* Extract the full path after drive letter for comparison */
-                    char pathbuf[MAX_PATH_LEN];
-                    size_t pi = 0, ti = i + 2;
-                    while (ti < len && buf[ti] != '"' && buf[ti] != ',' && buf[ti] != '}' && pi < MAX_PATH_LEN - 1) {
-                        if (buf[ti] == '\\\\') { pathbuf[pi++] = '/'; ti++; if (ti < len && buf[ti] == '\\\\') ti++; }
-                        else pathbuf[pi++] = buf[ti++];
-                    }
-                    pathbuf[pi] = '\\0';
-
-                    /* Check if path starts with the mapped from-path (after drive letter) */
-                    /* from is like "c:/Users/Sungur/.claude", so skip first 2 chars (c:) */
-                    const char *from_path = mappings[m].from + 2;
-                    size_t from_path_len = mappings[m].from_len - 2;
-
-                    if (strncmp(pathbuf, from_path, from_path_len) == 0) {
-                        /* Full prefix match - replace with to path */
-                        memcpy(work + wi, mappings[m].to, mappings[m].to_len);
-                        wi += mappings[m].to_len;
-                        /* Copy remainder after the matched prefix */
-                        const char *remainder = pathbuf + from_path_len;
-                        size_t rem_len = strlen(remainder);
-                        memcpy(work + wi, remainder, rem_len);
-                        wi += rem_len;
-                        i = ti;
-                        matched = 1;
-                        any_transform = 1;
-                    }
-                }
-            }
-        }
-        if (!matched) work[wi++] = buf[i++];
-    }
-    work[wi] = '\\0';
-    if (!any_transform) { free(work); *newlen = len; return NULL; }
-    *newlen = wi;
-    return work;
-}
-
-/* Transform Linux paths in JSON content to Windows paths (reverse transform for writes) */
-/* Converts /ccbox/... paths back to C:\\\\Users\\\\... format for host filesystem */
-static char *transform_to_host_alloc(const char *buf, size_t len, size_t *newlen) {
-    if (!buf || len == 0 || mapping_count == 0) { *newlen = len; return NULL; }
-    /* Allocate extra space for backslash escaping (worst case: each / becomes \\\\) */
-    char *work = malloc(len * 4 + 1);
-    if (!work) { *newlen = len; return NULL; }
-    size_t wi = 0, i = 0;
-    int any_transform = 0;
-
-    while (i < len) {
-        int matched = 0;
-        /* Check for Linux path that matches a mapping's "to" path */
-        for (int m = 0; m < mapping_count && !matched; m++) {
-            size_t to_len = mappings[m].to_len;
-            if (i + to_len <= len && strncmp(buf + i, mappings[m].to, to_len) == 0) {
-                /* Check it's a proper path boundary */
-                char next = (i + to_len < len) ? buf[i + to_len] : '\\0';
-                if (next == '\\0' || next == '/' || next == '"' || next == ',' || next == '}' || next == ']') {
-                    /* Write the Windows path with JSON-escaped backslashes */
-                    const char *from = mappings[m].from;
-                    for (size_t j = 0; j < mappings[m].from_len; j++) {
-                        if (from[j] == '/') {
-                            work[wi++] = '\\\\';
-                            work[wi++] = '\\\\';
-                        } else {
-                            work[wi++] = from[j];
-                        }
-                    }
-                    i += to_len;
-                    matched = 1;
-                    any_transform = 1;
-
-                    /* Copy remainder path with JSON-escaped backslashes */
-                    while (i < len && buf[i] != '"' && buf[i] != ',' && buf[i] != '}' && buf[i] != ']' && !isspace(buf[i])) {
-                        if (buf[i] == '/') {
-                            work[wi++] = '\\\\';
-                            work[wi++] = '\\\\';
-                        } else {
-                            work[wi++] = buf[i];
-                        }
-                        i++;
-                    }
-                }
-            }
-        }
-        if (!matched) work[wi++] = buf[i++];
-    }
-    work[wi] = '\\0';
-    if (!any_transform) { free(work); *newlen = len; return NULL; }
-    *newlen = wi;
-    return work;
-}
-
-static int ccbox_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi) {
-    (void)fi;
-    char fpath[MAX_PATH_LEN];
-    get_source_path(fpath, path, sizeof(fpath));
-    return lstat(fpath, stbuf) == -1 ? -errno : 0;
-}
-
-static int ccbox_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags) {
-    (void)offset; (void)fi; (void)flags;
-    char fpath[MAX_PATH_LEN];
-    get_source_path(fpath, path, sizeof(fpath));
-    DIR *dp = opendir(fpath);
-    if (!dp) return -errno;
-    struct dirent *de;
-    while ((de = readdir(dp))) {
-        struct stat st = {0};
-        st.st_ino = de->d_ino;
-        st.st_mode = de->d_type << 12;
-        if (filler(buf, de->d_name, &st, 0, 0)) break;
-    }
-    closedir(dp);
-    return 0;
-}
-
-static int ccbox_open(const char *path, struct fuse_file_info *fi) {
-    char fpath[MAX_PATH_LEN];
-    get_source_path(fpath, path, sizeof(fpath));
-    int fd = open(fpath, fi->flags);
-    if (fd == -1) return -errno;
-    fi->fh = fd;
-    return 0;
-}
-
-static int ccbox_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
-    int fd = fi->fh;
-    if (needs_transform(path)) {
-        struct stat st;
-        if (fstat(fd, &st) == -1) return -errno;
-        size_t filesize = st.st_size;
-        if (filesize == 0) return 0;
-        char *filebuf = malloc(filesize + 1);
-        if (!filebuf) return -ENOMEM;
-        ssize_t nread = pread(fd, filebuf, filesize, 0);
-        if (nread == -1) { free(filebuf); return -errno; }
-        filebuf[nread] = '\\0';
-
-        /* Transform paths - may return new buffer if transform happened */
-        size_t newlen;
-        char *transformed = transform_to_container_alloc(filebuf, nread, &newlen);
-        char *result = transformed ? transformed : filebuf;
-
-        if ((size_t)offset >= newlen) {
-            if (transformed) free(transformed);
-            free(filebuf);
-            return 0;
-        }
-        size_t tocopy = newlen - offset;
-        if (tocopy > size) tocopy = size;
-        memcpy(buf, result + offset, tocopy);
-        if (transformed) free(transformed);
-        free(filebuf);
-        return tocopy;
-    }
-    ssize_t res = pread(fd, buf, size, offset);
-    return res == -1 ? -errno : res;
-}
-
-static int ccbox_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
-    if (needs_transform(path)) {
-        /* For JSON files, transform Linux paths back to Windows paths */
-        size_t newlen;
-        char *transformed = transform_to_host_alloc(buf, size, &newlen);
-        if (transformed) {
-            /* Write transformed content - handle offset by reading existing, merging, writing */
-            if (offset == 0) {
-                /* Simple case: writing from beginning */
-                ssize_t res = pwrite(fi->fh, transformed, newlen, 0);
-                /* Truncate file to new size in case new content is shorter */
-                if (res >= 0) ftruncate(fi->fh, newlen);
-                free(transformed);
-                return res == -1 ? -errno : (int)size;
-            } else {
-                /* Complex case: writing at offset - need to merge with existing content */
-                struct stat st;
-                if (fstat(fi->fh, &st) == -1) { free(transformed); return -errno; }
-                size_t filesize = st.st_size;
-                size_t total = (offset + newlen > filesize) ? offset + newlen : filesize;
-                char *merged = malloc(total);
-                if (!merged) { free(transformed); return -ENOMEM; }
-                /* Read existing content */
-                pread(fi->fh, merged, filesize, 0);
-                /* Overlay transformed content at offset */
-                memcpy(merged + offset, transformed, newlen);
-                /* Write back */
-                ssize_t res = pwrite(fi->fh, merged, total, 0);
-                if (res >= 0) ftruncate(fi->fh, total);
-                free(merged);
-                free(transformed);
-                return res == -1 ? -errno : (int)size;
-            }
-        }
-    }
-    ssize_t res = pwrite(fi->fh, buf, size, offset);
-    return res == -1 ? -errno : res;
-}
-
-static int ccbox_release(const char *path, struct fuse_file_info *fi) { (void)path; close(fi->fh); return 0; }
-static int ccbox_flush(const char *path, struct fuse_file_info *fi) { (void)path; return close(dup(fi->fh)) == -1 ? -errno : 0; }
-static int ccbox_fsync(const char *path, int isdatasync, struct fuse_file_info *fi) { (void)path; return (isdatasync ? fdatasync(fi->fh) : fsync(fi->fh)) == -1 ? -errno : 0; }
-static int ccbox_statfs(const char *path, struct statvfs *stbuf) { char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return statvfs(fpath, stbuf) == -1 ? -errno : 0; }
-static int ccbox_access(const char *path, int mask) { char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return access(fpath, mask) == -1 ? -errno : 0; }
-static int ccbox_mkdir(const char *path, mode_t mode) {
-    struct fuse_context *ctx = fuse_get_context();
-    char fpath[MAX_PATH_LEN];
-    get_source_path(fpath, path, sizeof(fpath));
-    if (mkdir(fpath, mode) == -1) return -errno;
-    // Set ownership to calling process (not FUSE daemon)
-    chown(fpath, ctx->uid, ctx->gid);
-    return 0;
-}
-static int ccbox_unlink(const char *path) { char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return unlink(fpath) == -1 ? -errno : 0; }
-static int ccbox_rmdir(const char *path) { char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return rmdir(fpath) == -1 ? -errno : 0; }
-static int ccbox_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
-    struct fuse_context *ctx = fuse_get_context();
-    char fpath[MAX_PATH_LEN];
-    get_source_path(fpath, path, sizeof(fpath));
-    int fd = open(fpath, fi->flags, mode);
-    if (fd == -1) return -errno;
-    fi->fh = fd;
-    // Set ownership to calling process (not FUSE daemon)
-    fchown(fd, ctx->uid, ctx->gid);
-    return 0;
-}
-static int ccbox_truncate(const char *path, off_t size, struct fuse_file_info *fi) { char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return (fi ? ftruncate(fi->fh, size) : truncate(fpath, size)) == -1 ? -errno : 0; }
-static int ccbox_utimens(const char *path, const struct timespec ts[2], struct fuse_file_info *fi) { (void)fi; char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return utimensat(0, fpath, ts, AT_SYMLINK_NOFOLLOW) == -1 ? -errno : 0; }
-static int ccbox_chmod(const char *path, mode_t mode, struct fuse_file_info *fi) { (void)fi; char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return chmod(fpath, mode) == -1 ? -errno : 0; }
-static int ccbox_chown(const char *path, uid_t uid, gid_t gid, struct fuse_file_info *fi) { (void)fi; char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); return lchown(fpath, uid, gid) == -1 ? -errno : 0; }
-static int ccbox_rename(const char *from, const char *to, unsigned int flags) { if (flags) return -EINVAL; char ff[MAX_PATH_LEN], ft[MAX_PATH_LEN]; get_source_path(ff, from, sizeof(ff)); get_source_path(ft, to, sizeof(ft)); return rename(ff, ft) == -1 ? -errno : 0; }
-static int ccbox_symlink(const char *target, const char *linkpath) {
-    struct fuse_context *ctx = fuse_get_context();
-    char fpath[MAX_PATH_LEN];
-    get_source_path(fpath, linkpath, sizeof(fpath));
-    if (symlink(target, fpath) == -1) return -errno;
-    // Set ownership to calling process (not FUSE daemon)
-    lchown(fpath, ctx->uid, ctx->gid);
-    return 0;
-}
-static int ccbox_readlink(const char *path, char *buf, size_t size) { char fpath[MAX_PATH_LEN]; get_source_path(fpath, path, sizeof(fpath)); ssize_t res = readlink(fpath, buf, size - 1); if (res == -1) return -errno; buf[res] = '\\0'; return 0; }
-static int ccbox_link(const char *from, const char *to) { char ff[MAX_PATH_LEN], ft[MAX_PATH_LEN]; get_source_path(ff, from, sizeof(ff)); get_source_path(ft, to, sizeof(ft)); return link(ff, ft) == -1 ? -errno : 0; }
-
-static const struct fuse_operations ccbox_oper = {
-    .getattr = ccbox_getattr, .readdir = ccbox_readdir, .open = ccbox_open, .read = ccbox_read,
-    .write = ccbox_write, .release = ccbox_release, .flush = ccbox_flush, .fsync = ccbox_fsync,
-    .statfs = ccbox_statfs, .access = ccbox_access, .mkdir = ccbox_mkdir, .unlink = ccbox_unlink,
-    .rmdir = ccbox_rmdir, .create = ccbox_create, .truncate = ccbox_truncate, .utimens = ccbox_utimens,
-    .chmod = ccbox_chmod, .chown = ccbox_chown, .rename = ccbox_rename, .symlink = ccbox_symlink,
-    .readlink = ccbox_readlink, .link = ccbox_link,
-};
-
-static void add_mapping(const char *from, const char *to) {
-    if (mapping_count >= MAX_MAPPINGS) return;
-    PathMapping *m = &mappings[mapping_count];
-    m->from = normalize_path(from);
-    m->to = normalize_path(to);
-    if (!m->from || !m->to) { free(m->from); free(m->to); return; }
-    m->from_len = strlen(m->from);
-    m->to_len = strlen(m->to);
-    m->drive = (m->from[0] && m->from[1] == ':') ? tolower(m->from[0]) : 0;
-    m->is_unc = m->from[0] == '/' && m->from[1] == '/';
-    m->is_wsl = strncmp(m->from, "/mnt/", 5) == 0 && isalpha(m->from[5]);
-    if (m->is_wsl) m->drive = tolower(m->from[5]);
-    mapping_count++;
-}
-
-static void parse_pathmap(const char *pathmap) {
-    if (!pathmap || !*pathmap) return;
-    char *copy = strdup(pathmap);
-    if (!copy) return;
-    char *saveptr = NULL, *mapping = strtok_r(copy, ";", &saveptr);
-    while (mapping) {
-        char *sep = mapping;
-        /* Skip drive letter in Windows path (e.g., C:/...) */
-        if (sep[0] && sep[1] == ':') sep += 2;
-        sep = strchr(sep, ':');
-        if (sep) { *sep = '\\0'; add_mapping(mapping, sep + 1); }
-        mapping = strtok_r(NULL, ";", &saveptr);
-    }
-    free(copy);
-}
-
-struct ccbox_config { char *source; char *pathmap; };
-
-static struct fuse_opt ccbox_opts[] = {
-    {"source=%s", offsetof(struct ccbox_config, source), 0},
-    {"pathmap=%s", offsetof(struct ccbox_config, pathmap), 0},
-    FUSE_OPT_END
-};
-
-int main(int argc, char *argv[]) {
-    struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
-    struct ccbox_config conf = {0};
-    if (fuse_opt_parse(&args, &conf, ccbox_opts, NULL) == -1) return 1;
-    if (!conf.source) { fprintf(stderr, "Error: source not specified\\n"); return 1; }
-    source_dir = conf.source;
-    size_t slen = strlen(source_dir);
-    while (slen > 1 && source_dir[slen-1] == '/') source_dir[--slen] = '\\0';
-    if (conf.pathmap) parse_pathmap(conf.pathmap);
-    fuse_opt_add_arg(&args, "-o");
-    fuse_opt_add_arg(&args, "default_permissions");
-    if (getuid() == 0) { fuse_opt_add_arg(&args, "-o"); fuse_opt_add_arg(&args, "allow_other"); }
-    int ret = fuse_main(args.argc, args.argv, &ccbox_oper, NULL);
-    fuse_opt_free_args(&args);
-    return ret;
-}
-`;
-}
 
 /**
  * Write Dockerfile and entrypoint to build directory.

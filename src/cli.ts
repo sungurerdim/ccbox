@@ -9,11 +9,11 @@ import chalk from "chalk";
 import { Command } from "commander";
 
 import { VERSION, MAX_PROMPT_LENGTH, MAX_SYSTEM_PROMPT_LENGTH, VALID_MODELS, DOCKER_COMMAND_TIMEOUT, DOCKER_BUILD_TIMEOUT } from "./constants.js";
-import { LanguageStack, STACK_INFO, imageExists, filterStacks } from "./config.js";
+import { LanguageStack, STACK_INFO, filterStacks } from "./config.js";
 import { ValidationError } from "./errors.js";
 import { checkDocker, ERR_DOCKER_NOT_RUNNING } from "./utils.js";
 import { run } from "./commands/run.js";
-import { buildImage } from "./build.js";
+import { buildImage, getInstalledCcboxImages } from "./build.js";
 import {
   removeCcboxContainers,
   removeCcboxImages,
@@ -114,6 +114,7 @@ program
   .option("-U, --unrestricted", "Remove CPU/priority limits (use full system resources)")
   .option("-v, --verbose", "Show detection details (which files triggered stack selection)")
   .option("--progress <mode>", "Docker build progress mode (auto|plain|tty)", "auto")
+  .option("--cache", "Use Docker build cache (default: no cache for clean builds)")
   .option("-e, --env <KEY=VALUE...>", "Pass environment variables to container (can override defaults)")
   .option("--timeout <ms>", `Command timeout in milliseconds (default: ${DOCKER_COMMAND_TIMEOUT})`)
   .option("--build-timeout <ms>", `Build timeout in milliseconds (default: ${DOCKER_BUILD_TIMEOUT})`)
@@ -167,6 +168,7 @@ program
       unrestricted: options.unrestricted,
       verbose: options.verbose,
       progress: options.progress,
+      cache: options.cache,
       envVars: options.env,
       timeout: options.timeout,
       buildTimeout: options.buildTimeout,
@@ -190,8 +192,10 @@ program
     if (options.stack) {
       stacksToBuild.push(options.stack as LanguageStack);
     } else if (options.all) {
+      // Single Docker call to get all installed images (instead of N execSync calls)
+      const installed = await getInstalledCcboxImages();
       for (const s of Object.values(LanguageStack)) {
-        if (imageExists(s)) {
+        if (installed.has(`ccbox_${s}:latest`)) {
           stacksToBuild.push(s);
         }
       }

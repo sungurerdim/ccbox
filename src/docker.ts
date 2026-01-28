@@ -56,16 +56,18 @@ export async function safeDockerRun(
   } catch (error: unknown) {
     if (error instanceof DockerError) {throw error;}
 
-    const err = error as NodeJS.ErrnoException & { timedOut?: boolean };
+    if (error instanceof Error) {
+      const err = error as { code?: string; timedOut?: boolean };
 
-    if (err.code === "ENOENT") {
-      throw new DockerNotFoundError(`Docker not found in PATH. Command: docker ${args.slice(0, 3).join(" ")}...`);
-    }
+      if (err.code === "ENOENT") {
+        throw new DockerNotFoundError(`Docker not found in PATH. Command: docker ${args.slice(0, 3).join(" ")}...`);
+      }
 
-    if (err.timedOut) {
-      throw new DockerTimeoutError(
-        `Docker command timed out after ${timeout}ms. Command: docker ${args.slice(0, 3).join(" ")}...`
-      );
+      if (err.timedOut) {
+        throw new DockerTimeoutError(
+          `Docker command timed out after ${timeout}ms. Command: docker ${args.slice(0, 3).join(" ")}...`
+        );
+      }
     }
 
     throw error;

@@ -23,6 +23,7 @@ import { generateProjectDockerfile, writeBuildFiles } from "./generator.js";
 import { log } from "./logger.js";
 import { getDockerEnv, getClaudeConfigDir, resolveForDocker } from "./paths.js";
 import { cleanupCcboxDanglingImages } from "./cleanup.js";
+import { removeImage } from "./docker.js";
 
 /**
  * Run claude install in container to set up installMethod in host config.
@@ -40,7 +41,8 @@ async function runClaudeInstall(): Promise<void> {
       [
         "run",
         "--rm",
-        "--privileged",
+        "--cap-add=SYS_ADMIN",
+        "--device", "/dev/fuse",
         "-v",
         `${dockerClaudeConfig}:/ccbox/.claude:rw`,
         "-e",
@@ -70,6 +72,8 @@ async function runClaudeInstall(): Promise<void> {
 export interface BuildOptions {
   /** Docker build progress mode: auto (default), plain, or tty. */
   progress?: string;
+  /** Use Docker build cache (default: false, i.e. --no-cache). */
+  cache?: boolean;
 }
 
 /**
@@ -82,7 +86,7 @@ export async function buildImage(
   stack: LanguageStack,
   options: BuildOptions = {}
 ): Promise<boolean> {
-  const { progress = "auto" } = options;
+  const { progress = "auto", cache = false } = options;
 
   // Check if this stack depends on base image
   const dependency = STACK_DEPENDENCIES[stack];
@@ -112,9 +116,11 @@ export async function buildImage(
     `type=image,name=${imageName},compression=zstd,compression-level=3`,
     "-f",
     join(buildDir, "Dockerfile"),
-    "--no-cache",
     `--progress=${progress}`,
   ];
+  if (!cache) {
+    buildArgs.push("--no-cache");
+  }
 
   // Only pull for stacks with external base images (base, go, rust, java)
   if (dependency === null) {
@@ -211,7 +217,7 @@ export async function buildProjectImage(
   depsMode: DepsMode,
   options: BuildOptions = {}
 ): Promise<string | null> {
-  const { progress = "auto" } = options;
+  const { progress = "auto", cache = false } = options;
   const imageName = getProjectImageName(projectName, stack);
   const baseImage = getImageName(stack);
 
@@ -237,7 +243,7 @@ export async function buildProjectImage(
     // Note: no --pull flag since we're building on top of local ccbox images
     await execa(
       "docker",
-      ["build", "-t", imageName, "-f", dockerfilePath, "--no-cache", `--progress=${progress}`, projectPath],
+      ["build", "-t", imageName, "-f", dockerfilePath, ...(cache ? [] : ["--no-cache"]), `--progress=${progress}`, projectPath],
       {
         stdio: "inherit",
         env,
@@ -259,8 +265,10 @@ export async function buildProjectImage(
   } catch (error: unknown) {
     // Extract error details
     let errorDetails = "Unknown error";
+    let isTimeout = false;
     if (error instanceof Error) {
-      const execaError = error as { stderr?: string; shortMessage?: string };
+      const execaError = error as { stderr?: string; shortMessage?: string; timedOut?: boolean };
+      isTimeout = !!execaError.timedOut;
       if (execaError.stderr) {
         errorDetails = execaError.stderr.slice(0, 500);
       } else if (execaError.shortMessage) {
@@ -272,8 +280,18 @@ export async function buildProjectImage(
 
     // Log warning but don't throw - project image build failure is non-fatal
     log.warn(`Failed to build ${imageName}: ${errorDetails}`);
+    if (isTimeout) {
+      log.warn("Build timed out. Try increasing --build-timeout or simplifying dependencies.");
+    }
 
-    // Cleanup even on failure
+    // Cleanup partial image on failure (prevent dangling)
+    try {
+      await removeImage(imageName, true);
+    } catch {
+      // Ignore - image may not have been created
+    }
+
+    // Cleanup temp build files
     try {
       rmSync(buildDir, { recursive: true, force: true });
     } catch {
