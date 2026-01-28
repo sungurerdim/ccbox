@@ -239,11 +239,15 @@ export async function listImages(prefix?: string): Promise<string[]> {
 /**
  * Build a Docker image from a directory.
  *
+ * Uses consistent error handling wrapper for Docker operations.
+ *
  * @param buildDir - Directory containing Dockerfile.
  * @param imageName - Name for the built image.
  * @param buildArgs - Optional build arguments.
  * @param timeout - Build timeout in milliseconds.
- * @returns True if build succeeded, false otherwise.
+ * @returns Build result with success status and output.
+ * @throws DockerNotFoundError if docker command is not found.
+ * @throws DockerTimeoutError if build times out.
  */
 export async function buildImage(
   buildDir: string,
@@ -273,7 +277,19 @@ export async function buildImage(
       output: String(result.all ?? ""),
     };
   } catch (error: unknown) {
-    const err = error as { all?: string };
+    // Use consistent error handling pattern from safeDockerRun
+    const err = error as NodeJS.ErrnoException & { timedOut?: boolean; all?: string };
+
+    if (err.code === "ENOENT") {
+      throw new DockerNotFoundError(`Docker not found in PATH. Command: docker ${args.slice(0, 3).join(" ")}...`);
+    }
+
+    if (err.timedOut) {
+      throw new DockerTimeoutError(
+        `Docker build timed out after ${timeout}ms. Image: ${imageName}`
+      );
+    }
+
     return {
       success: false,
       output: err.all ?? String(error),

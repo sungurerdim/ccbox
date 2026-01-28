@@ -8,7 +8,6 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import chalk from "chalk";
 import { execa, type Options as ExecaOptions } from "execa";
 
 import {
@@ -19,7 +18,9 @@ import {
 } from "./config.js";
 import { DOCKER_BUILD_TIMEOUT, DOCKER_COMMAND_TIMEOUT } from "./constants.js";
 import type { DepsInfo, DepsMode } from "./deps.js";
+import { ImageBuildError } from "./errors.js";
 import { generateProjectDockerfile, writeBuildFiles } from "./generator.js";
+import { log } from "./logger.js";
 import { getDockerEnv, getClaudeConfigDir, resolveForDocker } from "./paths.js";
 import { cleanupCcboxDanglingImages } from "./cleanup.js";
 
@@ -31,7 +32,7 @@ async function runClaudeInstall(): Promise<void> {
   const claudeConfig = getClaudeConfigDir();
   const dockerClaudeConfig = resolveForDocker(claudeConfig);
 
-  console.log(chalk.dim("Configuring Claude Code installation..."));
+  log.dim("Configuring Claude Code installation...");
 
   try {
     await execa(
@@ -58,10 +59,10 @@ async function runClaudeInstall(): Promise<void> {
         stdio: "pipe",
       } as ExecaOptions
     );
-    console.log(chalk.dim("Claude Code configured"));
+    log.dim("Claude Code configured");
   } catch {
     // Non-fatal - configuration will be done on first run
-    console.log(chalk.dim("Claude install skipped (will configure on first run)"));
+    log.dim("Claude install skipped (will configure on first run)");
   }
 }
 
@@ -86,15 +87,14 @@ export async function buildImage(
   // Check if this stack depends on base image
   const dependency = STACK_DEPENDENCIES[stack];
   if (dependency !== null && !imageExists(dependency)) {
-    console.log(chalk.dim(`Building dependency: ccbox_${dependency}:latest...`));
+    log.dim(`Building dependency: ccbox_${dependency}:latest...`);
     if (!(await buildImage(dependency, options))) {
-      console.log(chalk.red(`Failed to build dependency ccbox/${dependency}`));
-      return false;
+      throw new ImageBuildError(`Failed to build dependency ccbox/${dependency}`);
     }
   }
 
   const imageName = getImageName(stack);
-  console.log(chalk.bold(`Building ${imageName}...`));
+  log.bold(`Building ${imageName}...`);
 
   const buildDir = writeBuildFiles(stack);
 
@@ -130,7 +130,7 @@ export async function buildImage(
       reject: true,
     } as ExecaOptions);
 
-    console.log(chalk.green(`Built ${imageName}`));
+    log.success(`Built ${imageName}`);
 
     // Post-build cleanup: remove temp build files
     try {
@@ -149,19 +149,19 @@ export async function buildImage(
 
     return true;
   } catch (error: unknown) {
-    console.log(chalk.red(`Failed to build ${imageName}`));
-    // Show detailed error for debugging
+    // Extract error details for the exception message
+    let errorDetails = "Unknown error";
     if (error instanceof Error) {
       const execaError = error as { stderr?: string; shortMessage?: string };
       if (execaError.stderr) {
-        console.log(chalk.dim(`Error details: ${execaError.stderr.slice(0, 500)}`));
+        errorDetails = execaError.stderr.slice(0, 500);
       } else if (execaError.shortMessage) {
-        console.log(chalk.dim(`Error: ${execaError.shortMessage}`));
+        errorDetails = execaError.shortMessage;
       } else {
-        console.log(chalk.dim(`Error: ${error.message}`));
+        errorDetails = error.message;
       }
     }
-    return false;
+    throw new ImageBuildError(`Failed to build ${imageName}: ${errorDetails}`);
   }
 }
 
@@ -215,7 +215,8 @@ export async function buildProjectImage(
   const imageName = getProjectImageName(projectName, stack);
   const baseImage = getImageName(stack);
 
-  console.log(chalk.bold("\nBuilding project image with dependencies..."));
+  log.newline();
+  log.bold("Building project image with dependencies...");
 
   // Generate Dockerfile
   const dockerfileContent = generateProjectDockerfile(baseImage, depsList, depsMode, projectPath);
@@ -245,7 +246,7 @@ export async function buildProjectImage(
       } as ExecaOptions
     );
 
-    console.log(chalk.green(`Built ${imageName}`));
+    log.success(`Built ${imageName}`);
 
     // Cleanup temp build files
     try {
@@ -256,18 +257,21 @@ export async function buildProjectImage(
 
     return imageName;
   } catch (error: unknown) {
-    console.log(chalk.red(`Failed to build ${imageName}`));
-    // Show detailed error for debugging
+    // Extract error details
+    let errorDetails = "Unknown error";
     if (error instanceof Error) {
       const execaError = error as { stderr?: string; shortMessage?: string };
       if (execaError.stderr) {
-        console.log(chalk.dim(`Error details: ${execaError.stderr.slice(0, 500)}`));
+        errorDetails = execaError.stderr.slice(0, 500);
       } else if (execaError.shortMessage) {
-        console.log(chalk.dim(`Error: ${execaError.shortMessage}`));
+        errorDetails = execaError.shortMessage;
       } else {
-        console.log(chalk.dim(`Error: ${error.message}`));
+        errorDetails = error.message;
       }
     }
+
+    // Log warning but don't throw - project image build failure is non-fatal
+    log.warn(`Failed to build ${imageName}: ${errorDetails}`);
 
     // Cleanup even on failure
     try {
