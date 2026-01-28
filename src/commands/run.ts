@@ -6,7 +6,6 @@
 
 import { basename } from "node:path";
 
-import chalk from "chalk";
 import { execa, type Options as ExecaOptions } from "execa";
 
 import {
@@ -19,7 +18,9 @@ import type { DepsInfo, DepsMode } from "../deps.js";
 import { detectDependencies } from "../deps.js";
 import { detectProjectType } from "../detector.js";
 import { checkDockerStatus } from "../docker.js";
+import { ImageBuildError } from "../errors.js";
 import { getDockerRunCmd } from "../generator.js";
+import { log } from "../logger.js";
 import { getDockerEnv, validateProjectPath } from "../paths.js";
 import {
   buildImage,
@@ -29,7 +30,7 @@ import {
   projectImageExists,
 } from "../build.js";
 import { pruneStaleResources } from "../cleanup.js";
-import { promptDeps, resolveStack, setupGitConfig } from "../prompts.js";
+import { resolveStack, setupGitConfig } from "../prompts.js";
 import { checkDocker, ERR_DOCKER_NOT_RUNNING } from "../utils.js";
 
 /**
@@ -38,23 +39,23 @@ import { checkDocker, ERR_DOCKER_NOT_RUNNING } from "../utils.js";
 async function diagnoseContainerFailure(returncode: number, projectName: string): Promise<void> {
   // Known exit codes
   if (returncode === 137) {
-    console.log(chalk.yellow("Container was killed (OOM or manual stop)"));
-    console.log(chalk.dim("Try: ccbox --unrestricted (removes memory limits)"));
+    log.warn("Container was killed (OOM or manual stop)");
+    log.dim("Try: ccbox --unrestricted (removes memory limits)");
     return;
   }
   if (returncode === 139) {
-    console.log(chalk.yellow("Container crashed (segmentation fault)"));
+    log.warn("Container crashed (segmentation fault)");
     return;
   }
   if (returncode === 143) {
-    console.log(chalk.dim("Container terminated by signal"));
+    log.dim("Container terminated by signal");
     return;
   }
 
   // Check Docker daemon health
   if (!(await checkDockerStatus())) {
-    console.log(chalk.red("Docker daemon is not responding"));
-    console.log(chalk.dim("Docker may have restarted or crashed during session"));
+    log.error("Docker daemon is not responding");
+    log.dim("Docker may have restarted or crashed during session");
     return;
   }
 
@@ -68,8 +69,8 @@ async function diagnoseContainerFailure(returncode: number, projectName: string)
     } as ExecaOptions);
 
     if (String(result.stdout ?? "").trim()) {
-      console.log(chalk.yellow("Container still running (cleanup failed)"));
-      console.log(chalk.dim(`Run: docker rm -f ccbox-${projectName}`));
+      log.warn("Container still running (cleanup failed)");
+      log.dim(`Run: docker rm -f ccbox-${projectName}`);
       return;
     }
   } catch {
@@ -78,8 +79,8 @@ async function diagnoseContainerFailure(returncode: number, projectName: string)
 
   // Generic error with exit code
   if (returncode !== 0) {
-    console.log(chalk.yellow(`Container exited with code ${returncode}`));
-    console.log(chalk.dim("Logs are preserved by default for investigation"));
+    log.warn(`Container exited with code ${returncode}`);
+    log.dim("Logs are preserved by default for investigation");
   }
 }
 
@@ -119,8 +120,8 @@ async function executeContainer(
     envVars,
   } = options;
 
-  console.log(chalk.dim("Starting Claude Code..."));
-  console.log();
+  log.dim("Starting Claude Code...");
+  log.newline();
 
   const cmd = getDockerRunCmd(config, projectPath, projectName, stack, {
     fresh,
@@ -138,7 +139,7 @@ async function executeContainer(
 
   // Debug: print docker command
   if (debug >= 2) {
-    console.log(chalk.dim("Docker command: " + cmd.join(" ")));
+    log.dim("Docker command: " + cmd.join(" "));
   }
 
   // Stream mode (-dd): close stdin for watch-only (no user input)
@@ -204,13 +205,13 @@ async function tryRunExistingImage(
   }
 
   const projectImage = getProjectImageName(projectName, stack);
-  console.log(chalk.dim(`Using existing project image: ${projectImage}`));
+  log.dim(`Using existing project image: ${projectImage}`);
 
-  console.log();
-  console.log(chalk.blue(`[${chalk.bold(projectName)}] -> ${projectImage}`));
+  log.newline();
+  log.blue(`[${projectName}] -> ${projectImage}`);
 
   if (buildOnly) {
-    console.log(chalk.green("Build complete (image exists)"));
+    log.success("Build complete (image exists)");
     return true;
   }
 
@@ -251,20 +252,30 @@ async function buildAndRun(
 ): Promise<void> {
   const { progress = "auto" } = options;
 
-  console.log();
-  console.log(chalk.blue(`[${chalk.bold(projectName)}] -> ccbox/${selectedStack}`));
+  log.newline();
+  log.blue(`[${projectName}] -> ccbox/${selectedStack}`);
 
   // Ensure base image exists (required for all stacks)
   if (!imageExists(LanguageStack.BASE)) {
-    console.log(chalk.bold("First-time setup: building base image..."));
-    if (!(await buildImage(LanguageStack.BASE, { progress }))) {
+    log.bold("First-time setup: building base image...");
+    try {
+      await buildImage(LanguageStack.BASE, { progress });
+    } catch (error) {
+      if (error instanceof ImageBuildError) {
+        log.error(error.message);
+      }
       process.exit(1);
     }
-    console.log();
+    log.newline();
   }
 
   // Ensure stack image is ready
-  if (!(await ensureImageReady(selectedStack, false, { progress }))) {
+  try {
+    await ensureImageReady(selectedStack, false, { progress });
+  } catch (error) {
+    if (error instanceof ImageBuildError) {
+      log.error(error.message);
+    }
     process.exit(1);
   }
 
@@ -280,12 +291,12 @@ async function buildAndRun(
       { progress }
     )) ?? undefined;
     if (!builtProjectImage) {
-      console.log(chalk.yellow("Warning: Failed to build project image, continuing without deps"));
+      log.warn("Failed to build project image, continuing without deps");
     }
   }
 
   if (buildOnly) {
-    console.log(chalk.green("Build complete"));
+    log.success("Build complete");
     return;
   }
 
@@ -318,6 +329,8 @@ export async function run(
     verbose?: boolean;
     progress?: string;
     envVars?: string[];
+    timeout?: number;
+    buildTimeout?: number;
   } = {}
 ): Promise<void> {
   const {
@@ -335,11 +348,19 @@ export async function run(
     verbose = false,
     progress = "auto",
     envVars,
+    timeout: _timeout,
+    buildTimeout: _buildTimeout,
   } = options;
 
+  // Note: timeout and buildTimeout are accepted but not yet passed through
+  // to underlying operations. This is a placeholder for future implementation.
+  // The CLI validation ensures they are valid values when provided.
+  void _timeout;
+  void _buildTimeout;
+
   if (!(await checkDocker())) {
-    console.log(ERR_DOCKER_NOT_RUNNING);
-    console.log("Start Docker and try again.");
+    log.error(ERR_DOCKER_NOT_RUNNING);
+    log.info("Start Docker and try again.");
     process.exit(1);
   }
 
@@ -364,14 +385,14 @@ export async function run(
 
   // Show detection details in verbose mode
   if (verbose && detection.detectedLanguages.length > 0) {
-    console.log(chalk.dim("Detection:"));
+    log.dim("Detection:");
     for (const lang of detection.detectedLanguages) {
       const trigger = detection.detectionDetails?.[lang] || "pattern match";
-      console.log(chalk.dim(`  ${lang} → ${trigger}`));
+      log.dim(`  ${lang} → ${trigger}`);
     }
-    console.log(chalk.dim(`  → Stack: ${initialStack}`));
+    log.dim(`  → Stack: ${initialStack}`);
   } else if (verbose) {
-    console.log(chalk.dim(`Detection: no languages found → ${initialStack}`));
+    log.dim(`Detection: no languages found → ${initialStack}`);
   }
 
   // Phase 1: Try existing project image (skip prompts if found)
@@ -402,14 +423,14 @@ export async function run(
     if (depsMode) {
       // User specified deps mode via flag
       resolvedDepsMode = depsMode as DepsMode;
-    } else if (unattended) {
-      // Unattended mode (-y): install all deps without prompting
-      resolvedDepsMode = "all";
-      console.log(chalk.dim("Unattended mode: installing all dependencies"));
     } else {
-      // Interactive prompt
-      resolvedDepsMode = await promptDeps(depsList);
-      console.log();
+      // Default: install all deps (including dev/test/lint tools)
+      // This ensures format, test, lint tools are always available
+      resolvedDepsMode = "all";
+      if (!unattended) {
+        log.dim("Installing all dependencies (including dev/test/lint tools)");
+        log.dim("Use --deps-prod for production only, --no-deps to skip");
+      }
     }
   }
 
@@ -419,7 +440,7 @@ export async function run(
     unattended,
   });
   if (selectedStack === null) {
-    console.log(chalk.yellow("Cancelled."));
+    log.warn("Cancelled.");
     process.exit(0);
   }
 

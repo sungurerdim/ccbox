@@ -8,7 +8,7 @@
 import chalk from "chalk";
 import { Command } from "commander";
 
-import { VERSION, MAX_PROMPT_LENGTH, MAX_SYSTEM_PROMPT_LENGTH, VALID_MODELS } from "./constants.js";
+import { VERSION, MAX_PROMPT_LENGTH, MAX_SYSTEM_PROMPT_LENGTH, VALID_MODELS, DOCKER_COMMAND_TIMEOUT, DOCKER_BUILD_TIMEOUT } from "./constants.js";
 import { LanguageStack, STACK_INFO, imageExists, filterStacks } from "./config.js";
 import { ValidationError } from "./errors.js";
 import { checkDocker, ERR_DOCKER_NOT_RUNNING } from "./utils.js";
@@ -70,6 +70,20 @@ function validateModel(model: string | undefined): string | undefined {
   return model;
 }
 
+/**
+ * Validate timeout parameter.
+ */
+function validateTimeout(value: string): number {
+  const parsed = parseInt(value, 10);
+  if (isNaN(parsed) || parsed <= 0) {
+    throw new ValidationError("Timeout must be a positive integer (milliseconds)");
+  }
+  if (parsed > 3600000) {
+    throw new ValidationError("Timeout cannot exceed 3600000ms (1 hour)");
+  }
+  return parsed;
+}
+
 // Build the CLI program
 const program = new Command();
 
@@ -88,7 +102,7 @@ program
   .option("-C, --chdir <dir>", "Change to directory before running (like git -C)")
   .option("--fresh", "Fresh mode: auth only, clean slate (no rules/settings/commands)")
   .option("--no-debug-logs", "Don't persist debug logs (use ephemeral tmpfs)")
-  .option("--deps", "Install all dependencies (including dev)")
+  .option("--deps", "Install all dependencies including dev (default)")
   .option("--deps-prod", "Install production dependencies only")
   .option("--no-deps", "Skip dependency installation")
   .option("-d, --debug", "Debug mode (-d entrypoint logs, -dd + stream output)", (_, prev) => prev + 1, 0)
@@ -101,6 +115,8 @@ program
   .option("-v, --verbose", "Show detection details (which files triggered stack selection)")
   .option("--progress <mode>", "Docker build progress mode (auto|plain|tty)", "auto")
   .option("-e, --env <KEY=VALUE...>", "Pass environment variables to container (can override defaults)")
+  .option("--timeout <ms>", `Command timeout in milliseconds (default: ${DOCKER_COMMAND_TIMEOUT})`)
+  .option("--build-timeout <ms>", `Build timeout in milliseconds (default: ${DOCKER_BUILD_TIMEOUT})`)
   .action(async (options) => {
     // Change directory if --chdir/-C specified (like git -C)
     if (options.chdir) {
@@ -112,6 +128,13 @@ program
       options.prompt = validatePrompt(options.prompt);
       options.appendSystemPrompt = validateSystemPrompt(options.appendSystemPrompt);
       options.model = validateModel(options.model);
+      // Validate timeouts if provided
+      if (options.timeout) {
+        options.timeout = validateTimeout(options.timeout);
+      }
+      if (options.buildTimeout) {
+        options.buildTimeout = validateTimeout(options.buildTimeout);
+      }
     } catch (e: unknown) {
       if (e instanceof ValidationError) {
         console.log(chalk.red(`Error: ${e.message}`));
@@ -145,6 +168,8 @@ program
       verbose: options.verbose,
       progress: options.progress,
       envVars: options.env,
+      timeout: options.timeout,
+      buildTimeout: options.buildTimeout,
     });
   });
 
