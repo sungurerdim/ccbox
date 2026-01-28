@@ -145,6 +145,17 @@ if [[ "$(id -u)" == "0" && -n "$CCBOX_UID" && -n "$CCBOX_GID" ]]; then
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Onboarding state symlink
+# Claude Code looks for ~/.claude.json at $HOME/.claude.json
+# But host may store it inside .claude/ directory (at .claude/.claude.json)
+# Create symlink so Claude finds it at expected location
+# ══════════════════════════════════════════════════════════════════════════════
+if [[ -f "/ccbox/.claude/.claude.json" && ! -e "/ccbox/.claude.json" ]]; then
+    ln -sf /ccbox/.claude/.claude.json /ccbox/.claude.json 2>/dev/null || true
+    _log "Linked onboarding state: /ccbox/.claude.json -> .claude/.claude.json"
+fi
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Cross-platform path compatibility via FUSE (in-place overlay)
 # FUSE provides kernel-level path transformation that works with ALL apps
 # including Bun/Zig which bypass glibc (and thus LD_PRELOAD)
