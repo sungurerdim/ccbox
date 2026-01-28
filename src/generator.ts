@@ -311,9 +311,11 @@ fi
 # Windows bridge: D:/... encodes as D--... vs /d/... as d-...
 # Native Windows Claude uses: D:\GitHub\project -> D--GitHub-project
 # ccbox/Docker uses: /d/GitHub/project -> d-GitHub-project
-if [[ -n "$CCBOX_WIN_ORIGINAL_PATH" && -d "/ccbox/.claude" ]]; then
+# NOTE: Uses CCBOX_WIN_ORIGINAL_BRIDGE (not PATH) to avoid fakepath.so picking it up
+# fakepath.so doesn't work with Bun (bypasses glibc), so we only use symlink bridges
+if [[ -n "$CCBOX_WIN_ORIGINAL_BRIDGE" && -d "/ccbox/.claude" ]]; then
     _log_verbose "Setting up Windows session bridge..."
-    _win_encoded=$(_encode_path "$CCBOX_WIN_ORIGINAL_PATH")
+    _win_encoded=$(_encode_path "$CCBOX_WIN_ORIGINAL_BRIDGE")
     _target_encoded=$(_encode_path "$PWD")
     _create_session_bridge "$_win_encoded" "$_target_encoded" "Windows"
 fi
@@ -387,12 +389,27 @@ if [[ "$(id -u)" == "0" && -n "$CCBOX_UID" && -n "$CCBOX_GID" ]]; then
     EXEC_PREFIX="gosu ccbox"
 fi
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Path Translation via LD_PRELOAD (fakepath.so) - DISABLED
+# NOTE: fakepath.so doesn't work with Bun runtime because Bun bypasses glibc
+# using direct syscalls (io_uring on Linux). LD_PRELOAD only intercepts glibc
+# functions, not kernel syscalls.
+#
+# Session compatibility is now handled via symlink bridges instead.
+# The CCBOX_WIN_ORIGINAL_BRIDGE variable is used for symlink creation only,
+# not for fakepath.so transformation.
+#
+# Keeping fakepath.so in the image for potential future use with non-Bun tools.
+# ══════════════════════════════════════════════════════════════════════════════
+FAKEPATH_PRELOAD=""
+# fakepath.so disabled - Bun bypasses glibc, symlink bridges handle session compat
+
 # Run Claude Code
 if [[ -t 1 ]]; then
     printf '\\e[?2026h' 2>/dev/null || true
-    exec $EXEC_PREFIX $PRIORITY_CMD claude --dangerously-skip-permissions "$@"
+    exec $EXEC_PREFIX env $FAKEPATH_PRELOAD $PRIORITY_CMD claude --dangerously-skip-permissions "$@"
 else
-    exec $EXEC_PREFIX stdbuf -oL -eL $PRIORITY_CMD claude --dangerously-skip-permissions "$@"
+    exec $EXEC_PREFIX env $FAKEPATH_PRELOAD stdbuf -oL -eL $PRIORITY_CMD claude --dangerously-skip-permissions "$@"
 fi
 `;
 }
@@ -402,8 +419,9 @@ fi
  * Generate ccbox-fuse.c content for FUSE filesystem.
  * This is embedded for compiled binary compatibility.
  * FUSE provides kernel-level path transformation that works with direct syscalls (Bun/Zig).
+ * @internal Reserved for future use when running from compiled binary
  */
-function generateCcboxFuseC(): string {
+export function generateCcboxFuseC(): string {
   return `/**
  * ccbox-fuse: FUSE filesystem for transparent cross-platform path mapping
  * Provides kernel-level path transformation that works with io_uring and direct syscalls
@@ -826,14 +844,17 @@ chmod 755 /usr/local/bin/ccbox-fuse
 
   // Also keep ccbox-fuse.c for source builds if needed
   const fuseSrc = join(__dirname, "..", "native", "ccbox-fuse.c");
-  let fuseContent: string;
   if (existsSync(fuseSrc)) {
-    fuseContent = readFileSync(fuseSrc, "utf-8");
-  } else {
-    // Fallback to embedded version when running from compiled binary
-    fuseContent = generateCcboxFuseC();
+    const fuseContent = readFileSync(fuseSrc, "utf-8");
+    writeFileSync(join(buildDir, "ccbox-fuse.c"), fuseContent, { encoding: "utf-8" });
   }
-  writeFileSync(join(buildDir, "ccbox-fuse.c"), fuseContent, { encoding: "utf-8" });
+
+  // Copy fakepath.c for path translation support
+  const fakepathSrc = join(__dirname, "..", "native", "fakepath.c");
+  if (existsSync(fakepathSrc)) {
+    const fakepathContent = readFileSync(fakepathSrc, "utf-8");
+    writeFileSync(join(buildDir, "fakepath.c"), fakepathContent, { encoding: "utf-8" });
+  }
 
   return buildDir;
 }
