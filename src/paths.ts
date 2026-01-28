@@ -173,12 +173,17 @@ export function wslToDockerPath(path: string): string {
 function validateDockerPath(path: string, resolvedStr: string): void {
   // Check for path traversal attempts
   if (resolvedStr.includes("..")) {
-    throw new PathError(`Path traversal not allowed: ${path}`);
+    throw new PathError(
+      `Path traversal not allowed: "${path}" resolved to "${resolvedStr}" which contains ".." (expected absolute path without parent references)`
+    );
   }
 
   // Check for null bytes (security)
   if (resolvedStr.includes("\x00")) {
-    throw new PathError(`Null bytes not allowed in path: ${path}`);
+    const nullPosition = resolvedStr.indexOf("\x00");
+    throw new PathError(
+      `Null bytes not allowed in path: "${path}" contains null byte at position ${nullPosition} (expected printable characters only)`
+    );
   }
 }
 
