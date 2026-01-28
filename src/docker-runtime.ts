@@ -545,8 +545,9 @@ export function getDockerRunCmd(
   }
 
   // Environment variables
-  // HOME = host project path (direct mount), CLAUDE_CONFIG_DIR = global config
-  cmd.push("-e", `HOME=${hostProjectPath}`);
+  // HOME = /ccbox (for ~/.claude.json lookup), CLAUDE_CONFIG_DIR = global config
+  // Working directory is set to project path separately via -w flag
+  cmd.push("-e", "HOME=/ccbox");
   cmd.push("-e", "CLAUDE_CONFIG_DIR=/ccbox/.claude");
   addTerminalEnv(cmd);
   addClaudeEnv(cmd);
