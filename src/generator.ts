@@ -244,37 +244,58 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# WSL Session Compatibility Bridge
-# WSL paths (/mnt/d/...) encode differently than Docker paths (/d/...)
+# Session Compatibility Bridges
+# Different environments encode project paths differently in .claude/projects/
 # Create symlinks between encodings so sessions are visible across environments
 # ══════════════════════════════════════════════════════════════════════════════
+
+# Helper function to create bidirectional symlinks for session directories
+_create_session_bridge() {
+    local source_encoded="$1"
+    local target_encoded="$2"
+    local bridge_name="$3"
+
+    if [[ "$source_encoded" == "$target_encoded" ]]; then
+        return 0
+    fi
+
+    _log_verbose "$bridge_name encoding: $source_encoded"
+    _log_verbose "Target encoding: $target_encoded"
+
+    for _subdir in projects file-history todos shell-snapshots; do
+        _base_dir="/ccbox/.claude/$_subdir"
+        if [[ -d "$_base_dir" ]]; then
+            # If source-encoded exists but target doesn't, link target -> source
+            if [[ -d "$_base_dir/$source_encoded" && ! -e "$_base_dir/$target_encoded" ]]; then
+                ln -s "$source_encoded" "$_base_dir/$target_encoded" 2>/dev/null || true
+                _log "$bridge_name bridge: $_subdir/$target_encoded -> $source_encoded"
+            # If target exists but source-encoded doesn't, link source -> target
+            elif [[ -d "$_base_dir/$target_encoded" && ! -e "$_base_dir/$source_encoded" ]]; then
+                ln -s "$target_encoded" "$_base_dir/$source_encoded" 2>/dev/null || true
+                _log "$bridge_name bridge: $_subdir/$source_encoded -> $target_encoded"
+            fi
+        fi
+    done
+}
+
+# WSL bridge: /mnt/d/... encodes as mnt-d-... vs /d/... as d-...
 if [[ -n "$CCBOX_WSL_ORIGINAL_PATH" && -d "/ccbox/.claude" ]]; then
     _log_verbose "Setting up WSL session bridge..."
-
-    # Calculate encodings: replace / and . with -
     _wsl_encoded=$(echo "$CCBOX_WSL_ORIGINAL_PATH" | tr '/.' '--' | sed 's/^-//')
     _target_encoded=$(echo "$PWD" | tr '/.' '--' | sed 's/^-//')
+    _create_session_bridge "$_wsl_encoded" "$_target_encoded" "WSL"
+fi
 
-    if [[ "$_wsl_encoded" != "$_target_encoded" ]]; then
-        _log_verbose "WSL encoding: $_wsl_encoded"
-        _log_verbose "Target encoding: $_target_encoded"
-
-        # Create symlinks in all path-encoded directories
-        for _subdir in projects file-history todos shell-snapshots; do
-            _base_dir="/ccbox/.claude/$_subdir"
-            if [[ -d "$_base_dir" ]]; then
-                # If WSL-encoded exists but target doesn't, link target -> WSL
-                if [[ -d "$_base_dir/$_wsl_encoded" && ! -e "$_base_dir/$_target_encoded" ]]; then
-                    ln -s "$_wsl_encoded" "$_base_dir/$_target_encoded" 2>/dev/null || true
-                    _log "WSL bridge: $_subdir/$_target_encoded -> $_wsl_encoded"
-                # If target exists but WSL-encoded doesn't, link WSL -> target
-                elif [[ -d "$_base_dir/$_target_encoded" && ! -e "$_base_dir/$_wsl_encoded" ]]; then
-                    ln -s "$_target_encoded" "$_base_dir/$_wsl_encoded" 2>/dev/null || true
-                    _log "WSL bridge: $_subdir/$_wsl_encoded -> $_target_encoded"
-                fi
-            fi
-        done
-    fi
+# Windows bridge: D:/... encodes as D--... vs /d/... as d-...
+# Native Windows Claude uses: D:\GitHub\project -> D--GitHub-project (uppercase, colon->dash)
+# ccbox/Docker uses: /d/GitHub/project -> d-GitHub-project (lowercase, no colon)
+if [[ -n "$CCBOX_WIN_ORIGINAL_PATH" && -d "/ccbox/.claude" ]]; then
+    _log_verbose "Setting up Windows session bridge..."
+    # Windows encoding: D:/GitHub/project -> D--GitHub-project
+    # Replace : / \ and . with -, preserve uppercase drive letter
+    _win_encoded=$(echo "$CCBOX_WIN_ORIGINAL_PATH" | tr ':/\\.' '----' | sed 's/^-//')
+    _target_encoded=$(echo "$PWD" | tr '/.' '--' | sed 's/^-//')
+    _create_session_bridge "$_win_encoded" "$_target_encoded" "Windows"
 fi
 
 # Git performance optimizations (I/O reduction)
