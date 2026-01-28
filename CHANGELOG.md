@@ -39,12 +39,10 @@ Initial public release of ccbox - secure Docker sandbox for Claude Code.
 - **Docker auto-start**: Start Docker Desktop if not running (Windows/macOS)
 - **Git config auto-detection**: Detect git user.name/email from host
 - **Dynamic UID/GID mapping**: Automatic user ID remapping for file permissions
-- **Wrapper pattern**: Two-layer architecture (ccbox wrapper + ccbox-bin binary)
+- **Self-update**: Single binary with built-in update, uninstall, and version check
   - `ccbox update`: Self-update binary from GitHub releases
-  - `ccbox uninstall`: Complete removal with self-delete
-  - `ccbox version`: Show wrapper and binary versions
+  - `ccbox uninstall`: Complete removal
   - `ccbox version --check`: Check for available updates
-  - Wrapper scripts: Linux/Mac (`ccbox.sh`), Windows (`ccbox.cmd` + `ccbox.ps1`)
 - **Commands**: run (default), rebuild, clean, stacks, update, uninstall, version
 - **Prompt mode**: Non-interactive with `-p/--prompt`
 - **Debug modes**: `-d` (basic) and `-dd` (verbose + stream)

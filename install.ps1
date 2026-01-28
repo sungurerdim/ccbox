@@ -4,7 +4,7 @@
     ccbox installer for Windows
 
 .DESCRIPTION
-    Downloads and installs ccbox binary and wrapper for Windows.
+    Downloads and installs ccbox binary for Windows.
     Installs to WindowsApps directory which is already in PATH by default.
 
 .EXAMPLE
@@ -44,7 +44,6 @@ function Write-Done {
 function Write-Fail {
     param($Message)
     Write-Host " failed" -ForegroundColor Red
-    Write-Host ""
     Write-Host "  $Message" -ForegroundColor Red
 }
 
@@ -59,24 +58,18 @@ function Install-Ccbox {
         [string]$Ver
     )
 
-    $binaryName = "ccbox-bin-$Ver-$Platform.exe"
+    $binaryName = "ccbox-$Ver-$Platform.exe"
     $binaryUrl = "https://github.com/$Repo/releases/download/$Ver/$binaryName"
-    $wrapperUrl = "https://raw.githubusercontent.com/$Repo/$Ver/scripts/wrapper/ccbox.cmd"
 
     if (!(Test-Path $InstallDir)) {
         New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     }
 
-    $targetBinary = Join-Path $InstallDir "ccbox-bin.exe"
-    $targetCmd = Join-Path $InstallDir "ccbox.cmd"
+    $target = Join-Path $InstallDir "ccbox.exe"
 
     try {
-        Write-Task "Downloading ccbox-bin.exe ..."
-        Invoke-WebRequest -Uri $binaryUrl -OutFile $targetBinary -UseBasicParsing
-        Write-Done
-
-        Write-Task "Downloading ccbox.cmd ..."
-        Invoke-WebRequest -Uri $wrapperUrl -OutFile $targetCmd -UseBasicParsing
+        Write-Task "Downloading ccbox ..."
+        Invoke-WebRequest -Uri $binaryUrl -OutFile $target -UseBasicParsing
         Write-Done
     }
     catch {
@@ -84,13 +77,13 @@ function Install-Ccbox {
         throw
     }
 
+    $size = [math]::Round((Get-Item $target).Length / 1MB, 1)
+
     Write-Host ""
     Write-Host "  Installed to " -NoNewline -ForegroundColor DarkGray
     Write-Host $InstallDir
-    Write-Host "    ccbox.cmd     " -NoNewline -ForegroundColor Cyan
-    Write-Host "wrapper" -ForegroundColor DarkGray
-    Write-Host "    ccbox-bin.exe " -NoNewline -ForegroundColor Cyan
-    Write-Host "binary" -ForegroundColor DarkGray
+    Write-Host "    ccbox.exe " -NoNewline -ForegroundColor Cyan
+    Write-Host "${size}MB" -ForegroundColor DarkGray
 }
 
 function Test-InPath {
@@ -122,36 +115,26 @@ function Test-Docker {
 }
 
 function Main {
-    # Banner
     Write-Host ""
     Write-Host "  ccbox" -ForegroundColor White -NoNewline
     Write-Host " installer" -ForegroundColor DarkGray
     Write-Host ""
 
-    # Detect platform
     $arch = if ([Environment]::Is64BitOperatingSystem) { "x64" } else { "x86" }
     $platform = "windows-$arch"
 
-    # Get version
     if (!$Version) {
         $Version = Get-LatestVersion
     }
 
-    # Info
     Write-Step "Platform" $platform
     Write-Step "Version " $Version
     Write-Host ""
 
-    # Install
     Install-Ccbox -Platform $platform -Ver $Version
-
-    # Check PATH
     Test-InPath
-
-    # Check Docker
     Test-Docker
 
-    # Footer
     Write-Host ""
     Write-Host "  Done! " -NoNewline -ForegroundColor Green
     Write-Host "Run " -NoNewline -ForegroundColor DarkGray
