@@ -212,23 +212,25 @@ D:/GitHub/project         ↔    /d/GitHub/project
 </details>
 
 <details>
-<summary><b>WSL session compatibility (symlink bridge)</b></summary>
+<summary><b>Cross-environment session compatibility (symlink bridge)</b></summary>
 
-WSL and Docker encode project paths differently in Claude's session storage:
+Different environments encode project paths differently in Claude's session storage:
 
 | Environment | Path | Encoded as |
 |-------------|------|------------|
+| Native Windows | `D:\GitHub\project` | `D--GitHub-project` |
 | WSL | `/mnt/d/GitHub/project` | `mnt-d-GitHub-project` |
 | ccbox/Docker | `/d/GitHub/project` | `d-GitHub-project` |
 
-Claude stores sessions in `.claude/projects/<encoded-path>/`. Without bridging, sessions created in WSL wouldn't appear in ccbox (and vice versa).
+Claude stores sessions in `.claude/projects/<encoded-path>/`. Without bridging, sessions created in one environment wouldn't appear in another.
 
-**What ccbox does:** Automatically creates symlinks between both encodings:
+**What ccbox does:** Automatically creates symlinks between encodings:
 ```
-.claude/projects/d-GitHub-project → mnt-d-GitHub-project
+.claude/projects/d-GitHub-project → D--GitHub-project    (Windows bridge)
+.claude/projects/d-GitHub-project → mnt-d-GitHub-project (WSL bridge)
 ```
 
-**Result:** Sessions created in WSL are visible in ccbox, and sessions created in ccbox are visible in WSL. You can switch between environments freely without losing your conversation history.
+**Result:** Sessions created in native Windows Claude Code, WSL, or ccbox are all accessible from each other. You can switch between environments freely without losing your conversation history.
 
 </details>
 

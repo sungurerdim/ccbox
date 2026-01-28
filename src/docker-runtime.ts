@@ -453,14 +453,24 @@ export function getDockerRunCmd(
   // Project mount (always) - mount to host-like path for session compatibility
   cmd.push("-v", `${dockerProjectPath}:${hostProjectPath}:rw`);
 
-  // WSL session compatibility: detect WSL paths and pass for symlink bridge
-  // WSL uses /mnt/d/... which encodes differently than /d/...
-  // Entrypoint will create symlinks between encodings for session sharing
+  // Session compatibility bridges for cross-environment session sharing
+  // Different environments encode project paths differently in .claude/projects/
   const originalPath = resolve(projectPath);
+
+  // WSL session bridge: /mnt/d/... encodes as mnt-d-... vs /d/... as d-...
   const wslMatch = originalPath.match(/^\/mnt\/([a-z])(\/.*)?$/i);
   if (wslMatch) {
-    // Pass original WSL path for encoding bridge in entrypoint
     cmd.push("-e", `CCBOX_WSL_ORIGINAL_PATH=${originalPath}`);
+  }
+
+  // Windows session bridge: D:\... encodes as D--... vs /d/... as d-...
+  // Native Windows Claude uses backslash paths with drive letter (D:\GitHub\project)
+  // Docker/ccbox uses POSIX paths (/d/GitHub/project)
+  const winMatch = dockerProjectPath.match(/^([A-Za-z]):[/\\]/);
+  if (winMatch && platform() === "win32") {
+    // Pass original Windows path for encoding bridge in entrypoint
+    // Format: D:/GitHub/project (forward slashes for shell compatibility)
+    cmd.push("-e", `CCBOX_WIN_ORIGINAL_PATH=${dockerProjectPath}`);
   }
 
   // Claude config mount
