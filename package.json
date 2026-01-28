@@ -13,12 +13,12 @@
     "build": "bun build src/cli.ts --outfile dist/ccbox.js --target bun --minify",
     "build:binary": "bun run scripts/build.ts",
     "build:binary:all": "bun run scripts/build.ts --all",
-    "test": "npx tsx tests/verify.mjs",
-    "test:e2e": "npx tsx tests/e2e.mjs",
-    "test:all": "npx tsx tests/verify.mjs && npx tsx tests/e2e.mjs",
+    "test": "bun run tests/verify.mjs",
+    "test:e2e": "bun run tests/e2e.mjs",
+    "test:all": "bun run tests/verify.mjs && bun run tests/e2e.mjs",
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",
-    "circular": "npx madge --circular src/"
+    "circular": "bunx madge --circular src/"
   },
   "keywords": [
     "claude",
@@ -40,11 +40,11 @@
   },
   "homepage": "https://github.com/sungurerdim/ccbox#readme",
   "dependencies": {
-    "@inquirer/prompts": "^7.10.1",
+    "@inquirer/prompts": "^8.2.0",
     "chalk": "^5.6.2",
-    "commander": "^13.1.0",
+    "commander": "^14.0.2",
     "execa": "^9.6.1",
-    "globby": "^14.1.0"
+    "globby": "^16.1.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
@@ -53,7 +53,7 @@
     "@typescript-eslint/eslint-plugin": "^8.53.1",
     "@typescript-eslint/parser": "^8.53.1",
     "eslint": "^9.39.2",
-    "tsx": "^4.21.0",
+    "madge": "^8.0.0",
     "typescript": "^5.9.3"
   }
 }
