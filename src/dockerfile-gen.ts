@@ -112,20 +112,24 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \\
 
 const FUSE_BUILD = generateFuseBuild();
 
-// fakepath.so - LD_PRELOAD library for Windows path compatibility
+// fakepath.so - pre-compiled LD_PRELOAD library for Windows path compatibility
 // Intercepts getcwd, open, stat, etc. to translate /d/... <-> D:/...
-// This ensures Claude Code sees Windows-style paths for identical session encoding
+// Pre-compiled like FUSE - no gcc needed at image build time
 function generateFakepathBuild(): string {
   return `
 # fakepath.so - LD_PRELOAD library for Windows path compatibility
 # Translates paths: getcwd() returns D:/... instead of /d/...
 #                   open("D:/...") accesses /d/...
-# This makes session encoding identical to native Windows Claude Code
-COPY fakepath.c /tmp/
-RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev \\
-    && gcc -shared -fPIC -Wall -O2 -s -o /usr/lib/fakepath.so /tmp/fakepath.c -ldl -D_GNU_SOURCE \\
-    && rm -f /tmp/fakepath.c \\
-    && rm -rf /var/lib/apt/lists/*
+# Pre-compiled binary - no gcc needed (~2GB download savings)
+ARG TARGETARCH=amd64
+COPY fakepath-amd64.so fakepath-arm64.so /tmp/
+RUN if [ "$TARGETARCH" = "arm64" ]; then \\
+        cp /tmp/fakepath-arm64.so /usr/lib/fakepath.so; \\
+    else \\
+        cp /tmp/fakepath-amd64.so /usr/lib/fakepath.so; \\
+    fi \\
+    && chmod 755 /usr/lib/fakepath.so \\
+    && rm -f /tmp/fakepath-*.so
 `;
 }
 
