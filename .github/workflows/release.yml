@@ -108,7 +108,6 @@ jobs:
         run: |
           cp scripts/wrapper/ccbox.sh dist/
           cp scripts/wrapper/ccbox.cmd dist/
-          cp scripts/wrapper/ccbox.ps1 dist/
 
       - name: List artifacts
         run: ls -la dist/

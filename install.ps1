@@ -61,8 +61,7 @@ function Install-Ccbox {
 
     $binaryName = "ccbox-bin-$Ver-$Platform.exe"
     $binaryUrl = "https://github.com/$Repo/releases/download/$Ver/$binaryName"
-    $wrapperCmdUrl = "https://raw.githubusercontent.com/$Repo/$Ver/scripts/wrapper/ccbox.cmd"
-    $wrapperPs1Url = "https://raw.githubusercontent.com/$Repo/$Ver/scripts/wrapper/ccbox.ps1"
+    $wrapperUrl = "https://raw.githubusercontent.com/$Repo/$Ver/scripts/wrapper/ccbox.cmd"
 
     if (!(Test-Path $InstallDir)) {
         New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
@@ -70,7 +69,6 @@ function Install-Ccbox {
 
     $targetBinary = Join-Path $InstallDir "ccbox-bin.exe"
     $targetCmd = Join-Path $InstallDir "ccbox.cmd"
-    $targetPs1 = Join-Path $InstallDir "ccbox.ps1"
 
     try {
         Write-Task "Downloading ccbox-bin.exe ..."
@@ -78,11 +76,7 @@ function Install-Ccbox {
         Write-Done
 
         Write-Task "Downloading ccbox.cmd ..."
-        Invoke-WebRequest -Uri $wrapperCmdUrl -OutFile $targetCmd -UseBasicParsing
-        Write-Done
-
-        Write-Task "Downloading ccbox.ps1 ..."
-        Invoke-WebRequest -Uri $wrapperPs1Url -OutFile $targetPs1 -UseBasicParsing
+        Invoke-WebRequest -Uri $wrapperUrl -OutFile $targetCmd -UseBasicParsing
         Write-Done
     }
     catch {
@@ -94,8 +88,6 @@ function Install-Ccbox {
     Write-Host "  Installed to " -NoNewline -ForegroundColor DarkGray
     Write-Host $InstallDir
     Write-Host "    ccbox.cmd     " -NoNewline -ForegroundColor Cyan
-    Write-Host "launcher" -ForegroundColor DarkGray
-    Write-Host "    ccbox.ps1     " -NoNewline -ForegroundColor Cyan
     Write-Host "wrapper" -ForegroundColor DarkGray
     Write-Host "    ccbox-bin.exe " -NoNewline -ForegroundColor Cyan
     Write-Host "binary" -ForegroundColor DarkGray
