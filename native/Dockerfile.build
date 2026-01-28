@@ -1,4 +1,4 @@
-# Multi-arch build for ccbox-fuse
+# Multi-arch build for ccbox native components
 FROM debian:bookworm-slim AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -6,10 +6,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
-COPY ccbox-fuse.c .
+COPY ccbox-fuse.c fakepath.c ./
 
-# Static linking for portability (only link fuse3 dynamically as it requires kernel interface)
+# Build FUSE helper (requires libfuse3)
 RUN gcc -Wall -O2 -s -o ccbox-fuse ccbox-fuse.c $(pkg-config fuse3 --cflags --libs)
+
+# Build fakepath.so (LD_PRELOAD library for path translation)
+RUN gcc -shared -fPIC -Wall -O2 -s -o fakepath.so fakepath.c -ldl -D_GNU_SOURCE
 
 FROM scratch
 COPY --from=builder /build/ccbox-fuse /ccbox-fuse
+COPY --from=builder /build/fakepath.so /fakepath.so

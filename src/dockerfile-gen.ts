@@ -112,6 +112,25 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \\
 
 const FUSE_BUILD = generateFuseBuild();
 
+// fakepath.so - LD_PRELOAD library for Windows path compatibility
+// Intercepts getcwd, open, stat, etc. to translate /d/... <-> D:/...
+// This ensures Claude Code sees Windows-style paths for identical session encoding
+function generateFakepathBuild(): string {
+  return `
+# fakepath.so - LD_PRELOAD library for Windows path compatibility
+# Translates paths: getcwd() returns D:/... instead of /d/...
+#                   open("D:/...") accesses /d/...
+# This makes session encoding identical to native Windows Claude Code
+COPY fakepath.c /tmp/
+RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev \\
+    && gcc -shared -fPIC -Wall -O2 -s -o /usr/lib/fakepath.so /tmp/fakepath.c -ldl -D_GNU_SOURCE \\
+    && rm -f /tmp/fakepath.c \\
+    && rm -rf /var/lib/apt/lists/*
+`;
+}
+
+const FAKEPATH_BUILD = generateFakepathBuild();
+
 // Python dev tools
 // All binaries copied to /usr/local/bin for non-root user access
 // HOME=/root is set in base image, so installers use /root/.local
@@ -192,6 +211,7 @@ ENV TZ="\${TZ}"
 ENV DEBIAN_FRONTEND=noninteractive
 ${COMMON_TOOLS}
 ${FUSE_BUILD}
+${FAKEPATH_BUILD}
 ${CLAUDE_CODE_INSTALL}
 ${ENTRYPOINT_SETUP}
 `;
@@ -221,6 +241,7 @@ ENV TZ="\${TZ}"
 ENV DEBIAN_FRONTEND=noninteractive
 ${COMMON_TOOLS}
 ${FUSE_BUILD}
+${FAKEPATH_BUILD}
 ${CLAUDE_CODE_INSTALL}
 # golangci-lint (latest)
 RUN curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b /usr/local/bin
@@ -242,6 +263,7 @@ ENV TZ="\${TZ}"
 ENV DEBIAN_FRONTEND=noninteractive
 ${COMMON_TOOLS}
 ${FUSE_BUILD}
+${FAKEPATH_BUILD}
 ${CLAUDE_CODE_INSTALL}
 # Rust tools (clippy + rustfmt)
 RUN rustup component add clippy rustfmt
@@ -263,6 +285,7 @@ ENV TZ="\${TZ}"
 ENV DEBIAN_FRONTEND=noninteractive
 ${COMMON_TOOLS}
 ${FUSE_BUILD}
+${FAKEPATH_BUILD}
 ${CLAUDE_CODE_INSTALL}
 # Maven (latest from Apache)
 RUN set -eux; \\

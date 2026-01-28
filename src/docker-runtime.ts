@@ -5,7 +5,7 @@
  * Separated from generator.ts to reduce file size and improve modularity.
  */
 
-import { existsSync, readFileSync, readlinkSync } from "node:fs";
+import { existsSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
 import { platform } from "node:os";
 import { join, resolve } from "node:path";
 import { env } from "node:process";
@@ -215,7 +215,7 @@ export function buildClaudeArgs(options: {
 
 /**
  * Add minimal mounts for vanilla Claude Code experience.
- * Used for base image and --fresh mode.
+ * Used only with --fresh flag for clean slate testing.
  * Only mounts auth + settings files - no plugins/rules/commands.
  */
 function addMinimalMounts(cmd: string[], claudeConfig: string): void {
@@ -224,7 +224,8 @@ function addMinimalMounts(cmd: string[], claudeConfig: string): void {
   // Ephemeral .claude directory (tmpfs, lost on container exit)
   cmd.push("--tmpfs", `/ccbox/.claude:rw,size=64m,uid=${uid},gid=${gid},mode=0755`);
 
-  // Mount only essential files for auth and preferences
+  // Mount only essential files for auth and preferences (vanilla Claude experience)
+  // Excludes: plugins, rules, custom commands - for clean slate
   const essentialFiles = [".credentials.json", "settings.json", "settings.local.json"];
   for (const f of essentialFiles) {
     const hostFile = join(claudeConfig, f);
@@ -235,11 +236,29 @@ function addMinimalMounts(cmd: string[], claudeConfig: string): void {
   }
 
   // Mount ~/.claude.json for onboarding state (hasCompletedOnboarding flag)
+  // Claude Code may look in two locations:
+  // 1. ~/.claude.json (home directory) - $HOME/.claude.json
+  // 2. ~/.claude/.claude.json (inside config dir) - $CLAUDE_CONFIG_DIR/.claude.json
+  // Mount both if they exist to ensure Claude finds the onboarding state
   const homeDir = join(claudeConfig, "..");
-  const claudeJsonHost = join(homeDir, ".claude.json");
-  if (existsSync(claudeJsonHost)) {
-    const dockerClaudeJson = resolveForDocker(claudeJsonHost);
-    cmd.push("-v", `${dockerClaudeJson}:/ccbox/.claude.json:rw`);
+  const claudeJsonHome = join(homeDir, ".claude.json");
+  const claudeJsonConfig = join(claudeConfig, ".claude.json");
+
+  // Mount home dir location -> /ccbox/.claude.json
+  if (existsSync(claudeJsonHome)) {
+    const dockerPath = resolveForDocker(claudeJsonHome);
+    cmd.push("-v", `${dockerPath}:/ccbox/.claude.json:rw`);
+  } else {
+    // Create empty if missing (Docker would create a directory instead)
+    writeFileSync(claudeJsonHome, "{}", { encoding: "utf-8" });
+    const dockerPath = resolveForDocker(claudeJsonHome);
+    cmd.push("-v", `${dockerPath}:/ccbox/.claude.json:rw`);
+  }
+
+  // Mount config dir location -> /ccbox/.claude/.claude.json (if exists and different)
+  if (existsSync(claudeJsonConfig)) {
+    const dockerPath = resolveForDocker(claudeJsonConfig);
+    cmd.push("-v", `${dockerPath}:/ccbox/.claude/.claude.json:rw`);
   }
 
   // Signal minimal mount mode
@@ -480,11 +499,15 @@ export function getDockerRunCmd(
   // Windows session bridge: D:\... encodes as D--... vs /d/... as d-...
   // Native Windows Claude uses backslash paths with drive letter (D:\GitHub\project)
   // Docker/ccbox uses POSIX paths (/d/GitHub/project)
+  // NOTE: CCBOX_WIN_ORIGINAL_PATH is used for session bridge symlinks only,
+  // NOT for fakepath.so transformation. Bun bypasses glibc (uses direct syscalls),
+  // so LD_PRELOAD-based fakepath.so doesn't work for input functions (lstat, open, etc.)
+  // Session compatibility is handled via symlink bridges in entrypoint instead.
   const winMatch = dockerProjectPath.match(/^([A-Za-z]):[/\\]/);
   if (winMatch && platform() === "win32") {
-    // Pass original Windows path for encoding bridge in entrypoint
+    // Pass original Windows path for session bridge symlinks (NOT for fakepath.so)
     // Format: D:/GitHub/project (forward slashes for shell compatibility)
-    cmd.push("-e", `CCBOX_WIN_ORIGINAL_PATH=${dockerProjectPath}`);
+    cmd.push("-e", `CCBOX_WIN_ORIGINAL_BRIDGE=${dockerProjectPath}`);
   }
 
   // Claude config mount
@@ -492,8 +515,9 @@ export function getDockerRunCmd(
   // - Fresh mode: same as base (explicit --fresh flag)
   // - Other images: full .claude mount with FUSE in-place overlay for path transformation
   const dockerClaudeConfig = resolveForDocker(claudeConfig);
-  const isBaseImage = stack === "base";
-  const useMinimalMount = options.fresh || isBaseImage;
+  // Only use minimal mount when --fresh is explicitly requested
+  // All stacks (including base) get full .claude mount by default (plugins, rules, etc.)
+  const useMinimalMount = options.fresh ?? false;
 
   if (useMinimalMount) {
     addMinimalMounts(cmd, claudeConfig);
@@ -513,16 +537,20 @@ export function getDockerRunCmd(
   }
 
   // Mount ~/.claude.json for onboarding state (hasCompletedOnboarding flag)
-  // This file is at $HOME/.claude.json, OUTSIDE the .claude/ directory
-  // Without it, Claude Code will restart onboarding in new project directories
+  // Claude Code may look in two locations:
+  // 1. ~/.claude.json (home directory) - $HOME/.claude.json
+  // 2. ~/.claude/.claude.json (inside config dir) - already included in .claude mount
   // Note: addMinimalMounts already handles this for minimal mount mode
   if (!useMinimalMount) {
+    // In non-minimal mode, .claude is already mounted, so .claude/.claude.json is available
+    // Mount home dir location if it exists (for backwards compat with native installs)
     const homeDir = join(claudeConfig, "..");
-    const claudeJsonHost = join(homeDir, ".claude.json");
-    if (existsSync(claudeJsonHost)) {
-      const dockerClaudeJson = resolveForDocker(claudeJsonHost);
+    const claudeJsonHome = join(homeDir, ".claude.json");
+    if (existsSync(claudeJsonHome)) {
+      const dockerClaudeJson = resolveForDocker(claudeJsonHome);
       cmd.push("-v", `${dockerClaudeJson}:/ccbox/.claude.json:rw`);
     }
+    // .claude/.claude.json is already available via the .claude mount
   }
 
   // Working directory - use host path for session compatibility
@@ -566,10 +594,10 @@ export function getDockerRunCmd(
   }
 
   // Persistent paths for container awareness
-  // Base image and fresh mode: only project dir persists (.claude is ephemeral)
-  // Other images: both project and .claude persist
+  // Fresh mode: only project dir persists (.claude is ephemeral)
+  // Normal mode (including base): both project and .claude persist
   // Use host path for user-facing messages (matches pwd output)
-  const persistentPaths = (options.fresh || isBaseImage)
+  const persistentPaths = options.fresh
     ? hostProjectPath
     : `${hostProjectPath}, /ccbox/.claude`;
   cmd.push("-e", `CCBOX_PERSISTENT_PATHS=${persistentPaths}`);
@@ -591,8 +619,8 @@ export function getDockerRunCmd(
     pathMappings.push(`${originalPath}:${hostProjectPath}`);
   }
 
-  // Map .claude config (unless fresh/base image mode)
-  if (!options.fresh && !isBaseImage) {
+  // Map .claude config (unless fresh mode which uses minimal mount)
+  if (!options.fresh) {
     const normalizedClaudePath = claudeConfig.replace(/\\/g, "/");
     pathMappings.push(`${normalizedClaudePath}:/ccbox/.claude`);
   }
