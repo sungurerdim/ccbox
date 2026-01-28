@@ -46,11 +46,15 @@ function test(name, fn) {
   }
 }
 
+// Detect if bun is available (running under bun or bun command exists)
+const hasBun = typeof Bun !== "undefined" || (() => {
+  try { execSync("bun --version", { stdio: "ignore" }); return true; } catch { return false; }
+})();
+const CLI_RUNTIME = hasBun ? "bun run" : "npx tsx";
+
 function cli(args) {
   try {
-    // Try bun first, fall back to tsx if bun not available
-    const runtime = process.env.BUN_INSTALL ? "bun run" : "npx tsx";
-    const stdout = execSync(`${runtime} ${ROOT}/src/cli.ts ${args}`, {
+    const stdout = execSync(`${CLI_RUNTIME} ${ROOT}/src/cli.ts ${args}`, {
       encoding: "utf8", timeout: 30000, env: { ...process.env, NO_COLOR: "1" }
     });
     return { stdout, code: 0 };
