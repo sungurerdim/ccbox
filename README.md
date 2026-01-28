@@ -1,261 +1,283 @@
 # ccbox
 
-Run Claude Code in isolated Docker containers. One command, zero configuration.
+**Use Claude Code with confidence: it can't escape your project, can't touch your system, but works at full power.**
 
-## Install
+```bash
+cd your-project
+ccbox
+```
+
+With ccbox, Claude Code runs in an isolated Docker container where it can only see and modify your current project - nothing else on your system is accessible.
+
+## Why ccbox?
+
+| Problem | How ccbox solves it |
+|---------|---------------------|
+| Claude has access to your entire filesystem | Container only mounts current project directory |
+| Every file edit/command needs approval | Bypass mode enabled - safe because container is isolated |
+| A mistake could affect other projects or system files | Container can't access anything outside your project |
+| Need to install project dependencies manually | Dependencies detected and installed automatically |
+| Need to set up Git and Claude auth in each environment | Your host's Git config and Claude credentials are forwarded |
+
+**Also:** Auto-detects project type (Python, Node, Go, etc.) and works on Windows, macOS, Linux, and WSL2.
+
+## Installation
 
 **macOS / Linux / WSL:**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sungurerdim/ccbox/main/install.sh | bash
 ```
 
-**Windows (PowerShell):**
+**Windows (PowerShell as Admin):**
 ```powershell
 irm https://raw.githubusercontent.com/sungurerdim/ccbox/main/install.ps1 | iex
 ```
 
-> Installs to system PATH automatically. Or download binaries from [Releases](https://github.com/sungurerdim/ccbox/releases).
+**Requirements:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) (ccbox starts it automatically if not running)
 
-**Requirements:** Docker Desktop or Docker Engine
-
-## Quick Start
+## Usage
 
 ```bash
-cd your-project && ccbox     # Run (interactive)
-ccbox -y                     # Run (unattended)
-ccbox -p "fix the tests"     # Run with prompt (non-interactive)
+ccbox                        # Interactive session
+ccbox -y                     # Skip all prompts (CI/CD, scripts)
+ccbox -p "fix the tests"     # Start with a prompt
+ccbox -s python              # Force specific stack
+ccbox stacks                 # List all 20 stacks
 ```
 
-## Why ccbox?
+### Dependency Installation
 
-- **Isolated**: Container only accesses current project directory - nothing else
-- **Fast**: Bypass mode enabled by default (safe because container is sandboxed)
-- **Simple**: Single command to start, auto-detects everything
-- **Auto-start**: Docker Desktop starts automatically if not running (Windows/Mac)
-- **Git Auto-detect**: Git credentials auto-detected from host system
-- **Persistent**: Claude settings stay on host (`~/.claude`), survive container restarts
-- **Clean**: No config files in your project directories
-- **Cross-platform**: Windows, macOS, Linux, WSL2, and ARM64 support
-
-## Claude Code CLI vs ccbox
-
-| Aspect | Claude Code CLI | ccbox |
-|--------|-----------------|-------|
-| **Installation** | `claude install` | `curl ... \| bash` |
-| **File Access** | Full system access | Only current project directory |
-| **Permission Prompts** | Every tool use requires approval | Bypass mode (container is sandbox) |
-| **System Impact** | Can modify any file | Isolated - nothing persists outside |
-| **Other Projects** | Accessible | Completely inaccessible |
-| **Home Directory** | Full access | Only `~/.claude` (settings) |
-| **Startup Time** | Instant | First run: ~2 min, then instant |
-| **Dependencies** | User installs manually | Pre-installed dev tools |
-
-## Language Stacks
-
-ccbox supports 20 language stacks organized in 3 categories. Stacks are built on top of each other for efficient layering.
-
-### Core Stacks
-
-| Stack | Includes | Size | Base |
-|-------|----------|------|------|
-| `base` | Claude Code only (vanilla) | ~200MB | debian:slim |
-| `python` | Python + uv + ruff + pytest + mypy | ~350MB | base |
-| `web` | Node.js + TypeScript + eslint + vitest | ~400MB | base |
-| `go` | Go + golangci-lint | ~550MB | golang:latest |
-| `rust` | Rust + clippy + rustfmt | ~700MB | rust:latest |
-| `java` | JDK + Maven + Gradle | ~600MB | temurin:latest |
-| `cpp` | C++ + CMake + Clang + Conan | ~450MB | base |
-| `dotnet` | .NET SDK + C# + F# | ~500MB | base |
-| `swift` | Swift | ~500MB | base |
-| `dart` | Dart SDK | ~300MB | base |
-| `lua` | Lua + LuaRocks | ~250MB | base |
-
-### Combined Stacks
-
-| Stack | Includes | Size | Base |
-|-------|----------|------|------|
-| `jvm` | Java + Scala + Clojure + Kotlin | ~900MB | java |
-| `functional` | Haskell + OCaml + Elixir/Erlang | ~900MB | base |
-| `scripting` | Ruby + PHP + Perl | ~450MB | base |
-| `systems` | C++ + Zig + Nim | ~550MB | cpp |
-
-### Use-Case Stacks
-
-| Stack | Includes | Size | Base |
-|-------|----------|------|------|
-| `data` | Python + R + Julia (data science) | ~800MB | python |
-| `ai` | Python + Jupyter + PyTorch + TensorFlow | ~2500MB | python |
-| `mobile` | Dart + Flutter SDK + Android tools | ~1500MB | dart |
-| `game` | C++ + SDL2 + Lua + OpenGL | ~600MB | cpp |
-| `fullstack` | Node.js + Python + DB clients | ~700MB | web |
-
-> **Auto-detection**: ccbox automatically detects your project type and recommends the appropriate stack based on configuration files (package.json, Cargo.toml, go.mod, etc.)
-
-## Commands
+ccbox detects dependencies (package.json, requirements.txt, go.mod, etc.) and installs them automatically.
 
 ```bash
-ccbox [options] [path]   # Run Claude Code in container
-ccbox stacks             # List available stacks
-ccbox update [-a]        # Rebuild images
-ccbox clean [-f]         # Remove ccbox containers/images
-ccbox prune [-f]         # Deep clean ccbox resources
+ccbox                   # All deps including dev tools (default)
+ccbox --deps-prod       # Production only
+ccbox --no-deps         # Skip installation
+```
+
+### Environment Variables
+
+```bash
+ccbox -e MY_API_KEY=secret                    # Pass to container
+ccbox -e CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70   # Override ccbox defaults
 ```
 
 ## Options
 
-| Option | Description |
-|--------|-------------|
-| `-y, --yes` | Unattended mode |
-| `-s, --stack <name>` | Language stack |
-| `-b, --build` | Build only, don't run |
-| `-p, --prompt <text>` | Initial prompt (non-interactive) |
-| `-m, --model <name>` | Model (opus/sonnet/haiku) |
-| `-q, --quiet` | Quiet mode |
-| `--fresh` | Fresh mode (auth only, clean slate) |
-| `--deps` | Install all dependencies |
-| `--deps-prod` | Install production deps only |
-| `--no-deps` | Skip dependency installation |
-| `-d` | Debug mode (entrypoint logs) |
-| `-dd` | Verbose debug (+ stream output) |
-| `-U, --unrestricted` | Remove CPU/priority limits |
-| `-e, --env <K=V>` | Pass env vars to container (can override defaults) |
-| `--progress <mode>` | Docker build output (auto/plain/tty) |
+| Option | Default | Description |
+|--------|---------|-------------|
+| `-y, --yes` | off | Skip all prompts |
+| `-s, --stack <name>` | auto | Language stack |
+| `-p, --prompt <text>` | - | Initial prompt |
+| `-m, --model <name>` | - | Model (opus/sonnet/haiku) |
+| `-q, --quiet` | off | Only show Claude's output |
+| `--deps` | **on** | Install all dependencies |
+| `--deps-prod` | off | Production deps only |
+| `--no-deps` | off | Skip dependency installation |
+| `--fresh` | off | Clean slate (auth preserved) |
+| `-d` / `-dd` | off | Debug / verbose debug |
+| `-U, --unrestricted` | off | Remove CPU/memory limits |
+| `-e, --env <K=V>` | - | Pass environment variable |
 
-### Environment Variables
+**Other commands:** `ccbox update`, `ccbox clean`, `ccbox prune`
 
-Pass custom environment variables to the container with `-e`. Variables are added **after** ccbox defaults, allowing you to override them:
+## Language Stacks
 
-```bash
-# Disable Claude Code's task system
-ccbox -e CLAUDE_CODE_ENABLE_TASKS=false
+ccbox auto-detects your project type. Use `-s <stack>` to override.
 
-# Multiple variables
-ccbox -e MY_API_KEY=secret -e DEBUG=1
+<details>
+<summary><b>View all 20 stacks</b></summary>
 
-# Override ccbox defaults
-ccbox -e FORCE_COLOR=0 -e CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70
-```
+**Core Stacks:**
+| Stack | Includes |
+|-------|----------|
+| `base` | Claude Code only |
+| `python` | Python 3, uv, ruff, pytest, mypy |
+| `web` | Node.js, TypeScript, pnpm, eslint, vitest |
+| `go` | Go, golangci-lint |
+| `rust` | Rust, cargo, clippy, rustfmt |
+| `java` | JDK 21, Maven, Gradle |
+| `cpp` | GCC, Clang, CMake, Conan |
+| `dotnet` | .NET SDK, C#, F# |
+| `swift` | Swift toolchain |
+| `dart` | Dart SDK |
+| `lua` | Lua, LuaRocks |
 
-**Common overrides:**
+**Combined:** `jvm`, `functional`, `scripting`, `systems`
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CLAUDE_CODE_ENABLE_TASKS` | `true` | Enable/disable task management system |
-| `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` | `85` | Context compaction threshold (%) |
-| `FORCE_COLOR` | `1` | Force colored output |
+**Use-Case:** `data`, `ai`, `fullstack`, `mobile`, `game`
 
-## Security
-
-ccbox provides strong isolation:
-
-- Container runs as non-root user with host-matching UID/GID
-- `--cap-drop=ALL` - all Linux capabilities dropped
-- `--security-opt=no-new-privileges` - no privilege escalation
-- `--pids-limit=2048` - fork bomb protection
-- Tmpfs for `/tmp` - no disk residue
-- Path validation - directory traversal prevention
-- Project directory is the only mounted volume
-
-> For detailed architecture documentation, see [ARCHITECTURE.md](ARCHITECTURE.md).
+</details>
 
 ## How It Works
 
-1. **Detection**: Analyzes project files (package.json, Cargo.toml, go.mod, pyproject.toml, etc.)
-2. **Stack Selection**: Recommends appropriate stack based on detected languages
-3. **Image Building**: Builds Docker image with efficient layering (parent stacks reused)
-4. **Dependency Installation**: Optionally installs project dependencies during image build
-5. **Container Launch**: Mounts project directory, forwards Git config and Claude credentials
-6. **Interactive Session**: Runs Claude Code with bypass permissions (safe in container)
-
-### Image Layering
-
 ```
-debian:bookworm-slim
-    └── base (Claude Code)
-        ├── python → data, ai
-        ├── web → fullstack
-        ├── cpp → systems, game
-        ├── dart → mobile
-        └── functional, scripting, dotnet, swift, lua
-
-golang:latest → go
-rust:latest → rust
-eclipse-temurin:latest → java → jvm
+┌──────────────────────────────────────────────────────────┐
+│  $ ccbox                                                 │
+└────────────────────────┬─────────────────────────────────┘
+                         ▼
+┌──────────────────────────────────────────────────────────┐
+│  1. Detect project type (package.json? Cargo.toml?)      │
+│  2. Build/reuse Docker image with language tools         │
+│  3. Install project dependencies                         │
+│  4. Mount project + forward Git/Claude config            │
+│  5. Launch Claude Code with bypass mode                  │
+└────────────────────────┬─────────────────────────────────┘
+                         ▼
+┌──────────────────────────────────────────────────────────┐
+│  Docker Container                                        │
+│                                                          │
+│  ✓ Your project directory (read/write)                  │
+│  ✓ Git config and Claude credentials from host          │
+│  ✓ Pre-installed language tools + your dependencies     │
+│                                                          │
+│  ✗ No access to anything else on your system            │
+└──────────────────────────────────────────────────────────┘
 ```
 
-Images are cached locally. Subsequent runs are instant.
+**First run:** ~2 min (builds image) | **After:** Instant (cached)
 
-### Path Mapping
+## What Persists
 
-ccbox uses FUSE (Filesystem in Userspace) to transparently translate paths between host and container. This enables seamless cross-platform compatibility - Claude Code inside the container works exactly as if running on the host.
+| Location | Persists? | Notes |
+|----------|-----------|-------|
+| Project files | ✅ Yes | Mounted from host |
+| Claude settings (`~/.claude`) | ✅ Yes | Forwarded from host |
+| Installed dependencies | ✅ Yes | Baked into Docker image |
+| `/tmp` contents | ❌ No | RAM-based, ephemeral |
+| Anything outside project | ❌ N/A | Not accessible |
 
-**How it works:**
+## Security
 
-1. **FUSE overlay**: Host `.claude` directories are mounted via FUSE with on-the-fly path transformation
-2. **Kernel-level interception**: FUSE intercepts ALL file operations (works with Bun, Go, Rust - any runtime)
-3. **JSON path transform**: Paths inside `.json` config files are automatically converted
-4. **Bidirectional**:
-   - **Read**: `C:\Users\X\.claude` → `/ccbox/.claude`
-   - **Write**: `/ccbox/.claude` → `C:\Users\X\.claude`
+| Protection | Description |
+|------------|-------------|
+| Non-root user | Runs as your UID/GID |
+| Capabilities dropped | Minimal Linux capabilities |
+| Process limits | Max 2048 (fork bomb protection) |
+| Restricted mounts | Only project + `~/.claude` + tmpfs |
 
-**What gets transformed:**
+## Performance
 
-| Location | Path Transform | Content Transform |
-|----------|---------------|-------------------|
-| Global `.claude` | ✅ FUSE overlay | ✅ JSON files |
-| Project `.claude` | ✅ FUSE overlay | ✅ JSON files |
-| Project files | Direct mount | None needed |
+| Optimization | Benefit |
+|--------------|---------|
+| RAM-based `/tmp` | Zero SSD wear, 15-20x faster |
+| Git optimizations | Preload index, fscache, commit graph |
+| I/O priority (`ionice`) | Doesn't starve other processes |
+| CPU priority (`nice`) | System stays responsive |
 
-**Platform behavior:**
-- **Windows**: `C:\Users\X\.claude` → `/ccbox/.claude`
-- **macOS**: `/Users/X/.claude` → `/ccbox/.claude`
-- **Linux**: `/home/X/.claude` → `/ccbox/.claude`
+<details>
+<summary><b>Pre-configured Claude Code settings</b></summary>
 
-All transformations happen in-memory - host files are never modified by the transform process.
+| Variable | Value | Effect |
+|----------|-------|--------|
+| `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` | `85` | Auto-compacts at 85% capacity |
+| `CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR` | `1` (on) | Bash stays in project dir |
+| `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` | `1` (on) | Fewer network calls |
+| `CLAUDE_CODE_HIDE_ACCOUNT_INFO` | `1` (on) | Hides account in output |
+| `FORCE_AUTOUPDATE_PLUGINS` | `true` | Plugins auto-update |
+| `FORCE_COLOR` | `1` (on) | Colored output |
+| `DO_NOT_TRACK` | `1` (on) | No telemetry |
+| `TZ` | *(auto)* | Your host timezone |
+
+</details>
+
+## Limitations
+
+Docker container restrictions (not ccbox-specific):
+
+| Limitation | Workaround |
+|------------|------------|
+| No image paste (no clipboard) | Save image to project, reference by path |
+| No Docker-in-Docker | Use host Docker if needed |
+| No GUI apps | Use CLI alternatives |
+
+<details>
+<summary><b>Cross-platform path translation (FUSE)</b></summary>
+
+Claude Code saves absolute paths in config files. ccbox uses FUSE to translate paths between host and container so your sessions work everywhere.
+
+**Path mappings:**
+```
+Host                           Container
+C:/Users/You/.claude      ↔    /ccbox/.claude
+D:/GitHub/project         ↔    /d/GitHub/project
+```
+
+**What FUSE does:**
+- When Claude writes `/ccbox/.claude` → saved as `C:/Users/You/.claude`
+- When Claude reads config → `C:/Users/You/.claude` shown as `/ccbox/.claude`
+
+**Why it matters:** Without this, sessions created in ccbox wouldn't work with native Claude Code on your host (path mismatch). With FUSE, you can switch between ccbox and native Claude Code freely.
+
+</details>
+
+## Troubleshooting
+
+<details>
+<summary><b>Docker not running</b></summary>
+
+```bash
+# macOS
+open -a Docker
+
+# Windows
+Start-Process "Docker Desktop"
+
+# Linux
+sudo systemctl start docker
+```
+
+</details>
+
+<details>
+<summary><b>Out of memory (exit code 137)</b></summary>
+
+```bash
+ccbox -U   # Remove memory limits
+```
+
+</details>
+
+<details>
+<summary><b>Permission denied</b></summary>
+
+```bash
+sudo chown -R $(id -u):$(id -g) .
+```
+
+</details>
+
+<details>
+<summary><b>Wrong stack detected</b></summary>
+
+```bash
+ccbox -v        # See detection details
+ccbox -s web    # Force stack
+```
+
+</details>
+
+> More: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
 
 ## Uninstall
 
-<details>
-<summary><b>macOS / Linux / WSL</b></summary>
-
 ```bash
-rm -f ~/.local/bin/ccbox
-ccbox clean -f  # Remove Docker images (optional)
+ccbox clean -f                # Remove Docker images
+rm -f ~/.local/bin/ccbox      # Remove binary (Linux/Mac)
 ```
-
-</details>
-
-<details>
-<summary><b>Windows</b></summary>
-
-```powershell
-Remove-Item "$env:LOCALAPPDATA\Microsoft\WindowsApps\ccbox.exe"
-ccbox clean -f  # Remove Docker images (optional)
-```
-
-</details>
 
 ## Development
 
 ```bash
-# Install Bun
-curl -fsSL https://bun.sh/install | bash
-
-# Clone and setup
 git clone https://github.com/sungurerdim/ccbox.git
-cd ccbox
-bun install
+cd ccbox && bun install
 
-# Development
-bun run dev              # Run from source
-bun run typecheck        # TypeScript check
-bun run lint             # ESLint
-bun run test             # Run tests
-
-# Build
-bun run build:binary     # Build for current platform
-bun run build:binary:all # Build for all platforms
+bun run dev          # Run from source
+bun run test         # 194 tests
+bun run build:binary # Build binary
 ```
+
+> [CONTRIBUTING.md](CONTRIBUTING.md) | [ARCHITECTURE.md](ARCHITECTURE.md)
 
 ## License
 
