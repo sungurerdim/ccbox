@@ -47,7 +47,7 @@ async function fetchLatestRelease(): Promise<GitHubRelease | null> {
         "User-Agent": "ccbox",
       },
     });
-    if (!response.ok) return null;
+    if (!response.ok) {return null;}
     return (await response.json()) as GitHubRelease;
   } catch {
     return null;
@@ -67,8 +67,8 @@ function compareVersions(a: string, b: string): number {
   for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
     const numA = partsA[i] || 0;
     const numB = partsB[i] || 0;
-    if (numA < numB) return -1;
-    if (numA > numB) return 1;
+    if (numA < numB) {return -1;}
+    if (numA > numB) {return 1;}
   }
   return 0;
 }

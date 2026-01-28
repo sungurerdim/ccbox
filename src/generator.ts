@@ -276,7 +276,9 @@ _encode_path() {
     echo "$1" | tr ':./\\ ' '-----'
 }
 
-# Helper function to create bidirectional symlinks for session directories
+# Create session bridge symlinks between path encodings
+# Proactive: creates symlinks even if directories don't exist yet.
+# When Claude Code creates the directory, the symlink resolves automatically.
 _create_session_bridge() {
     local source_encoded="$1"
     local target_encoded="$2"
@@ -291,13 +293,18 @@ _create_session_bridge() {
 
     for _subdir in projects file-history todos shell-snapshots; do
         _base_dir="/ccbox/.claude/$_subdir"
-        if [[ -d "$_base_dir" ]]; then
-            # If source-encoded exists but target doesn't, link target -> source
-            if [[ -d "$_base_dir/$source_encoded" && ! -e "$_base_dir/$target_encoded" ]]; then
+        mkdir -p "$_base_dir"
+
+        if [[ -d "$_base_dir/$source_encoded" ]]; then
+            # Source dir exists (e.g. native client created it) -> point target to source
+            if [[ ! -e "$_base_dir/$target_encoded" ]]; then
                 ln -s "$source_encoded" "$_base_dir/$target_encoded" 2>/dev/null || true
                 _log "$bridge_name bridge: $_subdir/$target_encoded -> $source_encoded"
-            # If target exists but source-encoded doesn't, link source -> target
-            elif [[ -d "$_base_dir/$target_encoded" && ! -e "$_base_dir/$source_encoded" ]]; then
+            fi
+        else
+            # Source dir doesn't exist -> point source to target (proactive)
+            # Claude Code will create target_encoded (from $PWD), source symlink resolves to it
+            if [[ ! -e "$_base_dir/$source_encoded" ]]; then
                 ln -s "$target_encoded" "$_base_dir/$source_encoded" 2>/dev/null || true
                 _log "$bridge_name bridge: $_subdir/$source_encoded -> $target_encoded"
             fi
