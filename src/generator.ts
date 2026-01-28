@@ -260,6 +260,12 @@ fi
 # Create symlinks between encodings so sessions are visible across environments
 # ══════════════════════════════════════════════════════════════════════════════
 
+# Claude Code path encoding function
+# Matches Claude's exact encoding: replace : / \ . and space with -, remove leading -
+_encode_path() {
+    echo "$1" | tr ':./\\ ' '-----' | sed 's/^-//'
+}
+
 # Helper function to create bidirectional symlinks for session directories
 _create_session_bridge() {
     local source_encoded="$1"
@@ -292,20 +298,18 @@ _create_session_bridge() {
 # WSL bridge: /mnt/d/... encodes as mnt-d-... vs /d/... as d-...
 if [[ -n "$CCBOX_WSL_ORIGINAL_PATH" && -d "/ccbox/.claude" ]]; then
     _log_verbose "Setting up WSL session bridge..."
-    _wsl_encoded=$(echo "$CCBOX_WSL_ORIGINAL_PATH" | tr '/.' '--' | sed 's/^-//')
-    _target_encoded=$(echo "$PWD" | tr '/.' '--' | sed 's/^-//')
+    _wsl_encoded=$(_encode_path "$CCBOX_WSL_ORIGINAL_PATH")
+    _target_encoded=$(_encode_path "$PWD")
     _create_session_bridge "$_wsl_encoded" "$_target_encoded" "WSL"
 fi
 
 # Windows bridge: D:/... encodes as D--... vs /d/... as d-...
-# Native Windows Claude uses: D:\GitHub\project -> D--GitHub-project (uppercase, colon->dash)
-# ccbox/Docker uses: /d/GitHub/project -> d-GitHub-project (lowercase, no colon)
+# Native Windows Claude uses: D:\GitHub\project -> D--GitHub-project
+# ccbox/Docker uses: /d/GitHub/project -> d-GitHub-project
 if [[ -n "$CCBOX_WIN_ORIGINAL_PATH" && -d "/ccbox/.claude" ]]; then
     _log_verbose "Setting up Windows session bridge..."
-    # Windows encoding: D:/GitHub/project -> D--GitHub-project
-    # Replace : / \ and . with -, preserve uppercase drive letter
-    _win_encoded=$(echo "$CCBOX_WIN_ORIGINAL_PATH" | tr ':/\\.' '----' | sed 's/^-//')
-    _target_encoded=$(echo "$PWD" | tr '/.' '--' | sed 's/^-//')
+    _win_encoded=$(_encode_path "$CCBOX_WIN_ORIGINAL_PATH")
+    _target_encoded=$(_encode_path "$PWD")
     _create_session_bridge "$_win_encoded" "$_target_encoded" "Windows"
 fi
 
