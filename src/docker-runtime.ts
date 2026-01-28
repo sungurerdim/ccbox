@@ -429,10 +429,16 @@ export function getDockerRunCmd(
 
   // TTY allocation logic (cross-platform)
   // Interactive mode requires TTY for Claude Code's input handling
+  // Debug level 2 (-dd) runs in watch-only mode with stdin closed - no TTY
   const isInteractive = !prompt && !options.quiet;
   const isTTY = process.stdin.isTTY ?? false;
+  const isWatchMode = (options.debug ?? 0) >= 2;
 
-  if (isInteractive) {
+  if (isWatchMode) {
+    // Watch mode (-dd): stdin closed, no TTY allocation
+    // Just use -i for minimal interactivity (allows Ctrl+C)
+    cmd.push("-i");
+  } else if (isInteractive) {
     if (platform() === "win32") {
       // Windows: Always use -it, but check if ConPTY is available
       // Windows Terminal and modern PowerShell support ConPTY
@@ -509,11 +515,14 @@ export function getDockerRunCmd(
   // Mount ~/.claude.json for onboarding state (hasCompletedOnboarding flag)
   // This file is at $HOME/.claude.json, OUTSIDE the .claude/ directory
   // Without it, Claude Code will restart onboarding in new project directories
-  const homeDir = join(claudeConfig, "..");
-  const claudeJsonHost = join(homeDir, ".claude.json");
-  if (existsSync(claudeJsonHost)) {
-    const dockerClaudeJson = resolveForDocker(claudeJsonHost);
-    cmd.push("-v", `${dockerClaudeJson}:/ccbox/.claude.json:rw`);
+  // Note: addMinimalMounts already handles this for minimal mount mode
+  if (!useMinimalMount) {
+    const homeDir = join(claudeConfig, "..");
+    const claudeJsonHost = join(homeDir, ".claude.json");
+    if (existsSync(claudeJsonHost)) {
+      const dockerClaudeJson = resolveForDocker(claudeJsonHost);
+      cmd.push("-v", `${dockerClaudeJson}:/ccbox/.claude.json:rw`);
+    }
   }
 
   // Working directory - use host path for session compatibility
