@@ -144,6 +144,12 @@ program
       throw e;
     }
 
+    // -dd requires -p (watch mode needs a prompt — Claude Code --print requires input)
+    if (options.debug >= 2 && !options.prompt) {
+      console.log(chalk.red("Error: -dd (watch mode) requires -p <prompt>. Example: ccbox -dd -p \"fix the tests\""));
+      process.exit(1);
+    }
+
     // Determine deps mode from flags
     let depsMode: string | undefined = undefined;
     if (options.deps === true) {

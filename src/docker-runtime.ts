@@ -187,10 +187,8 @@ export function buildClaudeArgs(options: {
     args.push("--model", options.model);
   }
 
-  const stream = (options.debug ?? 0) >= 2;
-  const verbose = stream || (Boolean(options.prompt) && !options.quiet);
-
-  if (verbose) {
+  // --verbose: enabled by debug flags (-d/-dd) or prompt mode
+  if ((options.debug ?? 0) >= 1 || (Boolean(options.prompt) && !options.quiet)) {
     args.push("--verbose");
   }
 
@@ -203,10 +201,11 @@ export function buildClaudeArgs(options: {
     : containerPrompt;
   args.push("--append-system-prompt", systemPrompt);
 
-  if (options.quiet || options.prompt) {
+  // Unattended modes: -p (prompt), -q (quiet), -dd (watch) all need --print
+  const isWatchMode = (options.debug ?? 0) >= 2;
+  if (options.quiet || options.prompt || isWatchMode) {
     args.push("--print");
-    // Always use stream-json in prompt mode to avoid stdout buffering issues on Windows
-    // Without this, output gets stuck in buffer and never displays
+    // stream-json avoids stdout buffering issues on Windows
     args.push("--output-format", "stream-json");
   }
 
@@ -449,33 +448,17 @@ export function getDockerRunCmd(
 
   const cmd = ["docker", "run", "--rm"];
 
-  // TTY allocation logic (cross-platform)
-  // Interactive mode requires TTY for Claude Code's input handling
-  // Debug level 2 (-dd) runs in watch-only mode with stdin closed - no TTY
-  const isInteractive = !prompt && !options.quiet;
-  const isTTY = process.stdin.isTTY ?? false;
-  const isWatchMode = (options.debug ?? 0) >= 2;
+  // TTY allocation logic:
+  // - prompt mode (-p) or watch mode (-dd): unattended, no TTY
+  // - interactive mode (no -p, debug < 2): full TTY for Claude Code UI
+  const isUnattended = Boolean(prompt) || Boolean(options.quiet) || (options.debug ?? 0) >= 2;
 
-  if (isWatchMode) {
-    // Watch mode (-dd): stdin closed, no TTY allocation
-    // Just use -i for minimal interactivity (allows Ctrl+C)
+  if (isUnattended) {
+    // Unattended mode: no TTY, output streams to terminal for external monitoring
     cmd.push("-i");
-  } else if (isInteractive) {
-    if (platform() === "win32") {
-      // Windows: Always use -it, but check if ConPTY is available
-      // Windows Terminal and modern PowerShell support ConPTY
-      // Legacy cmd.exe may have issues - user should use Windows Terminal
-      cmd.push("-it");
-    } else if (isTTY) {
-      // Unix with TTY - standard interactive mode
-      cmd.push("-it");
-    } else {
-      // Unix without TTY (piped/scripted) - try anyway
-      cmd.push("-it");
-    }
   } else {
-    // Non-interactive (prompt mode) - stdin only, no TTY needed
-    cmd.push("-i");
+    // Interactive session: allocate TTY for Claude Code's full UI
+    cmd.push("-it");
   }
 
   cmd.push("--name", containerName);
