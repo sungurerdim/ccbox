@@ -139,28 +139,24 @@ async function executeContainer(
     log.dim("Docker command: " + cmd.join(" "));
   }
 
-  // Stream mode (-dd): close stdin for watch-only (no user input)
-  const stdin = debug >= 2 ? "ignore" : "inherit";
+  // stdin logic:
+  // -dd without -p: ignore stdin (watch-only, no user input)
+  // -dd with -p: inherit stdin (prompt piped to Claude Code)
+  // everything else: inherit (interactive or prompt mode)
+  const isWatchOnly = debug >= 2 && !prompt;
+  const stdio: ["ignore" | "inherit", "inherit", "inherit"] = [
+    isWatchOnly ? "ignore" : "inherit",
+    "inherit",
+    "inherit",
+  ];
 
   let returncode = 0;
   try {
-    // Note: Sleep inhibition is skipped for now (can be added later)
     const result = await execa("docker", cmd.slice(1), {
-      stdio: [stdin, "inherit", "pipe"],
+      stdio,
       env: getDockerEnv(),
       reject: false,
     } as ExecaOptions);
-
-    // Filter known harmless warnings from stderr and pass the rest through
-    const stderr = String(result.stderr ?? "");
-    const filteredStderr = stderr
-      .split("\n")
-      .filter((line) => !line.includes("memory swappiness") && !line.includes("Memory swappiness"))
-      .join("\n")
-      .trim();
-    if (filteredStderr) {
-      process.stderr.write(filteredStderr + "\n");
-    }
 
     returncode = result.exitCode ?? 0;
   } catch (error: unknown) {
