@@ -239,7 +239,9 @@ function testStack(name, files, expected, expectedLangs = null) {
   for (const [f, c] of Object.entries(files)) writeFileSync(join(dir, f), c);
   const result = detectProjectType(dir);
   const stackMatch = result.recommendedStack === expected;
-  const langsMatch = expectedLangs === null || JSON.stringify(result.detectedLanguages.sort()) === JSON.stringify(expectedLangs.sort());
+  // detectedLanguages is LanguageDetection[] with .language property
+  const langNames = result.detectedLanguages.map(d => typeof d === "string" ? d : d.language);
+  const langsMatch = expectedLangs === null || JSON.stringify(langNames.sort()) === JSON.stringify(expectedLangs.sort());
   return stackMatch && langsMatch;
 }
 
@@ -580,12 +582,12 @@ test("getProjectImageName sanitizes special chars", () => {
 
 // Bug prevented: Less common languages detected as wrong stack
 test("C# (.csproj) -> dotnet", () => testStack("csharp", { "App.csproj": "<Project/>" }, "dotnet", ["dotnet"]));
-test("Kotlin -> jvm", () => testStack("kotlin", { "build.gradle.kts": "plugins{}" }, "jvm", ["kotlin", "java"]));
+test("Kotlin -> jvm", () => testStack("kotlin", { "build.gradle.kts": "plugins{}" }, "jvm", ["kotlin"]));
 test("Scala -> jvm", () => testStack("scala", { "build.sbt": 'name := "test"' }, "jvm", ["scala"]));
 test("Haskell -> functional", () => testStack("haskell", { "stack.yaml": "resolver: lts-20.0" }, "functional", ["haskell"]));
 test("Zig -> systems", () => testStack("zig", { "build.zig": "const std = @import(\"std\");" }, "systems", ["zig"]));
 test("R -> data", () => testStack("r-lang", { "DESCRIPTION": "Package: test", "renv.lock": '{"R":{}}' }, "data", ["r"]));
-test("Julia -> data", () => testStack("julia-proj", { "Project.toml": 'name = "Test"' }, "data", ["julia"]));
+test("Julia -> data", () => testStack("julia-proj", { "Project.toml": 'name = "Test"\nuuid = "12345"\n[deps]' }, "data", ["julia"]));
 test("Dart (Flutter) -> dart", () => testStack("flutter", { "pubspec.yaml": "name: app\nflutter:\n  sdk: flutter" }, "dart", ["dart"]));
 
 // Bug prevented: Root-level detection ignoring subdirectory files
@@ -713,8 +715,9 @@ test("detectProjectType verbose mode includes details", () => {
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "package.json"), '{"name":"test"}');
   const result = detectProjectType(dir, true);
-  return result.detectionDetails !== undefined &&
-         typeof result.detectionDetails === "object";
+  return Array.isArray(result.detectedLanguages) &&
+         result.detectedLanguages.length > 0 &&
+         result.detectedLanguages[0].confidence > 0;
 });
 
 // Boundary value tests
@@ -965,8 +968,8 @@ test("detectProjectType handles non-existent directory gracefully", () => {
 // Bug prevented: detectProjectType verbose mode showing error for missing dir
 test("detectProjectType verbose mode shows error for missing dir", () => {
   const result = detectProjectType("/nonexistent/path", true);
-  return result.detectionDetails !== undefined &&
-         (result.detectionDetails.error !== undefined || Object.keys(result.detectionDetails).length === 0);
+  return result.recommendedStack === "base" &&
+         result.detectedLanguages.length === 0;
 });
 
 // ════════════════════════════════════════════════════════════════════════════════

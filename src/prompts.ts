@@ -17,7 +17,7 @@ import {
   STACK_INFO,
   type Config,
 } from "./config.js";
-import { detectProjectType } from "./detector.js";
+import { detectProjectType, type LanguageDetection } from "./detector.js";
 import type { DepsInfo, DepsMode } from "./deps.js";
 import { getInstalledCcboxImages } from "./build.js";
 import { getGitConfig } from "./utils.js";
@@ -81,13 +81,16 @@ export async function promptDeps(depsList: DepsInfo[]): Promise<DepsMode> {
  */
 export async function selectStack(
   detectedStack: LanguageStack,
-  detectedLanguages: string[]
+  detectedLanguages: LanguageDetection[]
 ): Promise<LanguageStack | null> {
   console.log(chalk.blue.bold("Stack Selection"));
   console.log();
 
   if (detectedLanguages.length > 0) {
-    console.log(chalk.dim(`Detected languages: ${detectedLanguages.join(", ")}`));
+    const summary = detectedLanguages
+      .map((d) => `${d.language} (${d.confidence})`)
+      .join(", ");
+    console.log(chalk.dim(`Detected: ${summary}`));
     console.log();
   }
 
@@ -208,3 +211,4 @@ export async function resolveStack(
 
   return selectStack(detection.recommendedStack, detection.detectedLanguages);
 }
+

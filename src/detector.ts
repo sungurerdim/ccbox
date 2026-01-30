@@ -1,53 +1,337 @@
 /**
  * Project type detection for automatic language stack selection.
+ *
+ * Uses a confidence scoring system with:
+ * - Per-pattern static scores (lock files, configs, extensions)
+ * - Content validation for ambiguous files (peeks inside to confirm language)
+ * - Source extension count scaling (single file = low confidence)
+ * - Mutual exclusion rules (typescript suppresses node, etc.)
+ * - Context-dependent demotion (Makefile demoted when primary language exists)
  */
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { LanguageStack } from "./config.js";
+import { log } from "./logger.js";
+
+/** A single language detection with confidence score. */
+export interface LanguageDetection {
+  language: string;
+  confidence: number;     // 0-100
+  trigger: string;        // File/pattern that triggered detection
+  stack: LanguageStack;   // Stack this language maps to
+}
 
 /** Result of project detection. */
 export interface DetectionResult {
   recommendedStack: LanguageStack;
-  detectedLanguages: string[];
-  /** Optional: files that triggered each detection (for verbose mode) */
-  detectionDetails?: Record<string, string>;
+  detectedLanguages: LanguageDetection[];  // Sorted by confidence (highest first)
 }
 
-/** File patterns for language detection (exact names or glob with *) */
-const LANGUAGE_PATTERNS: Record<string, string[]> = {
+/** Confidence levels for different signal types. */
+const CONFIDENCE = {
+  LOCK_FILE: 95,
+  PACKAGE_MANAGER_FIELD: 95,
+  PRIMARY_CONFIG: 90,
+  SECONDARY_CONFIG: 80,
+  AMBIGUOUS_CONFIG: 50,
+  GENERAL_TOOL: 40,
+  SOURCE_EXTENSION: 30,
+  SOURCE_EXTENSION_SINGLE: 15,   // Single source file = weak signal
+  MAKEFILE_DEMOTED: 20,
+  CONTENT_REJECTED: 0,          // Content validation failed
+} as const;
+
+/** Pattern with confidence score. */
+interface PatternEntry {
+  pattern: string;
+  confidence: number;
+}
+
+/** File patterns for language detection with confidence scores. */
+const LANGUAGE_PATTERNS: Record<string, PatternEntry[]> = {
   // Core languages
-  python: ["pyproject.toml", "setup.py", "requirements.txt", "Pipfile", "poetry.lock", "uv.lock", "pdm.lock", "setup.cfg"],
-  node: ["package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml"],
-  bun: ["bun.lockb", "bun.lock", "bunfig.toml"],  // bun.lock is text format since v1.0
-  deno: ["deno.json", "deno.jsonc", "deno.lock"],  // Deno runtime
-  typescript: ["tsconfig.json", "tsconfig.base.json", "tsconfig.*.json"],
-  go: ["go.mod", "go.sum"],
-  rust: ["Cargo.toml", "Cargo.lock"],
-  java: ["pom.xml", "build.gradle", "build.gradle.kts", "gradle.lock", "settings.gradle", "settings.gradle.kts"],
+  python: [
+    { pattern: "poetry.lock", confidence: CONFIDENCE.LOCK_FILE },
+    { pattern: "uv.lock", confidence: CONFIDENCE.LOCK_FILE },
+    { pattern: "pdm.lock", confidence: CONFIDENCE.LOCK_FILE },
+    { pattern: "pyproject.toml", confidence: CONFIDENCE.PRIMARY_CONFIG },
+    { pattern: "setup.py", confidence: CONFIDENCE.SECONDARY_CONFIG },
+    { pattern: "requirements.txt", confidence: CONFIDENCE.SECONDARY_CONFIG },
+    { pattern: "Pipfile", confidence: CONFIDENCE.SECONDARY_CONFIG },
+    { pattern: "setup.cfg", confidence: CONFIDENCE.SECONDARY_CONFIG },
+  ],
+  node: [
+    { pattern: "package-lock.json", confidence: CONFIDENCE.LOCK_FILE },
+    { pattern: "yarn.lock", confidence: CONFIDENCE.LOCK_FILE },
+    { pattern: "pnpm-lock.yaml", confidence: CONFIDENCE.LOCK_FILE },
+    { pattern: "package.json", confidence: CONFIDENCE.PRIMARY_CONFIG },
+  ],
+  bun: [
+    { pattern: "bun.lockb", confidence: CONFIDENCE.LOCK_FILE },
+    { pattern: "bun.lock", confidence: CONFIDENCE.LOCK_FILE },
+    { pattern: "bunfig.toml", confidence: CONFIDENCE.PRIMARY_CONFIG },
+  ],
+  deno: [
+    { pattern: "deno.lock", confidence: CONFIDENCE.LOCK_FILE },
+    { pattern: "deno.json", confidence: CONFIDENCE.PRIMARY_CONFIG },
+    { pattern: "deno.jsonc", confidence: CONFIDENCE.PRIMARY_CONFIG },
+  ],
+  typescript: [
+    { pattern: "tsconfig.json", confidence: CONFIDENCE.PRIMARY_CONFIG },
+    { pattern: "tsconfig.base.json", confidence: CONFIDENCE.SECONDARY_CONFIG },
+    { pattern: "tsconfig.*.json", confidence: CONFIDENCE.SECONDARY_CONFIG },
+  ],
+  go: [
+    { pattern: "go.sum", confidence: CONFIDENCE.LOCK_FILE },
+    { pattern: "go.mod", confidence: CONFIDENCE.PRIMARY_CONFIG },
+  ],
+  rust: [
+    { pattern: "Cargo.lock", confidence: CONFIDENCE.LOCK_FILE },
+    { pattern: "Cargo.toml", confidence: CONFIDENCE.PRIMARY_CONFIG },
+  ],
+  java: [
+    { pattern: "gradle.lock", confidence: CONFIDENCE.LOCK_FILE },
+    { pattern: "pom.xml", confidence: CONFIDENCE.PRIMARY_CONFIG },
+    { pattern: "build.gradle", confidence: CONFIDENCE.PRIMARY_CONFIG },
+    { pattern: "build.gradle.kts", confidence: CONFIDENCE.SECONDARY_CONFIG },  // .kts = Kotlin DSL, weaker Java signal
+    { pattern: "settings.gradle", confidence: CONFIDENCE.SECONDARY_CONFIG },
+    { pattern: "settings.gradle.kts", confidence: CONFIDENCE.SECONDARY_CONFIG },
+  ],
 
   // Extended languages
-  scala: ["build.sbt", "project/build.properties"],
-  clojure: ["project.clj", "deps.edn"],
-  kotlin: ["build.gradle.kts", "settings.gradle.kts"],  // Note: overlaps with java
-  ruby: ["Gemfile", "Gemfile.lock", "Rakefile", ".ruby-version", "*.gemspec"],
-  php: ["composer.json", "composer.lock", "artisan"],  // artisan = Laravel
-  dotnet: ["*.csproj", "*.fsproj", "*.vbproj", "*.sln", "global.json", "nuget.config"],
-  elixir: ["mix.exs", "mix.lock"],
-  haskell: ["stack.yaml", "cabal.project", "*.cabal", "package.yaml"],
-  swift: ["Package.swift", "*.xcodeproj", "*.xcworkspace"],
-  dart: ["pubspec.yaml", "pubspec.lock"],
-  perl: ["cpanfile", "Makefile.PL", "Build.PL", "*.pm"],
-  lua: ["*.rockspec", ".luacheckrc", "*.lua"],
-  ocaml: ["dune-project", "*.opam", "dune", "_opam"],
-  cpp: ["CMakeLists.txt", "conanfile.txt", "conanfile.py", "vcpkg.json", "Makefile", "*.cpp", "*.hpp"],
-  r: ["renv.lock", "DESCRIPTION", ".Rprofile", "*.Rproj"],
-  julia: ["Project.toml", "Manifest.toml"],
-  zig: ["build.zig", "build.zig.zon"],
-  nim: ["*.nimble", "nim.cfg", "*.nim"],
-  gleam: ["gleam.toml", "manifest.toml"],  // Erlang-based functional language
+  scala: [
+    { pattern: "build.sbt", confidence: CONFIDENCE.PRIMARY_CONFIG },
+    { pattern: "project/build.properties", confidence: CONFIDENCE.SECONDARY_CONFIG },
+  ],
+  clojure: [
+    { pattern: "project.clj", confidence: CONFIDENCE.PRIMARY_CONFIG },
+    { pattern: "deps.edn", confidence: CONFIDENCE.PRIMARY_CONFIG },
+  ],
+  kotlin: [
+    { pattern: "build.gradle.kts", confidence: CONFIDENCE.PRIMARY_CONFIG },
+    { pattern: "settings.gradle.kts", confidence: CONFIDENCE.SECONDARY_CONFIG },
+  ],
+  ruby: [
+    { pattern: "Gemfile.lock", confidence: CONFIDENCE.LOCK_FILE },
+    { pattern: "Gemfile", confidence: CONFIDENCE.PRIMARY_CONFIG },
+    { pattern: "Rakefile", confidence: CONFIDENCE.SECONDARY_CONFIG },
+    { pattern: ".ruby-version", confidence: CONFIDENCE.SECONDARY_CONFIG },
+    { pattern: "*.gemspec", confidence: CONFIDENCE.SECONDARY_CONFIG },
+  ],
+  php: [
+    { pattern: "composer.lock", confidence: CONFIDENCE.LOCK_FILE },
+    { pattern: "composer.json", confidence: CONFIDENCE.PRIMARY_CONFIG },
+    { pattern: "artisan", confidence: CONFIDENCE.SECONDARY_CONFIG },
+  ],
+  dotnet: [
+    { pattern: "*.sln", confidence: CONFIDENCE.PRIMARY_CONFIG },
+    { pattern: "*.csproj", confidence: CONFIDENCE.PRIMARY_CONFIG },
+    { pattern: "*.fsproj", confidence: CONFIDENCE.PRIMARY_CONFIG },
+    { pattern: "*.vbproj", confidence: CONFIDENCE.PRIMARY_CONFIG },
+    { pattern: "global.json", confidence: CONFIDENCE.SECONDARY_CONFIG },
+    { pattern: "nuget.config", confidence: CONFIDENCE.SECONDARY_CONFIG },
+  ],
+  elixir: [
+    { pattern: "mix.lock", confidence: CONFIDENCE.LOCK_FILE },
+    { pattern: "mix.exs", confidence: CONFIDENCE.PRIMARY_CONFIG },
+  ],
+  haskell: [
+    { pattern: "stack.yaml", confidence: CONFIDENCE.PRIMARY_CONFIG },
+    { pattern: "cabal.project", confidence: CONFIDENCE.PRIMARY_CONFIG },
+    { pattern: "*.cabal", confidence: CONFIDENCE.PRIMARY_CONFIG },
+    { pattern: "package.yaml", confidence: CONFIDENCE.SECONDARY_CONFIG },
+  ],
+  swift: [
+    { pattern: "Package.swift", confidence: CONFIDENCE.PRIMARY_CONFIG },
+    { pattern: "*.xcodeproj", confidence: CONFIDENCE.SECONDARY_CONFIG },
+    { pattern: "*.xcworkspace", confidence: CONFIDENCE.SECONDARY_CONFIG },
+  ],
+  dart: [
+    { pattern: "pubspec.lock", confidence: CONFIDENCE.LOCK_FILE },
+    { pattern: "pubspec.yaml", confidence: CONFIDENCE.PRIMARY_CONFIG },
+  ],
+  perl: [
+    { pattern: "cpanfile", confidence: CONFIDENCE.PRIMARY_CONFIG },
+    { pattern: "Makefile.PL", confidence: CONFIDENCE.SECONDARY_CONFIG },
+    { pattern: "Build.PL", confidence: CONFIDENCE.SECONDARY_CONFIG },
+    { pattern: "*.pm", confidence: CONFIDENCE.SOURCE_EXTENSION },
+  ],
+  lua: [
+    { pattern: "*.rockspec", confidence: CONFIDENCE.SECONDARY_CONFIG },
+    { pattern: ".luacheckrc", confidence: CONFIDENCE.SECONDARY_CONFIG },
+    { pattern: "*.lua", confidence: CONFIDENCE.SOURCE_EXTENSION },
+  ],
+  ocaml: [
+    { pattern: "dune-project", confidence: CONFIDENCE.PRIMARY_CONFIG },
+    { pattern: "*.opam", confidence: CONFIDENCE.PRIMARY_CONFIG },
+    { pattern: "dune", confidence: CONFIDENCE.SECONDARY_CONFIG },
+    { pattern: "_opam", confidence: CONFIDENCE.SECONDARY_CONFIG },
+  ],
+  cpp: [
+    { pattern: "CMakeLists.txt", confidence: CONFIDENCE.PRIMARY_CONFIG },
+    { pattern: "conanfile.txt", confidence: CONFIDENCE.PRIMARY_CONFIG },
+    { pattern: "conanfile.py", confidence: CONFIDENCE.PRIMARY_CONFIG },
+    { pattern: "vcpkg.json", confidence: CONFIDENCE.PRIMARY_CONFIG },
+    { pattern: "Makefile", confidence: CONFIDENCE.GENERAL_TOOL },
+    { pattern: "*.cpp", confidence: CONFIDENCE.SOURCE_EXTENSION },
+    { pattern: "*.hpp", confidence: CONFIDENCE.SOURCE_EXTENSION },
+  ],
+  r: [
+    { pattern: "renv.lock", confidence: CONFIDENCE.LOCK_FILE },
+    { pattern: "DESCRIPTION", confidence: CONFIDENCE.AMBIGUOUS_CONFIG },
+    { pattern: ".Rprofile", confidence: CONFIDENCE.SECONDARY_CONFIG },
+    { pattern: "*.Rproj", confidence: CONFIDENCE.PRIMARY_CONFIG },
+  ],
+  julia: [
+    { pattern: "Manifest.toml", confidence: CONFIDENCE.LOCK_FILE },
+    { pattern: "Project.toml", confidence: CONFIDENCE.AMBIGUOUS_CONFIG },
+  ],
+  zig: [
+    { pattern: "build.zig", confidence: CONFIDENCE.PRIMARY_CONFIG },
+    { pattern: "build.zig.zon", confidence: CONFIDENCE.PRIMARY_CONFIG },
+  ],
+  nim: [
+    { pattern: "*.nimble", confidence: CONFIDENCE.PRIMARY_CONFIG },
+    { pattern: "nim.cfg", confidence: CONFIDENCE.SECONDARY_CONFIG },
+    { pattern: "*.nim", confidence: CONFIDENCE.SOURCE_EXTENSION },
+  ],
+  gleam: [
+    { pattern: "gleam.toml", confidence: CONFIDENCE.PRIMARY_CONFIG },
+    { pattern: "manifest.toml", confidence: CONFIDENCE.AMBIGUOUS_CONFIG },
+  ],
 };
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Content validators — peek inside ambiguous files to confirm language
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Content validator functions for ambiguous config files.
+ * Returns adjusted confidence (0 = reject, original = confirm).
+ * Only called when the file exists and matched a pattern.
+ */
+type ContentValidator = (directory: string, originalConfidence: number) => number;
+
+/** Read first N bytes of a file (efficient for large files). */
+function readHead(filePath: string, bytes = 2048): string {
+  try {
+    return readFileSync(filePath, "utf-8").slice(0, bytes);
+  } catch {
+    return "";
+  }
+}
+
+const CONTENT_VALIDATORS: Record<string, Record<string, ContentValidator>> = {
+  python: {
+    // pyproject.toml without [project] or [tool.poetry/pdm/setuptools] = likely not Python
+    // (could be ruff/black-only config in a JS project)
+    "pyproject.toml": (dir, conf) => {
+      const content = readHead(join(dir, "pyproject.toml"));
+      const pythonMarkers = [
+        "[project]",
+        "[tool.poetry]",
+        "[tool.pdm]",
+        "[tool.setuptools]",
+        "[tool.hatch]",
+        "[tool.flit",
+        "[build-system]",
+      ];
+      return pythonMarkers.some((m) => content.includes(m)) ? conf : CONFIDENCE.CONTENT_REJECTED;
+    },
+  },
+  r: {
+    // DESCRIPTION without R-specific fields = not R (common filename)
+    "DESCRIPTION": (dir, conf) => {
+      const content = readHead(join(dir, "DESCRIPTION"));
+      const rMarkers = ["Package:", "Type:", "Imports:", "Depends:", "License:"];
+      // Need at least 2 R-specific fields to confirm
+      const matchCount = rMarkers.filter((m) => content.includes(m)).length;
+      return matchCount >= 2 ? conf : CONFIDENCE.CONTENT_REJECTED;
+    },
+  },
+  julia: {
+    // Project.toml without Julia-specific structure = not Julia
+    "Project.toml": (dir, conf) => {
+      const content = readHead(join(dir, "Project.toml"));
+      const juliaMarkers = ["uuid", "[deps]", "[compat]", "julia ="];
+      return juliaMarkers.some((m) => content.includes(m)) ? conf : CONFIDENCE.CONTENT_REJECTED;
+    },
+  },
+  gleam: {
+    // manifest.toml without Gleam-specific content = not Gleam
+    "manifest.toml": (dir, conf) => {
+      const content = readHead(join(dir, "manifest.toml"));
+      return content.includes("[packages]") ? conf : CONFIDENCE.CONTENT_REJECTED;
+    },
+  },
+  cpp: {
+    // Makefile with C/C++ compiler references = stronger cpp signal
+    "Makefile": (dir, conf) => {
+      const content = readHead(join(dir, "Makefile"), 4096);
+      const cppMarkers = ["gcc", "g++", "clang", "clang++", "$(CC)", "$(CXX)", ".cpp", ".c ", ".o "];
+      const hasCppContent = cppMarkers.some((m) => content.includes(m));
+      // Boost to SECONDARY_CONFIG if C/C++ content found, keep GENERAL_TOOL otherwise
+      return hasCppContent ? CONFIDENCE.SECONDARY_CONFIG : conf;
+    },
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Source extension count scaling
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** Source extensions that benefit from count-based scaling. */
+const SOURCE_EXTENSIONS: Record<string, string[]> = {
+  cpp: [".cpp", ".hpp", ".cc", ".cxx", ".hxx"],
+  lua: [".lua"],
+  nim: [".nim"],
+  perl: [".pm", ".pl"],
+};
+
+/**
+ * Count source files for a language and scale confidence.
+ * 1 file = SOURCE_EXTENSION_SINGLE (15), 2+ = SOURCE_EXTENSION (30).
+ */
+function scaleSourceConfidence(directory: string, lang: string, baseConfidence: number): number {
+  const extensions = SOURCE_EXTENSIONS[lang];
+  if (!extensions || baseConfidence !== CONFIDENCE.SOURCE_EXTENSION) {
+    return baseConfidence;
+  }
+
+  const files = getDirFiles(directory);
+  const count = files.filter((f) => extensions.some((ext) => f.endsWith(ext))).length;
+
+  if (count === 0) { return CONFIDENCE.CONTENT_REJECTED; }
+  if (count === 1) { return CONFIDENCE.SOURCE_EXTENSION_SINGLE; }
+  return CONFIDENCE.SOURCE_EXTENSION;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Mutual exclusion rules
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * When language A is detected, suppress or demote language B.
+ * Format: { suppressor: target } — target is removed from detections.
+ */
+const SUPPRESSION_RULES: Array<{ if: string; suppress: string }> = [
+  // typescript project ⊃ node (tsconfig.json implies package.json is just config)
+  { if: "typescript", suppress: "node" },
+  // bun project suppresses node (bun is the runtime)
+  { if: "bun", suppress: "node" },
+  // deno suppresses node
+  { if: "deno", suppress: "node" },
+  // scala/kotlin/clojure suppress java (JVM languages include Java tooling)
+  { if: "scala", suppress: "java" },
+  { if: "kotlin", suppress: "java" },
+  { if: "clojure", suppress: "java" },
+];
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Core detection logic
+// ═══════════════════════════════════════════════════════════════════════════════
 
 /** Check if a file matches a pattern (supports * prefix wildcard) */
 function matchesPattern(filename: string, pattern: string): boolean {
@@ -103,17 +387,38 @@ function detectPackageManager(directory: string): string | null {
   return null;
 }
 
+/** Map a language to its corresponding LanguageStack. */
+function languageToStack(lang: string): LanguageStack {
+  switch (lang) {
+    case "scala": case "clojure": case "kotlin": return LanguageStack.JVM;
+    case "java": return LanguageStack.JAVA;
+    case "go": return LanguageStack.GO;
+    case "rust": return LanguageStack.RUST;
+    case "zig": case "nim": return LanguageStack.SYSTEMS;
+    case "cpp": return LanguageStack.CPP;
+    case "bun": case "node": case "deno": case "typescript": return LanguageStack.WEB;
+    case "python": return LanguageStack.PYTHON;
+    case "lua": return LanguageStack.LUA;
+    case "ruby": case "php": case "perl": return LanguageStack.SCRIPTING;
+    case "dotnet": return LanguageStack.DOTNET;
+    case "swift": return LanguageStack.SWIFT;
+    case "dart": return LanguageStack.DART;
+    case "elixir": case "haskell": case "ocaml": case "gleam": return LanguageStack.FUNCTIONAL;
+    case "r": case "julia": return LanguageStack.DATA;
+    default: return LanguageStack.BASE;
+  }
+}
+
 /**
  * Detect the project type based on files in the directory.
  *
- * Detection strategy:
- * 1. Check package.json#packageManager field (most reliable for JS ecosystem)
- * 2. Scan for language-specific config files (pyproject.toml, go.mod, Cargo.toml, etc.)
- * 3. Map detected languages to optimal stack (e.g., bun/node/typescript → WEB)
+ * Uses a confidence scoring system where each file pattern has a score,
+ * refined by content validation, source count scaling, and mutual exclusion.
+ * The language with the highest confidence score determines the recommended stack.
  *
  * @param directory - Project root directory path.
- * @param verbose - If true, include detection details (which file triggered each detection).
- * @returns Detection result with recommended stack and detected languages.
+ * @param verbose - If true, log detection details.
+ * @returns Detection result with recommended stack and detected languages with scores.
  * @throws Never throws - returns BASE stack if directory doesn't exist or is unreadable.
  */
 export function detectProjectType(directory: string, verbose = false): DetectionResult {
@@ -122,108 +427,123 @@ export function detectProjectType(directory: string, verbose = false): Detection
     return {
       recommendedStack: LanguageStack.BASE,
       detectedLanguages: [],
-      ...(verbose && { detectionDetails: { error: "directory not found" } }),
     };
   }
 
-  const detected: string[] = [];
-  const details: Record<string, string> = {};
+  const detections: LanguageDetection[] = [];
 
   // Check packageManager field first (most reliable for JS ecosystem)
   const pkgManager = detectPackageManager(directory);
   if (pkgManager === "bun") {
-    detected.push("bun");
-    if (verbose) { details.bun = "package.json#packageManager=bun"; }
+    detections.push({
+      language: "bun",
+      confidence: CONFIDENCE.PACKAGE_MANAGER_FIELD,
+      trigger: "package.json#packageManager=bun",
+      stack: LanguageStack.WEB,
+    });
   } else if (pkgManager === "pnpm" || pkgManager === "yarn" || pkgManager === "npm") {
-    detected.push("node");
-    if (verbose) { details.node = `package.json#packageManager=${pkgManager}`; }
+    detections.push({
+      language: "node",
+      confidence: CONFIDENCE.PACKAGE_MANAGER_FIELD,
+      trigger: `package.json#packageManager=${pkgManager}`,
+      stack: LanguageStack.WEB,
+    });
   }
 
-  // Scan for language patterns
+  if (verbose) {
+    const files = getDirFiles(directory);
+    log.debug(`Scanning ${directory} (${files.length} files)`);
+  }
+
+  // Scan for language patterns - pick highest confidence match per language
+  const detectedLangs = new Set(detections.map((d) => d.language));
+
   for (const [lang, patterns] of Object.entries(LANGUAGE_PATTERNS)) {
     // Skip if already detected via packageManager
-    if (detected.includes(lang)) { continue; }
+    if (detectedLangs.has(lang)) { continue; }
 
-    for (const pattern of patterns) {
+    let bestConfidence = 0;
+    let bestTrigger = "";
+
+    for (const { pattern, confidence } of patterns) {
       if (hasMatchingFile(directory, pattern)) {
-        detected.push(lang);
-        if (verbose) { details[lang] = pattern; }
-        break;
+        let adjustedConfidence = confidence;
+
+        // Content validation: peek inside ambiguous files
+        const validator = CONTENT_VALIDATORS[lang]?.[pattern];
+        if (validator) {
+          adjustedConfidence = validator(directory, confidence);
+          if (verbose && adjustedConfidence !== confidence) {
+            log.debug(`  content-check: ${lang} ← ${pattern} (${confidence} → ${adjustedConfidence})`);
+          }
+        }
+
+        // Source extension count scaling
+        adjustedConfidence = scaleSourceConfidence(directory, lang, adjustedConfidence);
+
+        if (verbose && adjustedConfidence > 0) {
+          log.debug(`  match: ${lang} ← ${pattern} (${adjustedConfidence})`);
+        }
+
+        if (adjustedConfidence > bestConfidence) {
+          bestConfidence = adjustedConfidence;
+          bestTrigger = pattern;
+        }
+      }
+    }
+
+    if (bestConfidence > 0) {
+      detections.push({
+        language: lang,
+        confidence: bestConfidence,
+        trigger: bestTrigger,
+        stack: languageToStack(lang),
+      });
+    }
+  }
+
+  // Makefile context-dependent scoring:
+  // If a primary language (not cpp) is detected with high confidence,
+  // demote Makefile-triggered cpp detection since Makefile is multi-purpose.
+  const cppIdx = detections.findIndex((d) => d.language === "cpp");
+  if (cppIdx !== -1 && detections[cppIdx]!.trigger === "Makefile") {
+    const hasPrimaryLanguage = detections.some(
+      (d) => d.language !== "cpp" && d.confidence >= CONFIDENCE.SECONDARY_CONFIG
+    );
+    if (hasPrimaryLanguage) {
+      detections[cppIdx] = {
+        ...detections[cppIdx]!,
+        confidence: CONFIDENCE.MAKEFILE_DEMOTED,
+      };
+    }
+  }
+
+  // Apply mutual exclusion rules: remove suppressed languages
+  const suppressedLangs = new Set<string>();
+  const detectedLangSet = new Set(detections.map((d) => d.language));
+  for (const rule of SUPPRESSION_RULES) {
+    if (detectedLangSet.has(rule.if) && detectedLangSet.has(rule.suppress)) {
+      suppressedLangs.add(rule.suppress);
+      if (verbose) {
+        log.debug(`  suppress: ${rule.suppress} (${rule.if} detected)`);
       }
     }
   }
 
-  const stack = determineStack(detected);
+  const filtered = suppressedLangs.size > 0
+    ? detections.filter((d) => !suppressedLangs.has(d.language))
+    : detections;
 
-  const result: DetectionResult = {
+  // Sort by confidence (highest first)
+  filtered.sort((a, b) => b.confidence - a.confidence);
+
+  // Determine stack from highest confidence detection
+  const stack = filtered.length > 0
+    ? filtered[0]!.stack
+    : LanguageStack.BASE;
+
+  return {
     recommendedStack: stack,
-    detectedLanguages: detected,
+    detectedLanguages: filtered,
   };
-
-  if (verbose) {
-    result.detectionDetails = details;
-  }
-
-  return result;
-}
-
-/**
- * Determine the best stack based on detected languages.
- * Returns the most specific stack for the detected language(s).
- */
-function determineStack(languages: string[]): LanguageStack {
-  // Helper to check for language
-  const has = (lang: string) => languages.includes(lang);
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // JVM languages (check specific ones first, then fallback to java)
-  // ═══════════════════════════════════════════════════════════════════════════
-  if (has("scala") || has("clojure") || has("kotlin")) {
-    return LanguageStack.JVM;
-  }
-  if (has("java")) {
-    return LanguageStack.JAVA;
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // Systems programming languages
-  // ═══════════════════════════════════════════════════════════════════════════
-  if (has("go")) { return LanguageStack.GO; }
-  if (has("rust")) { return LanguageStack.RUST; }
-  if (has("zig") || has("nim")) { return LanguageStack.SYSTEMS; }
-  if (has("cpp")) { return LanguageStack.CPP; }
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // Web/scripting languages (bun/node/deno/typescript all map to WEB)
-  // ═══════════════════════════════════════════════════════════════════════════
-  if (has("bun") || has("node") || has("deno") || has("typescript")) { return LanguageStack.WEB; }
-  if (has("python")) { return LanguageStack.PYTHON; }
-  if (has("lua")) { return LanguageStack.LUA; }
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // Scripting languages (combined: Ruby + PHP + Perl)
-  // ═══════════════════════════════════════════════════════════════════════════
-  if (has("ruby") || has("php") || has("perl")) { return LanguageStack.SCRIPTING; }
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // Platform-specific languages
-  // ═══════════════════════════════════════════════════════════════════════════
-  if (has("dotnet")) { return LanguageStack.DOTNET; }
-  if (has("swift")) { return LanguageStack.SWIFT; }
-  if (has("dart")) { return LanguageStack.DART; }
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // Functional languages (combined: Haskell + OCaml + Elixir + Gleam)
-  // ═══════════════════════════════════════════════════════════════════════════
-  if (has("elixir") || has("haskell") || has("ocaml") || has("gleam")) { return LanguageStack.FUNCTIONAL; }
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // Data science languages
-  // ═══════════════════════════════════════════════════════════════════════════
-  if (has("r") || has("julia")) { return LanguageStack.DATA; }
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // Nothing detected -> BASE (vanilla Claude Code)
-  // ═══════════════════════════════════════════════════════════════════════════
-  return LanguageStack.BASE;
 }
