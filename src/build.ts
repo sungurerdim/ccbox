@@ -217,7 +217,7 @@ export async function buildProjectImage(
   depsList: DepsInfo[],
   depsMode: DepsMode,
   options: BuildOptions = {}
-): Promise<string | null> {
+): Promise<string> {
   const { progress = "auto", cache = true } = options;
   const imageName = getProjectImageName(projectName, stack);
   const baseImage = getImageName(stack);
@@ -282,10 +282,9 @@ export async function buildProjectImage(
       }
     }
 
-    // Log warning but don't throw - project image build failure is non-fatal
-    log.warn(`Failed to build ${imageName}: ${errorDetails}`);
+    log.error(`Failed to build ${imageName}: ${errorDetails}`);
     if (isTimeout) {
-      log.warn("Build timed out. Try increasing --build-timeout or simplifying dependencies.");
+      log.error("Build timed out. Try increasing --build-timeout or simplifying dependencies.");
     }
 
     // Cleanup partial image on failure (prevent dangling)
@@ -302,7 +301,7 @@ export async function buildProjectImage(
       // Ignore cleanup errors
     }
 
-    return null;
+    throw error;
   }
 }
 
