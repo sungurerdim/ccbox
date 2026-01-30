@@ -303,7 +303,7 @@ async function buildAndRun(
           resolvedDepsMode,
           { progress, cache }
         );
-      } catch (buildError) {
+      } catch {
         log.error("Failed to build project image with dependencies");
         process.exit(1);
       }
