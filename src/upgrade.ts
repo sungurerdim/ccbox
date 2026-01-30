@@ -162,13 +162,13 @@ export async function selfUpdate(force: boolean): Promise<void> {
   console.log(`  ${style.dim("Current")}  ${currentVersion}`);
   console.log(`  ${style.dim("Latest")}   ${latestVersion}`);
 
-  if (compareVersions(currentVersion, latestVersion) >= 0) {
+  if (!force && compareVersions(currentVersion, latestVersion) >= 0) {
     console.log();
     console.log(style.green("  Already up to date"));
     return;
   }
 
-  // Confirm
+  // Confirm (force skips both version check and confirmation)
   if (!force) {
     console.log();
     const { confirm } = await import("./prompt-io.js");
@@ -190,19 +190,21 @@ export async function selfUpdate(force: boolean): Promise<void> {
 
   process.stdout.write("  Downloading ...");
 
-  let data: Buffer;
-  try {
-    data = await downloadFile(downloadUrl);
-  } catch (e: unknown) {
+  // Download binary and fetch checksums in parallel
+  const [dataResult, checksums] = await Promise.all([
+    downloadFile(downloadUrl).catch((e: unknown) => e),
+    fetchChecksums(latestVersion),
+  ]);
+
+  if (dataResult instanceof Error || !(dataResult instanceof Buffer)) {
     console.log(style.red(" failed"));
-    console.log(style.red(`  ${e instanceof Error ? e.message : String(e)}`));
+    const msg = dataResult instanceof Error ? dataResult.message : String(dataResult);
+    console.log(style.red(`  ${msg}`));
     process.exit(1);
   }
 
+  const data: Buffer = dataResult;
   console.log(style.green(" done"));
-
-  // Verify checksum
-  const checksums = await fetchChecksums(latestVersion);
   if (checksums) {
     const expectedHash = checksums.get(binaryName);
     if (expectedHash) {

@@ -316,7 +316,7 @@ program
 program
   .command("update")
   .description("Update ccbox to the latest version")
-  .option("-f, --force", "Skip confirmation")
+  .option("-f, --force", "Force re-download (skip version check and confirmation)")
   .action(async (options) => {
     await selfUpdate(!!options.force);
   });
