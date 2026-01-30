@@ -934,6 +934,7 @@ static void *ccbox_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
     cfg->attr_timeout = 30.0;
     cfg->negative_timeout = 15.0;
     cfg->auto_cache = 1;
+    cfg->hard_remove = 1;
     return NULL;
 }
 
