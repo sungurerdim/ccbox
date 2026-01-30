@@ -18,12 +18,22 @@ import { fileURLToPath } from "node:url";
 import { LanguageStack } from "./config.js";
 import type { DepsInfo, DepsMode } from "./deps.js";
 import { getInstallCommands } from "./deps.js";
-import {
-  FUSE_BINARY_AMD64,
-  FUSE_BINARY_ARM64,
-  FAKEPATH_BINARY_AMD64,
-  FAKEPATH_BINARY_ARM64,
-} from "./fuse-binaries.js";
+/** Read a pre-compiled native binary from native/ directory.
+ *  Searches multiple locations to work both in development (source tree)
+ *  and in compiled binary mode (executable directory). */
+function readNativeBinary(name: string): Buffer {
+  const candidates = [
+    join(__dirname, "..", "native", name),     // dev: src/../native/
+    join(process.execPath, "..", "native", name), // compiled: next to executable
+    join(process.cwd(), "native", name),       // cwd fallback
+  ];
+  for (const p of candidates) {
+    if (existsSync(p)) { return readFileSync(p); }
+  }
+  throw new Error(
+    `Native binary not found: ${name}\nSearched: ${candidates.join(", ")}\nRun: cd native && docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.build --output type=local,dest=. .`
+  );
+}
 
 // Import and re-export from dockerfile-gen.ts
 import { generateDockerfile, DOCKERFILE_GENERATORS } from "./dockerfile-gen.js";
@@ -81,6 +91,12 @@ _die() {
 trap 'echo "[ccbox:ERROR] Command failed at line $LINENO: $BASH_COMMAND" >&2' ERR
 
 set -e
+
+# Set system timezone from TZ env var (passed from host by docker-runtime)
+if [[ -n "$TZ" && -f "/usr/share/zoneinfo/$TZ" ]]; then
+    ln -sf "/usr/share/zoneinfo/$TZ" /etc/localtime 2>/dev/null || true
+    echo "$TZ" > /etc/timezone 2>/dev/null || true
+fi
 
 _log "Entrypoint started (PID: $$)"
 _log_verbose "Working directory: $PWD"
@@ -200,8 +216,8 @@ _setup_fuse_overlay() {
     fi
 
     # Build FUSE options
-    # pathmap/dirmap passed via env vars (CCBOX_PATH_MAP, CCBOX_DIR_MAP) to avoid
-    # FUSE -o comma parsing issues when paths contain commas
+    # pathmap/dirmap are read from env vars (CCBOX_PATH_MAP, CCBOX_DIR_MAP) by the binary
+    # NOT passed via -o to avoid FUSE comma-parsing issues with paths
     local fuse_opts="source=$tmp_source,allow_other"
     [[ -n "$CCBOX_UID" ]] && fuse_opts="$fuse_opts,uid=$CCBOX_UID"
     [[ -n "$CCBOX_GID" ]] && fuse_opts="$fuse_opts,gid=$CCBOX_GID"
@@ -266,6 +282,22 @@ if [[ -n "$CCBOX_PATH_MAP" && -x "/usr/local/bin/ccbox-fuse" ]]; then
             _log "Cleaned $_orphan_count orphaned plugin marker(s)"
         fi
     fi
+
+    # Case-sensitivity fix for plugins: Linux is case-sensitive, Windows is not.
+    # Claude Code may lookup marketplace dirs in lowercase but they exist in mixed case.
+    # Create lowercase symlinks for any non-lowercase directory names.
+    for _pdir in /ccbox/.claude/plugins/marketplaces /ccbox/.claude/plugins/cache; do
+        [[ -d "$_pdir" ]] || continue
+        for _entry in "$_pdir"/*/; do
+            [[ -d "$_entry" ]] || continue
+            _name=$(basename "$_entry")
+            _lower=$(echo "$_name" | tr '[:upper:]' '[:lower:]')
+            if [[ "$_name" != "$_lower" && ! -e "$_pdir/$_lower" ]]; then
+                ln -sf "$_name" "$_pdir/$_lower" 2>/dev/null || true
+                _log_verbose "Plugin case-fix: $_lower -> $_name"
+            fi
+        done
+    done
 else
     # No path mapping needed or FUSE not available
     if [[ -d "$PWD/.claude" ]]; then
@@ -344,14 +376,26 @@ if [[ "$(id -u)" == "0" && -n "$CCBOX_UID" && -n "$CCBOX_GID" ]]; then
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Path Translation via LD_PRELOAD (fakepath.so) - DISABLED
-# fakepath.so doesn't work with Bun (bypasses glibc via direct syscalls).
-# Session compatibility is handled host-side via NTFS junctions (paths.ts).
+# Path Translation via LD_PRELOAD (fakepath.so)
+# Intercepts glibc calls (getcwd, open, stat, etc.) to translate between
+# container paths (/d/GitHub/project) and host paths (D:/GitHub/project).
+# Note: Bun uses direct syscalls for file I/O (bypasses glibc), so FUSE
+# handles file content transformation. fakepath complements FUSE by covering
+# glibc-based tools (git, npm, etc.) and getcwd for path display.
 # ══════════════════════════════════════════════════════════════════════════════
 FAKEPATH_PRELOAD=""
+if [[ -n "$CCBOX_WIN_ORIGINAL_PATH" && -f "/usr/lib/fakepath.so" ]]; then
+    FAKEPATH_PRELOAD="LD_PRELOAD=/usr/lib/fakepath.so"
+    _log "fakepath active: $CCBOX_WIN_ORIGINAL_PATH"
+fi
 
-# Run Claude Code
-if [[ -t 1 ]]; then
+# Run command (Claude Code by default, or custom via CCBOX_CMD for debugging)
+# Usage: docker run -e CCBOX_CMD=bash ... (opens shell with FUSE active)
+#        docker run -e CCBOX_CMD=cat ... /ccbox/.claude/plugins/installed_plugins.json
+if [[ -n "$CCBOX_CMD" ]]; then
+    _log "Custom command: $CCBOX_CMD $*"
+    exec $EXEC_PREFIX env $FAKEPATH_PRELOAD $CCBOX_CMD "$@"
+elif [[ -t 1 ]]; then
     printf '\\e[?2026h' 2>/dev/null || true
     exec $EXEC_PREFIX env $FAKEPATH_PRELOAD $PRIORITY_CMD claude --dangerously-skip-permissions "$@"
 else
@@ -379,14 +423,10 @@ export function writeBuildFiles(stack: LanguageStack, _targetArch?: string): str
   writeFileSync(join(buildDir, "Dockerfile"), dockerfile, { encoding: "utf-8" });
   writeFileSync(join(buildDir, "entrypoint.sh"), entrypoint, { encoding: "utf-8", mode: 0o755 });
 
-  // Write pre-compiled FUSE binary (no gcc needed - ~2GB savings)
+  // Copy pre-compiled FUSE binaries from native/ directory
   // Architecture is detected at build time via Docker's TARGETARCH
-  // We write both binaries and let Docker select the right one
-  const fuseBinaryAmd64 = Buffer.from(FUSE_BINARY_AMD64, "base64");
-  const fuseBinaryArm64 = Buffer.from(FUSE_BINARY_ARM64, "base64");
-
-  writeFileSync(join(buildDir, "ccbox-fuse-amd64"), fuseBinaryAmd64, { mode: 0o755 });
-  writeFileSync(join(buildDir, "ccbox-fuse-arm64"), fuseBinaryArm64, { mode: 0o755 });
+  writeFileSync(join(buildDir, "ccbox-fuse-amd64"), readNativeBinary("ccbox-fuse-linux-amd64"), { mode: 0o755 });
+  writeFileSync(join(buildDir, "ccbox-fuse-arm64"), readNativeBinary("ccbox-fuse-linux-arm64"), { mode: 0o755 });
 
   // Write architecture selector script
   // Docker will use TARGETARCH to copy the correct binary
@@ -409,13 +449,9 @@ chmod 755 /usr/local/bin/ccbox-fuse
     writeFileSync(join(buildDir, "ccbox-fuse.c"), fuseContent, { encoding: "utf-8" });
   }
 
-  // Write pre-compiled fakepath.so binary (no gcc needed)
-  // Architecture is detected at build time via Docker's TARGETARCH
-  const fakepathBinaryAmd64 = Buffer.from(FAKEPATH_BINARY_AMD64, "base64");
-  const fakepathBinaryArm64 = Buffer.from(FAKEPATH_BINARY_ARM64, "base64");
-
-  writeFileSync(join(buildDir, "fakepath-amd64.so"), fakepathBinaryAmd64, { mode: 0o755 });
-  writeFileSync(join(buildDir, "fakepath-arm64.so"), fakepathBinaryArm64, { mode: 0o755 });
+  // Copy pre-compiled fakepath.so binaries from native/ directory
+  writeFileSync(join(buildDir, "fakepath-amd64.so"), readNativeBinary("fakepath-linux-amd64.so"), { mode: 0o755 });
+  writeFileSync(join(buildDir, "fakepath-arm64.so"), readNativeBinary("fakepath-linux-arm64.so"), { mode: 0o755 });
 
   // Also keep fakepath.c for source builds if needed
   const fakepathSrc = join(__dirname, "..", "native", "fakepath.c");

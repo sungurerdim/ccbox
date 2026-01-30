@@ -144,9 +144,9 @@ program
       throw e;
     }
 
-    // -dd requires -p (watch mode needs a prompt — Claude Code --print requires input)
+    // -dd requires -p (Claude Code needs input in non-interactive mode)
     if (options.debug >= 2 && !options.prompt) {
-      console.log(chalk.red("Error: -dd (watch mode) requires -p <prompt>. Example: ccbox -dd -p \"fix the tests\""));
+      console.log(chalk.red("Error: -dd requires -p <prompt>. Example: ccbox -dd -p \"fix the tests\""));
       process.exit(1);
     }
 

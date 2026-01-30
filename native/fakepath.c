@@ -1,22 +1,30 @@
 /**
  * fakepath.so - LD_PRELOAD library for transparent path translation
  *
- * Uses environment variables for exact path mapping:
- *   CCBOX_WIN_ORIGINAL_PATH: Original Windows path (e.g., D:/GitHub/Workflow Manager)
- *   PWD: Container path (e.g., /d/GitHub/Workflow Manager)
+ * Intercepts glibc syscall wrappers to translate Windows-format path arguments
+ * to container-format paths. Complements FUSE (which handles file contents)
+ * and drive symlinks (which handle Bun's direct syscalls).
  *
- * Translation:
- *   Output (getcwd): /d/GitHub/Workflow Manager → D:/GitHub/Workflow Manager
- *   Input (open):    D:/GitHub/Workflow Manager → /d/GitHub/Workflow Manager
+ * Translation (input only, Windows → container):
+ *   open("D:/GitHub/myapp/file") → open("/d/GitHub/myapp/file")
+ *   stat("D:/GitHub/myapp")      → stat("/d/GitHub/myapp")
  *
- * This ensures Claude Code sees the exact Windows path for session encoding
- * compatibility with native Windows Claude Code.
+ * Output translation (getcwd → Windows) is DISABLED because Bun caches
+ * getcwd() at startup and then calls lstat() via direct syscalls. If getcwd()
+ * returned "D:/GitHub/x", Bun's lstat would fail (relative path on Linux,
+ * and direct syscalls bypass this library).
  *
- * Build:
- *   gcc -shared -fPIC -o fakepath.so fakepath.c -ldl -D_GNU_SOURCE
+ * Environment:
+ *   CCBOX_WIN_ORIGINAL_PATH: Original Windows path (e.g., D:/GitHub/myapp)
+ *   Container path derived from real getcwd() at init time.
  *
- * Usage:
- *   CCBOX_WIN_ORIGINAL_PATH="D:/GitHub/project" LD_PRELOAD=/usr/lib/fakepath.so claude
+ * Intercepted: open, openat, fopen, stat, lstat, access, chdir, mkdir, rmdir,
+ *   unlink, rename, renameat2, symlink, link, chmod, chown, readlink, opendir,
+ *   scandir, execve, truncate, utimensat, creat, realpath, statx, and more.
+ *
+ * See docs/PATH-TRANSLATION.md for full architecture documentation.
+ *
+ * Build: gcc -shared -fPIC -Wall -Werror -o fakepath.so fakepath.c -ldl -D_GNU_SOURCE
  *
  * Copyright (c) 2024 ccbox contributors
  * SPDX-License-Identifier: MIT
@@ -35,6 +43,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <limits.h>
+#include <time.h>
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Path Mapping Configuration
@@ -51,8 +60,6 @@ static int g_initialized = 0;
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 static char *(*real_getcwd)(char *, size_t) = NULL;
-static char *(*real_get_current_dir_name)(void) = NULL;
-static char *(*real_realpath)(const char *, char *) = NULL;
 static int (*real_open)(const char *, int, ...) = NULL;
 static int (*real_open64)(const char *, int, ...) = NULL;
 static int (*real_openat)(int, const char *, int, ...) = NULL;
@@ -85,15 +92,27 @@ static int (*real_chown)(const char *, uid_t, gid_t) = NULL;
 static int (*real_lchown)(const char *, uid_t, gid_t) = NULL;
 static int (*real_fchownat)(int, const char *, uid_t, gid_t, int) = NULL;
 static DIR *(*real_opendir)(const char *) = NULL;
+static int (*real_scandir)(const char *, struct dirent ***, int (*)(const struct dirent *), int (*)(const struct dirent **, const struct dirent **)) = NULL;
 static int (*real_execve)(const char *, char *const[], char *const[]) = NULL;
+static int (*real_execvp)(const char *, char *const[]) = NULL;
+static int (*real_execvpe)(const char *, char *const[], char *const[]) = NULL;
+static int (*real_truncate)(const char *, off_t) = NULL;
+static int (*real_utimensat)(int, const char *, const struct timespec[2], int) = NULL;
+static int (*real___xstat)(int, const char *, struct stat *) = NULL;
+static int (*real___lxstat)(int, const char *, struct stat *) = NULL;
+static int (*real_creat)(const char *, mode_t) = NULL;
+static int (*real_creat64)(const char *, mode_t) = NULL;
+static char *(*real_realpath)(const char *, char *) = NULL;
+static int (*real_renameat2)(int, const char *, int, const char *, unsigned int) = NULL;
+/* statx is a syscall wrapper, dlsym may return NULL on older glibc */
+struct statx;
+static int (*real_statx)(int, const char *, int, unsigned int, struct statx *) = NULL;
 
 /* Initialize function pointers */
 static void init_real_functions(void) {
     if (real_getcwd) return;  // Already initialized
 
     real_getcwd = dlsym(RTLD_NEXT, "getcwd");
-    real_get_current_dir_name = dlsym(RTLD_NEXT, "get_current_dir_name");
-    real_realpath = dlsym(RTLD_NEXT, "realpath");
     real_open = dlsym(RTLD_NEXT, "open");
     real_open64 = dlsym(RTLD_NEXT, "open64");
     real_openat = dlsym(RTLD_NEXT, "openat");
@@ -126,7 +145,19 @@ static void init_real_functions(void) {
     real_lchown = dlsym(RTLD_NEXT, "lchown");
     real_fchownat = dlsym(RTLD_NEXT, "fchownat");
     real_opendir = dlsym(RTLD_NEXT, "opendir");
+    real_scandir = dlsym(RTLD_NEXT, "scandir");
     real_execve = dlsym(RTLD_NEXT, "execve");
+    real_execvp = dlsym(RTLD_NEXT, "execvp");
+    real_execvpe = dlsym(RTLD_NEXT, "execvpe");
+    real_truncate = dlsym(RTLD_NEXT, "truncate");
+    real_utimensat = dlsym(RTLD_NEXT, "utimensat");
+    real___xstat = dlsym(RTLD_NEXT, "__xstat");
+    real___lxstat = dlsym(RTLD_NEXT, "__lxstat");
+    real_creat = dlsym(RTLD_NEXT, "creat");
+    real_creat64 = dlsym(RTLD_NEXT, "creat64");
+    real_realpath = dlsym(RTLD_NEXT, "realpath");
+    real_renameat2 = dlsym(RTLD_NEXT, "renameat2");
+    real_statx = dlsym(RTLD_NEXT, "statx");
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -180,49 +211,17 @@ static void init_path_mapping(void) {
     if (g_container_len > 0 && g_container_path[g_container_len-1] == '/') {
         g_container_path[--g_container_len] = '\0';
     }
+
+    // NOTE: Do NOT setenv("PWD", ...) here.
+    // Bun reads process.env.PWD and calls lstat() on it via direct syscalls
+    // (bypassing glibc/fakepath). "D:/GitHub/x" is a relative path on Linux
+    // and would fail. Tools using getcwd() already get the Windows path via
+    // our intercepted getcwd(). Shell scripts get PWD from the shell itself.
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Path Translation Functions
  * ═══════════════════════════════════════════════════════════════════════════ */
-
-/**
- * Convert container path to Windows path.
- * /d/GitHub/Workflow Manager/file.ts → D:/GitHub/Workflow Manager/file.ts
- *
- * Uses exact prefix matching from environment variables.
- * Returns: newly allocated string (caller must free) or NULL if no match.
- */
-static char *container_to_windows(const char *path) {
-    if (!g_container_path || !g_windows_path || !path) {
-        return NULL;
-    }
-
-    // Check if path starts with container path prefix
-    if (strncmp(path, g_container_path, g_container_len) != 0) {
-        return NULL;
-    }
-
-    // Ensure it's a prefix match (not partial directory name)
-    // e.g., /d/GitHub/project should not match /d/GitHub/project2
-    char next_char = path[g_container_len];
-    if (next_char != '\0' && next_char != '/') {
-        return NULL;
-    }
-
-    // Calculate result length
-    size_t suffix_len = strlen(path) - g_container_len;
-    size_t result_len = g_windows_len + suffix_len;
-
-    char *result = malloc(result_len + 1);
-    if (!result) return NULL;
-
-    // Copy Windows prefix + remaining path
-    memcpy(result, g_windows_path, g_windows_len);
-    strcpy(result + g_windows_len, path + g_container_len);
-
-    return result;
-}
 
 /**
  * Convert Windows path to container path.
@@ -290,90 +289,23 @@ static const char *translate_input(const char *path, char **allocated) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
- * Output Translation (Container → Windows)
- * These functions return paths to the application
+ * Output Translation — DISABLED
+ *
+ * getcwd, get_current_dir_name, realpath are NOT intercepted.
+ *
+ * Reason: Bun (Claude Code's runtime) calls glibc getcwd() at startup,
+ * caches the result, then uses direct syscalls for lstat() on that path.
+ * If getcwd returns "D:/GitHub/x" (Windows format), Bun's lstat("D:/GitHub/x")
+ * fails because: (a) it's a relative path on Linux (no leading /), and
+ * (b) Bun's direct syscalls bypass fakepath's input translation.
+ *
+ * FUSE handles path translation in JSON/JSONL file contents (session files,
+ * config). Drive symlinks (/D: → /d) handle absolute Windows paths at
+ * filesystem level. Together they provide full coverage without needing
+ * getcwd translation.
+ *
+ * Only INPUT translation is active below (Windows → container for glibc tools).
  * ═══════════════════════════════════════════════════════════════════════════ */
-
-char *getcwd(char *buf, size_t size) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *result = real_getcwd(buf, size);
-    if (!result) {
-        return NULL;
-    }
-
-    // Translate container path to Windows path
-    char *translated = container_to_windows(result);
-    if (translated) {
-        size_t tlen = strlen(translated);
-        if (buf) {
-            if (tlen >= size) {
-                free(translated);
-                errno = ERANGE;
-                return NULL;
-            }
-            strcpy(buf, translated);
-            free(translated);
-            return buf;
-        } else {
-            // getcwd allocated the buffer, we need to replace it
-            free(result);
-            return translated;
-        }
-    }
-
-    return result;
-}
-
-char *get_current_dir_name(void) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *result = real_get_current_dir_name();
-    if (!result) {
-        return NULL;
-    }
-
-    char *translated = container_to_windows(result);
-    if (translated) {
-        free(result);
-        return translated;
-    }
-
-    return result;
-}
-
-char *realpath(const char *path, char *resolved_path) {
-    init_real_functions();
-    init_path_mapping();
-
-    // Translate input if Windows path
-    char *alloc_in = NULL;
-    const char *real_path = translate_input(path, &alloc_in);
-
-    char *result = real_realpath(real_path, resolved_path);
-    free(alloc_in);
-
-    if (!result) {
-        return NULL;
-    }
-
-    // Translate output
-    char *translated = container_to_windows(result);
-    if (translated) {
-        if (resolved_path) {
-            strcpy(resolved_path, translated);
-            free(translated);
-            return resolved_path;
-        } else {
-            free(result);
-            return translated;
-        }
-    }
-
-    return result;
-}
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Input Translation (Windows → Container)
@@ -586,20 +518,7 @@ ssize_t readlink(const char *pathname, char *buf, size_t bufsiz) {
     ssize_t result = real_readlink(real_path, buf, bufsiz);
     free(alloc);
 
-    // Translate output if it's a path within our mapping
-    if (result > 0 && result < (ssize_t)bufsiz) {
-        buf[result] = '\0';  // Temporary null-terminate
-        char *translated = container_to_windows(buf);
-        if (translated) {
-            size_t tlen = strlen(translated);
-            if (tlen < bufsiz) {
-                memcpy(buf, translated, tlen);
-                result = tlen;
-            }
-            free(translated);
-        }
-    }
-
+    // Output translation disabled (see comment above Output Translation section)
     return result;
 }
 
@@ -613,19 +532,7 @@ ssize_t readlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz) {
     ssize_t result = real_readlinkat(dirfd, real_path, buf, bufsiz);
     free(alloc);
 
-    if (result > 0 && result < (ssize_t)bufsiz) {
-        buf[result] = '\0';
-        char *translated = container_to_windows(buf);
-        if (translated) {
-            size_t tlen = strlen(translated);
-            if (tlen < bufsiz) {
-                memcpy(buf, translated, tlen);
-                result = tlen;
-            }
-            free(translated);
-        }
-    }
-
+    // Output translation disabled (see comment above Output Translation section)
     return result;
 }
 
@@ -853,6 +760,161 @@ int execve(const char *pathname, char *const argv[], char *const envp[]) {
     const char *real_path = translate_input(pathname, &alloc);
 
     int result = real_execve(real_path, argv, envp);
+    free(alloc);
+    return result;
+}
+
+int execvp(const char *file, char *const argv[]) {
+    init_real_functions();
+    init_path_mapping();
+
+    char *alloc = NULL;
+    const char *real_path = translate_input(file, &alloc);
+
+    int result = real_execvp(real_path, argv);
+    free(alloc);
+    return result;
+}
+
+int execvpe(const char *file, char *const argv[], char *const envp[]) {
+    init_real_functions();
+    init_path_mapping();
+
+    char *alloc = NULL;
+    const char *real_path = translate_input(file, &alloc);
+
+    int result = real_execvpe(real_path, argv, envp);
+    free(alloc);
+    return result;
+}
+
+int scandir(const char *dirp, struct dirent ***namelist,
+            int (*filter)(const struct dirent *),
+            int (*compar)(const struct dirent **, const struct dirent **)) {
+    init_real_functions();
+    init_path_mapping();
+
+    char *alloc = NULL;
+    const char *real_path = translate_input(dirp, &alloc);
+
+    int result = real_scandir(real_path, namelist, filter, compar);
+    free(alloc);
+    return result;
+}
+
+int truncate(const char *path, off_t length) {
+    init_real_functions();
+    init_path_mapping();
+
+    char *alloc = NULL;
+    const char *real_path = translate_input(path, &alloc);
+
+    int result = real_truncate(real_path, length);
+    free(alloc);
+    return result;
+}
+
+int utimensat(int dirfd, const char *pathname, const struct timespec times[2], int flags) {
+    init_real_functions();
+    init_path_mapping();
+
+    char *alloc = NULL;
+    const char *real_path = translate_input(pathname, &alloc);
+
+    int result = real_utimensat(dirfd, real_path, times, flags);
+    free(alloc);
+    return result;
+}
+
+int creat(const char *pathname, mode_t mode) {
+    init_real_functions();
+    init_path_mapping();
+
+    char *alloc = NULL;
+    const char *real_path = translate_input(pathname, &alloc);
+
+    int result = real_creat(real_path, mode);
+    free(alloc);
+    return result;
+}
+
+int creat64(const char *pathname, mode_t mode) {
+    init_real_functions();
+    init_path_mapping();
+
+    char *alloc = NULL;
+    const char *real_path = translate_input(pathname, &alloc);
+
+    int result = real_creat64(real_path, mode);
+    free(alloc);
+    return result;
+}
+
+char *realpath(const char *path, char *resolved_path) {
+    init_real_functions();
+    init_path_mapping();
+
+    char *alloc = NULL;
+    const char *real_path = translate_input(path, &alloc);
+
+    char *result = real_realpath(real_path, resolved_path);
+    free(alloc);
+    return result;
+}
+
+int renameat2(int olddirfd, const char *oldpath, int newdirfd, const char *newpath, unsigned int flags) {
+    init_real_functions();
+    init_path_mapping();
+
+    if (!real_renameat2) { errno = ENOSYS; return -1; }
+
+    char *alloc1 = NULL, *alloc2 = NULL;
+    const char *real_old = translate_input(oldpath, &alloc1);
+    const char *real_new = translate_input(newpath, &alloc2);
+
+    int result = real_renameat2(olddirfd, real_old, newdirfd, real_new, flags);
+    free(alloc1);
+    free(alloc2);
+    return result;
+}
+
+int statx(int dirfd, const char *pathname, int flags, unsigned int mask, struct statx *statxbuf) {
+    init_real_functions();
+    init_path_mapping();
+
+    if (!real_statx) { errno = ENOSYS; return -1; }
+
+    char *alloc = NULL;
+    const char *real_path = translate_input(pathname, &alloc);
+
+    int result = real_statx(dirfd, real_path, flags, mask, statxbuf);
+    free(alloc);
+    return result;
+}
+
+/* glibc internal stat wrappers - some tools call these directly */
+int __xstat(int ver, const char *pathname, struct stat *statbuf) {
+    init_real_functions();
+    init_path_mapping();
+
+    if (!real___xstat) return -1;
+    char *alloc = NULL;
+    const char *real_path = translate_input(pathname, &alloc);
+
+    int result = real___xstat(ver, real_path, statbuf);
+    free(alloc);
+    return result;
+}
+
+int __lxstat(int ver, const char *pathname, struct stat *statbuf) {
+    init_real_functions();
+    init_path_mapping();
+
+    if (!real___lxstat) return -1;
+    char *alloc = NULL;
+    const char *real_path = translate_input(pathname, &alloc);
+
+    int result = real___lxstat(ver, real_path, statbuf);
     free(alloc);
     return result;
 }

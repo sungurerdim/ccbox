@@ -187,8 +187,10 @@ export function buildClaudeArgs(options: {
     args.push("--model", options.model);
   }
 
-  // --verbose: enabled by debug flags (-d/-dd) or prompt mode
-  if ((options.debug ?? 0) >= 1 || (Boolean(options.prompt) && !options.quiet)) {
+  const stream = (options.debug ?? 0) >= 2;
+  const verbose = stream || (Boolean(options.prompt) && !options.quiet);
+
+  if (verbose) {
     args.push("--verbose");
   }
 
@@ -201,9 +203,7 @@ export function buildClaudeArgs(options: {
     : containerPrompt;
   args.push("--append-system-prompt", systemPrompt);
 
-  // Unattended modes: -p (prompt), -q (quiet), -dd (watch) all need --print
-  const isWatchMode = (options.debug ?? 0) >= 2;
-  if (options.quiet || options.prompt || isWatchMode) {
+  if (options.quiet || options.prompt) {
     args.push("--print");
     // stream-json avoids stdout buffering issues on Windows
     args.push("--output-format", "stream-json");
@@ -331,21 +331,32 @@ function addUserMapping(cmd: string[]): void {
   cmd.push("-e", `CCBOX_GID=${gid}`);
 }
 
-function addSecurityOptions(cmd: string[]): void {
-  const { capDrop, pidsLimit } = CONTAINER_CONSTRAINTS;
+/**
+ * Add container essentials (init, resource limits) — always applied on all platforms.
+ */
+function addContainerEssentials(cmd: string[]): void {
+  const { pidsLimit } = CONTAINER_CONSTRAINTS;
+  cmd.push(
+    `--pids-limit=${pidsLimit}`,
+    "--init",
+    `--shm-size=${CONTAINER_CONSTRAINTS.tmpfs.shm}`,
+    "--ulimit", "nofile=65535:65535",
+    "--memory-swappiness=0",
+  );
+}
+
+/**
+ * Add capability restrictions — skipped when --privileged is used (Windows + FUSE).
+ * --privileged already grants all capabilities, so --cap-drop/--cap-add are redundant.
+ */
+function addCapabilityRestrictions(cmd: string[]): void {
+  const { capDrop } = CONTAINER_CONSTRAINTS;
   cmd.push(
     `--cap-drop=${capDrop}`,
-    // Minimal capabilities for user switching, file ownership, and FUSE
     "--cap-add=SETUID",     // gosu: change user ID
     "--cap-add=SETGID",     // gosu: change group ID
     "--cap-add=CHOWN",      // entrypoint: change file ownership
     "--cap-add=SYS_ADMIN",  // FUSE: mount filesystem in userspace
-    `--pids-limit=${pidsLimit}`,
-    "--init",
-    `--shm-size=${CONTAINER_CONSTRAINTS.tmpfs.shm}`,
-    "--ulimit",
-    "nofile=65535:65535",
-    "--memory-swappiness=0"
   );
 }
 
@@ -448,18 +459,9 @@ export function getDockerRunCmd(
 
   const cmd = ["docker", "run", "--rm"];
 
-  // TTY allocation logic:
-  // - prompt mode (-p) or watch mode (-dd): unattended, no TTY
-  // - interactive mode (no -p, debug < 2): full TTY for Claude Code UI
-  const isUnattended = Boolean(prompt) || Boolean(options.quiet) || (options.debug ?? 0) >= 2;
-
-  if (isUnattended) {
-    // Unattended mode: no TTY, output streams to terminal for external monitoring
-    cmd.push("-i");
-  } else {
-    // Interactive session: allocate TTY for Claude Code's full UI
-    cmd.push("-it");
-  }
+  // TTY allocation: interactive sessions need -it, unattended needs -i only
+  const isInteractive = !prompt && !options.quiet && (options.debug ?? 0) < 2;
+  cmd.push(isInteractive ? "-it" : "-i");
 
   cmd.push("--name", containerName);
 
@@ -494,8 +496,13 @@ export function getDockerRunCmd(
     cmd.push("-v", `${dockerClaudeConfig}:/ccbox/.claude:rw`);
 
     // FUSE device access for kernel-level path transformation
-    // All platforms use --device /dev/fuse with SYS_ADMIN capability (added in addSecurityOptions)
-    cmd.push("--device", "/dev/fuse");
+    // Windows Docker Desktop requires --privileged for /dev/fuse
+    // Linux/macOS use --device /dev/fuse (capability added in addCapabilityRestrictions)
+    if (platform() === "win32") {
+      cmd.push("--privileged");
+    } else {
+      cmd.push("--device", "/dev/fuse");
+    }
   }
 
   // Mount ~/.claude.json for onboarding state (hasCompletedOnboarding flag)
@@ -521,8 +528,15 @@ export function getDockerRunCmd(
   // User mapping
   addUserMapping(cmd);
 
-  // Security options (always applied - no more --privileged)
-  addSecurityOptions(cmd);
+  // Container essentials (init, resource limits) — always applied
+  addContainerEssentials(cmd);
+
+  // Capability restrictions — only when not using --privileged
+  // Windows + FUSE uses --privileged which already grants all capabilities
+  const usesPrivileged = platform() === "win32" && !useMinimalMount;
+  if (!usesPrivileged) {
+    addCapabilityRestrictions(cmd);
+  }
   addTmpfsMounts(cmd);
   addLogOptions(cmd);
   addDnsOptions(cmd);
@@ -539,6 +553,12 @@ export function getDockerRunCmd(
   cmd.push("-e", "CLAUDE_CONFIG_DIR=/ccbox/.claude");
   addTerminalEnv(cmd);
   addClaudeEnv(cmd);
+
+  // fakepath.so: original Windows path for LD_PRELOAD-based getcwd translation
+  // Makes git, npm, and other glibc-based tools see the original host path
+  if (dockerProjectPath !== hostProjectPath) {
+    cmd.push("-e", `CCBOX_WIN_ORIGINAL_PATH=${dockerProjectPath}`);
+  }
 
   if ((options.debug ?? 0) > 0) {
     cmd.push("-e", `CCBOX_DEBUG=${options.debug}`);
