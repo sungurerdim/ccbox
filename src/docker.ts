@@ -5,9 +5,8 @@
  * separated from CLI logic for better modularity.
  */
 
-import { execa, type Options as ExecaOptions } from "execa";
-
 import { DOCKER_COMMAND_TIMEOUT } from "./constants.js";
+import { exec, execInherit, type ExecResult } from "./exec.js";
 import { DockerError, DockerNotFoundError, DockerTimeoutError } from "./errors.js";
 import { getDockerEnv } from "./paths.js";
 
@@ -36,42 +35,32 @@ export async function safeDockerRun(
 ): Promise<DockerResult> {
   const timeout = options.timeout ?? DOCKER_COMMAND_TIMEOUT;
 
-  try {
-    const result = await execa("docker", args, {
-      timeout,
-      env: getDockerEnv(),
-      reject: false,
-      encoding: "utf8",
-    } as ExecaOptions);
+  const result = await exec("docker", args, {
+    timeout,
+    env: getDockerEnv(),
+    encoding: "utf8",
+  });
 
-    if (options.check && result.exitCode !== 0) {
-      throw new DockerError(`Docker command failed: docker ${args.slice(0, 3).join(" ")}...`);
-    }
-
-    return {
-      exitCode: result.exitCode ?? 0,
-      stdout: String(result.stdout ?? ""),
-      stderr: String(result.stderr ?? ""),
-    };
-  } catch (error: unknown) {
-    if (error instanceof DockerError) {throw error;}
-
-    if (error instanceof Error) {
-      const err = error as { code?: string; timedOut?: boolean };
-
-      if (err.code === "ENOENT") {
-        throw new DockerNotFoundError(`Docker not found in PATH. Command: docker ${args.slice(0, 3).join(" ")}...`);
-      }
-
-      if (err.timedOut) {
-        throw new DockerTimeoutError(
-          `Docker command timed out after ${timeout}ms. Command: docker ${args.slice(0, 3).join(" ")}...`
-        );
-      }
-    }
-
-    throw error;
+  const resultWithCode = result as ExecResult & { code?: string };
+  if (resultWithCode.code === "ENOENT") {
+    throw new DockerNotFoundError(`Docker not found in PATH. Command: docker ${args.slice(0, 3).join(" ")}...`);
   }
+
+  if (result.timedOut) {
+    throw new DockerTimeoutError(
+      `Docker command timed out after ${timeout}ms. Command: docker ${args.slice(0, 3).join(" ")}...`
+    );
+  }
+
+  if (options.check && result.exitCode !== 0) {
+    throw new DockerError(`Docker command failed: docker ${args.slice(0, 3).join(" ")}...`);
+  }
+
+  return {
+    exitCode: result.exitCode,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  };
 }
 
 /**
@@ -265,38 +254,28 @@ export async function buildImage(
 
   args.push(buildDir);
 
-  try {
-    const result = await execa("docker", args, {
-      timeout,
-      env: getDockerEnv(),
-      reject: false,
-      encoding: "utf8",
-      all: true, // Combine stdout and stderr
-    } as ExecaOptions);
+  const result = await exec("docker", args, {
+    timeout,
+    env: getDockerEnv(),
+    encoding: "utf8",
+    all: true,
+  });
 
-    return {
-      success: result.exitCode === 0,
-      output: String(result.all ?? ""),
-    };
-  } catch (error: unknown) {
-    // Use consistent error handling pattern from safeDockerRun
-    const err = error as NodeJS.ErrnoException & { timedOut?: boolean; all?: string };
-
-    if (err.code === "ENOENT") {
-      throw new DockerNotFoundError(`Docker not found in PATH. Command: docker ${args.slice(0, 3).join(" ")}...`);
-    }
-
-    if (err.timedOut) {
-      throw new DockerTimeoutError(
-        `Docker build timed out after ${timeout}ms. Image: ${imageName}`
-      );
-    }
-
-    return {
-      success: false,
-      output: err.all ?? String(error),
-    };
+  const resultWithCode = result as ExecResult & { code?: string };
+  if (resultWithCode.code === "ENOENT") {
+    throw new DockerNotFoundError(`Docker not found in PATH. Command: docker ${args.slice(0, 3).join(" ")}...`);
   }
+
+  if (result.timedOut) {
+    throw new DockerTimeoutError(
+      `Docker build timed out after ${timeout}ms. Image: ${imageName}`
+    );
+  }
+
+  return {
+    success: result.exitCode === 0,
+    output: result.all ?? "",
+  };
 }
 
 /**
@@ -314,16 +293,12 @@ export async function runContainer(
   } = {}
 ): Promise<number> {
   try {
-    const result = await execa("docker", args, {
-      stdio: options.stdio ?? "inherit",
+    const result = await execInherit("docker", args, {
       timeout: options.timeout,
       env: getDockerEnv(),
-      reject: false,
-    } as ExecaOptions);
-
-    return result.exitCode ?? 0;
-  } catch (error: unknown) {
-    const err = error as { exitCode?: number };
-    return err.exitCode ?? 1;
+    });
+    return result.exitCode;
+  } catch {
+    return 1;
   }
 }

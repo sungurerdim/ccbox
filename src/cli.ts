@@ -5,8 +5,9 @@
  * Commander.js-based CLI with all commands and options.
  */
 
-import chalk from "chalk";
 import { Command } from "commander";
+
+import { style } from "./logger.js";
 
 import { VERSION, MAX_PROMPT_LENGTH, MAX_SYSTEM_PROMPT_LENGTH, VALID_MODELS, DOCKER_COMMAND_TIMEOUT, DOCKER_BUILD_TIMEOUT } from "./constants.js";
 import { LanguageStack, STACK_INFO, filterStacks } from "./config.js";
@@ -61,7 +62,7 @@ function validateModel(model: string | undefined): string | undefined {
     const modelLower = model.toLowerCase();
     if (!VALID_MODELS.has(modelLower)) {
       console.log(
-        chalk.yellow(
+        style.yellow(
           `Warning: Unknown model '${model}'. Known models: ${[...VALID_MODELS].sort().join(", ")}`
         )
       );
@@ -138,7 +139,7 @@ program
       }
     } catch (e: unknown) {
       if (e instanceof ValidationError) {
-        console.log(chalk.red(`Error: ${e.message}`));
+        console.log(style.red(`Error: ${e.message}`));
         process.exit(1);
       }
       throw e;
@@ -146,7 +147,7 @@ program
 
     // -dd requires -p (Claude Code needs input in non-interactive mode)
     if (options.debug >= 2 && !options.prompt) {
-      console.log(chalk.red("Error: -dd requires -p <prompt>. Example: ccbox -dd -p \"fix the tests\""));
+      console.log(style.red("Error: -dd requires -p <prompt>. Example: ccbox -dd -p \"fix the tests\""));
       process.exit(1);
     }
 
@@ -211,7 +212,7 @@ program
     }
 
     if (stacksToBuild.length === 0) {
-      console.log(chalk.yellow("No images to rebuild."));
+      console.log(style.yellow("No images to rebuild."));
       return;
     }
 
@@ -235,14 +236,14 @@ program
     const isDeep = !!options.deep;
 
     if (!options.force) {
-      const { confirm } = await import("@inquirer/prompts");
+      const { confirm } = await import("./prompt-io.js");
       if (isDeep) {
-        console.log(chalk.yellow("This will remove ALL ccbox resources:"));
+        console.log(style.yellow("This will remove ALL ccbox resources:"));
         console.log("  - All ccbox containers (running + stopped)");
         console.log("  - All ccbox images (stacks + project images)");
         console.log("  - Temporary build files (/tmp/ccbox)");
       } else {
-        console.log(chalk.yellow("This will remove ccbox containers and images."));
+        console.log(style.yellow("This will remove ccbox containers and images."));
       }
       console.log();
       const confirmed = await confirm({
@@ -250,34 +251,34 @@ program
         default: false,
       });
       if (!confirmed) {
-        console.log(chalk.dim("Cancelled."));
+        console.log(style.dim("Cancelled."));
         return;
       }
     }
 
-    console.log(chalk.dim("Removing containers..."));
+    console.log(style.dim("Removing containers..."));
     const containersRemoved = await removeCcboxContainers();
 
-    console.log(chalk.dim("Removing images..."));
+    console.log(style.dim("Removing images..."));
     const imagesRemoved = await removeCcboxImages();
 
     let tmpdirRemoved = 0;
     if (isDeep) {
-      console.log(chalk.dim("Removing temp files..."));
+      console.log(style.dim("Removing temp files..."));
       tmpdirRemoved = cleanTempFiles();
     }
 
     // Summary
     console.log();
-    console.log(chalk.green(isDeep ? "Deep clean complete" : "Cleanup complete"));
+    console.log(style.green(isDeep ? "Deep clean complete" : "Cleanup complete"));
     const parts: string[] = [];
     if (containersRemoved) {parts.push(`${containersRemoved} container(s)`);}
     if (imagesRemoved) {parts.push(`${imagesRemoved} image(s)`);}
     if (tmpdirRemoved) {parts.push("temp files");}
     if (parts.length > 0) {
-      console.log(chalk.dim(`Removed: ${parts.join(", ")}`));
+      console.log(style.dim(`Removed: ${parts.join(", ")}`));
     } else {
-      console.log(chalk.dim("Nothing to remove - already clean"));
+      console.log(style.dim("Nothing to remove - already clean"));
     }
   });
 
@@ -292,23 +293,23 @@ program
       : Object.values(LanguageStack);
 
     if (stacks.length === 0) {
-      console.log(chalk.yellow(`No stacks found matching '${options.filter}'`));
-      console.log(chalk.dim("Try: --filter=core, --filter=python, --filter=web"));
+      console.log(style.yellow(`No stacks found matching '${options.filter}'`));
+      console.log(style.dim("Try: --filter=core, --filter=python, --filter=web"));
       return;
     }
 
-    console.log(chalk.bold(options.filter ? `Stacks matching '${options.filter}'` : "Available Stacks"));
+    console.log(style.bold(options.filter ? `Stacks matching '${options.filter}'` : "Available Stacks"));
     console.log("----------------------------");
 
     for (const stack of stacks) {
       const { description, sizeMB } = STACK_INFO[stack];
-      console.log(`  ${chalk.cyan(stack)}`);
+      console.log(`  ${style.cyan(stack)}`);
       console.log(`    ${description} (~${sizeMB}MB)`);
     }
 
     console.log();
-    console.log(chalk.dim("Usage: ccbox --stack=go"));
-    console.log(chalk.dim("Filter categories: core, combined, usecase"));
+    console.log(style.dim("Usage: ccbox --stack=go"));
+    console.log(style.dim("Filter categories: core, combined, usecase"));
   });
 
 // Update command (self-update binary)

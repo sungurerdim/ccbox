@@ -8,8 +8,8 @@ import { existsSync } from "node:fs";
 import { platform, env } from "node:process";
 import { join } from "node:path";
 
-import chalk from "chalk";
-import { execa, type Options as ExecaOptions } from "execa";
+import { exec, execDetached } from "./exec.js";
+import { style } from "./logger.js";
 
 import { DOCKER_CHECK_INTERVAL, DOCKER_COMMAND_TIMEOUT, DOCKER_STARTUP_TIMEOUT } from "./constants.js";
 import { checkDockerStatus } from "./docker.js";
@@ -27,11 +27,10 @@ async function startDockerDesktop(): Promise<boolean> {
   if (os === "win32") {
     // Try docker desktop command first
     try {
-      const result = await execa("docker", ["desktop", "start"], {
+      const result = await exec("docker", ["desktop", "start"], {
         timeout: DOCKER_COMMAND_TIMEOUT,
         env: getDockerEnv(),
-        reject: false,
-      } as ExecaOptions);
+      });
 
       if (result.exitCode === 0) {return true;}
     } catch {
@@ -45,7 +44,7 @@ async function startDockerDesktop(): Promise<boolean> {
     if (existsSync(dockerExe)) {
       try {
         // Start Docker Desktop in background (detached)
-        execa(dockerExe, [], { detached: true, stdio: "ignore" });
+        execDetached(dockerExe, []);
         return true;
       } catch {
         return false;
@@ -53,11 +52,10 @@ async function startDockerDesktop(): Promise<boolean> {
     }
   } else if (os === "darwin") {
     try {
-      await execa("open", ["-a", "Docker"], {
+      await exec("open", ["-a", "Docker"], {
         timeout: DOCKER_COMMAND_TIMEOUT,
         env: getDockerEnv(),
-        reject: false,
-      } as ExecaOptions);
+      });
       return true;
     } catch {
       return false;
@@ -83,7 +81,7 @@ export async function checkDocker(autoStart = true): Promise<boolean> {
   }
 
   if (autoStart) {
-    console.log(chalk.dim("Docker not running, attempting to start..."));
+    console.log(style.dim("Docker not running, attempting to start..."));
     if (await startDockerDesktop()) {
       const maxWait = DOCKER_STARTUP_TIMEOUT / 1000; // Convert to seconds
       const checkInterval = DOCKER_CHECK_INTERVAL / 1000;
@@ -91,11 +89,11 @@ export async function checkDocker(autoStart = true): Promise<boolean> {
       for (let i = 0; i < maxWait; i++) {
         await sleep(1000);
         if (await checkDockerStatus()) {
-          console.log(chalk.green("Docker started successfully"));
+          console.log(style.green("Docker started successfully"));
           return true;
         }
         if ((i + 1) % checkInterval === 0) {
-          console.log(chalk.dim(`Waiting for Docker... (${i + 1}s)`));
+          console.log(style.dim(`Waiting for Docker... (${i + 1}s)`));
         }
       }
     }
@@ -124,24 +122,22 @@ function sanitizeEnvValue(value: string): string {
  * Returns sanitized value safe for Docker environment variables.
  */
 async function getGitConfigValue(key: string): Promise<string> {
-  try {
-    const result = await execa("git", ["config", "--global", key], {
-      timeout: DOCKER_COMMAND_TIMEOUT,
-      reject: false,
-      encoding: "utf8",
-    } as ExecaOptions);
+  const result = await exec("git", ["config", "--global", key], {
+    timeout: DOCKER_COMMAND_TIMEOUT,
+    encoding: "utf8",
+  });
 
-    if (result.exitCode === 0) {
-      // Sanitize to prevent environment variable injection
-      return sanitizeEnvValue(String(result.stdout ?? ""));
-    }
-  } catch (error: unknown) {
-    const err = error as { code?: string; timedOut?: boolean };
-    if (err.code === "ENOENT") {
-      console.log(chalk.dim("Git not found in PATH"));
-    } else if (err.timedOut) {
-      console.log(chalk.dim(`Git config ${key} timed out`));
-    }
+  const resultWithCode = result as typeof result & { code?: string };
+  if (resultWithCode.code === "ENOENT") {
+    console.log(style.dim("Git not found in PATH"));
+    return "";
+  }
+  if (result.timedOut) {
+    console.log(style.dim(`Git config ${key} timed out`));
+    return "";
+  }
+  if (result.exitCode === 0) {
+    return sanitizeEnvValue(result.stdout);
   }
   return "";
 }

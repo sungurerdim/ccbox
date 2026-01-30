@@ -8,7 +8,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { execa, type Options as ExecaOptions } from "execa";
+import { exec, execInherit } from "./exec.js";
 
 import {
   getImageName,
@@ -37,7 +37,7 @@ async function runClaudeInstall(): Promise<void> {
   log.dim("Configuring Claude Code installation...");
 
   try {
-    await execa(
+    await exec(
       "docker",
       [
         "run",
@@ -58,9 +58,7 @@ async function runClaudeInstall(): Promise<void> {
       {
         timeout: 60000,
         env: getDockerEnv(),
-        reject: false,
-        stdio: "pipe",
-      } as ExecaOptions
+      }
     );
     log.dim("Claude Code configured");
   } catch {
@@ -131,11 +129,10 @@ export async function buildImage(
   buildArgs.push(buildDir);
 
   try {
-    await execa("docker", buildArgs, {
-      stdio: "inherit",
+    await execInherit("docker", buildArgs, {
       env,
       reject: true,
-    } as ExecaOptions);
+    });
 
     log.success(`Built ${imageName}`);
 
@@ -189,11 +186,10 @@ export function getProjectImageName(projectName: string, stack: LanguageStack): 
 export async function projectImageExists(projectName: string, stack: LanguageStack): Promise<boolean> {
   const imageName = getProjectImageName(projectName, stack);
   try {
-    const result = await execa("docker", ["image", "inspect", imageName], {
+    const result = await exec("docker", ["image", "inspect", imageName], {
       timeout: DOCKER_COMMAND_TIMEOUT,
       env: getDockerEnv(),
-      reject: false,
-    } as ExecaOptions);
+    });
     return result.exitCode === 0;
   } catch {
     return false;
@@ -245,15 +241,14 @@ export async function buildProjectImage(
 
   try {
     // Note: no --pull flag since we're building on top of local ccbox images
-    await execa(
+    await execInherit(
       "docker",
       ["build", "-t", imageName, "-f", dockerfilePath, "--label", `ccbox.deps-hash=${depsHash}`, ...(cache ? [] : ["--no-cache"]), `--progress=${progress}`, projectPath],
       {
-        stdio: "inherit",
         env,
         timeout: DOCKER_BUILD_TIMEOUT,
         reject: true,
-      } as ExecaOptions
+      }
     );
 
     log.success(`Built ${imageName}`);
@@ -312,18 +307,17 @@ export async function buildProjectImage(
 export async function getProjectImageDepsHash(projectName: string, stack: LanguageStack): Promise<string | null> {
   const imageName = getProjectImageName(projectName, stack);
   try {
-    const result = await execa(
+    const result = await exec(
       "docker",
       ["inspect", "--format", "{{index .Config.Labels \"ccbox.deps-hash\"}}", imageName],
       {
         timeout: DOCKER_COMMAND_TIMEOUT,
         env: getDockerEnv(),
-        reject: false,
         encoding: "utf8",
-      } as ExecaOptions
+      }
     );
     if (result.exitCode !== 0) { return null; }
-    const hash = String(result.stdout ?? "").trim();
+    const hash = result.stdout.trim();
     return hash || null;
   } catch {
     return null;
@@ -335,16 +329,15 @@ export async function getProjectImageDepsHash(projectName: string, stack: Langua
  */
 export async function getInstalledCcboxImages(): Promise<Set<string>> {
   try {
-    const result = await execa("docker", ["images", "--format", "{{.Repository}}:{{.Tag}}"], {
+    const result = await exec("docker", ["images", "--format", "{{.Repository}}:{{.Tag}}"], {
       timeout: DOCKER_COMMAND_TIMEOUT,
       env: getDockerEnv(),
-      reject: false,
       encoding: "utf8",
-    } as ExecaOptions);
+    });
 
     if (result.exitCode !== 0) {return new Set();}
 
-    const allImages = String(result.stdout ?? "").trim().split("\n");
+    const allImages = result.stdout.trim().split("\n");
     return new Set(allImages.filter((img: string) => img.startsWith("ccbox_")));
   } catch {
     return new Set();

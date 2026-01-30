@@ -6,7 +6,7 @@
  * - Linux/macOS: overwrite directly (OS allows replacing running binary)
  */
 
-import chalk from "chalk";
+import { style } from "./logger.js";
 import { createHash } from "crypto";
 import { writeFileSync, renameSync, unlinkSync, chmodSync, existsSync } from "fs";
 import { VERSION } from "./constants.js";
@@ -148,36 +148,36 @@ export async function selfUpdate(force: boolean): Promise<void> {
 
   const currentVersion = `v${VERSION}`;
 
-  console.log(chalk.dim("  Checking for updates..."));
+  console.log(style.dim("  Checking for updates..."));
   console.log();
 
   const release = await fetchLatestRelease();
   if (!release) {
-    console.log(chalk.red("  Failed to check (network error or rate limited)"));
+    console.log(style.red("  Failed to check (network error or rate limited)"));
     process.exit(1);
   }
 
   const latestVersion = release.tag_name;
 
-  console.log(`  ${chalk.dim("Current")}  ${currentVersion}`);
-  console.log(`  ${chalk.dim("Latest")}   ${latestVersion}`);
+  console.log(`  ${style.dim("Current")}  ${currentVersion}`);
+  console.log(`  ${style.dim("Latest")}   ${latestVersion}`);
 
   if (compareVersions(currentVersion, latestVersion) >= 0) {
     console.log();
-    console.log(chalk.green("  Already up to date"));
+    console.log(style.green("  Already up to date"));
     return;
   }
 
   // Confirm
   if (!force) {
     console.log();
-    const { confirm } = await import("@inquirer/prompts");
+    const { confirm } = await import("./prompt-io.js");
     const confirmed = await confirm({
       message: `Update to ${latestVersion}?`,
       default: true,
     });
     if (!confirmed) {
-      console.log(chalk.dim("  Cancelled."));
+      console.log(style.dim("  Cancelled."));
       return;
     }
   }
@@ -194,12 +194,12 @@ export async function selfUpdate(force: boolean): Promise<void> {
   try {
     data = await downloadFile(downloadUrl);
   } catch (e: unknown) {
-    console.log(chalk.red(" failed"));
-    console.log(chalk.red(`  ${e instanceof Error ? e.message : String(e)}`));
+    console.log(style.red(" failed"));
+    console.log(style.red(`  ${e instanceof Error ? e.message : String(e)}`));
     process.exit(1);
   }
 
-  console.log(chalk.green(" done"));
+  console.log(style.green(" done"));
 
   // Verify checksum
   const checksums = await fetchChecksums(latestVersion);
@@ -207,15 +207,15 @@ export async function selfUpdate(force: boolean): Promise<void> {
     const expectedHash = checksums.get(binaryName);
     if (expectedHash) {
       if (!verifyChecksum(data, expectedHash)) {
-        console.log(chalk.red("  Checksum verification failed — aborting update"));
+        console.log(style.red("  Checksum verification failed — aborting update"));
         process.exit(1);
       }
-      console.log(chalk.green("  Checksum verified ✓"));
+      console.log(style.green("  Checksum verified ✓"));
     } else {
-      console.log(chalk.yellow("  Warning: no checksum entry for this binary, skipping verification"));
+      console.log(style.yellow("  Warning: no checksum entry for this binary, skipping verification"));
     }
   } else {
-    console.log(chalk.yellow("  Warning: checksums.txt unavailable, skipping verification"));
+    console.log(style.yellow("  Warning: checksums.txt unavailable, skipping verification"));
   }
 
   // Replace binary
@@ -248,12 +248,12 @@ export async function selfUpdate(force: boolean): Promise<void> {
     } catch {
       // Rollback failed
     }
-    console.log(chalk.red(`  Update failed: ${e instanceof Error ? e.message : String(e)}`));
+    console.log(style.red(`  Update failed: ${e instanceof Error ? e.message : String(e)}`));
     process.exit(1);
   }
 
   console.log();
-  console.log(chalk.green(`  Updated to ${latestVersion}`));
+  console.log(style.green(`  Updated to ${latestVersion}`));
 }
 
 /**
@@ -263,18 +263,18 @@ export async function selfUninstall(force: boolean): Promise<void> {
   const exePath = getExePath();
 
   console.log();
-  console.log(chalk.yellow("  This will remove:"));
+  console.log(style.yellow("  This will remove:"));
   console.log(`    ${exePath}`);
   console.log();
 
   if (!force) {
-    const { confirm } = await import("@inquirer/prompts");
+    const { confirm } = await import("./prompt-io.js");
     const confirmed = await confirm({
       message: "Continue?",
       default: false,
     });
     if (!confirmed) {
-      console.log(chalk.dim("  Cancelled."));
+      console.log(style.dim("  Cancelled."));
       return;
     }
   }
@@ -295,7 +295,7 @@ export async function selfUninstall(force: boolean): Promise<void> {
       unlinkSync(exePath);
     }
   } catch (e: unknown) {
-    console.log(chalk.red(`  Uninstall failed: ${e instanceof Error ? e.message : String(e)}`));
+    console.log(style.red(`  Uninstall failed: ${e instanceof Error ? e.message : String(e)}`));
     process.exit(1);
   }
 
@@ -303,7 +303,7 @@ export async function selfUninstall(force: boolean): Promise<void> {
   cleanupOldBinary();
 
   console.log();
-  console.log(chalk.green("  ccbox has been uninstalled"));
+  console.log(style.green("  ccbox has been uninstalled"));
 }
 
 /**
@@ -314,11 +314,11 @@ export async function showVersion(check: boolean): Promise<void> {
 
   if (check) {
     console.log();
-    console.log(chalk.dim("  Checking for updates..."));
+    console.log(style.dim("  Checking for updates..."));
 
     const release = await fetchLatestRelease();
     if (!release) {
-      console.log(chalk.yellow("  Could not check (network error)"));
+      console.log(style.yellow("  Could not check (network error)"));
       return;
     }
 
@@ -326,10 +326,10 @@ export async function showVersion(check: boolean): Promise<void> {
     const latestVersion = release.tag_name;
 
     if (compareVersions(currentVersion, latestVersion) >= 0) {
-      console.log(chalk.green("  Up to date"));
+      console.log(style.green("  Up to date"));
     } else {
-      console.log(chalk.yellow(`  Update available: ${currentVersion} -> ${latestVersion}`));
-      console.log(chalk.dim("  Run 'ccbox update' to update"));
+      console.log(style.yellow(`  Update available: ${currentVersion} -> ${latestVersion}`));
+      console.log(style.dim("  Run 'ccbox update' to update"));
     }
   }
 }

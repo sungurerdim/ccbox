@@ -2,10 +2,10 @@
  * Unified logging abstraction for ccbox.
  *
  * Centralizes all console output with consistent styling and log levels.
- * Uses chalk for terminal styling.
+ * Uses picocolors for terminal styling.
  */
 
-import chalk from "chalk";
+import pc from "picocolors";
 
 /** Log levels in order of verbosity (debug is most verbose). */
 export enum LogLevel {
@@ -76,7 +76,7 @@ export const log = {
    */
   debug(message: string): void {
     if (config.level <= LogLevel.DEBUG) {
-      console.log(chalk.dim(formatMessage(message)));
+      console.log(pc.dim(formatMessage(message)));
     }
   },
 
@@ -96,7 +96,7 @@ export const log = {
    */
   warn(message: string): void {
     if (config.level <= LogLevel.WARN) {
-      console.log(chalk.yellow(formatMessage(message)));
+      console.log(pc.yellow(formatMessage(message)));
     }
   },
 
@@ -106,7 +106,7 @@ export const log = {
    */
   error(message: string): void {
     if (config.level <= LogLevel.ERROR) {
-      console.log(chalk.red(formatMessage(message)));
+      console.log(pc.red(formatMessage(message)));
     }
   },
 
@@ -116,7 +116,7 @@ export const log = {
    */
   success(message: string): void {
     if (config.level <= LogLevel.INFO) {
-      console.log(chalk.green(formatMessage(message)));
+      console.log(pc.green(formatMessage(message)));
     }
   },
 
@@ -126,7 +126,7 @@ export const log = {
    */
   dim(message: string): void {
     if (config.level <= LogLevel.INFO) {
-      console.log(chalk.dim(formatMessage(message)));
+      console.log(pc.dim(formatMessage(message)));
     }
   },
 
@@ -136,7 +136,7 @@ export const log = {
    */
   bold(message: string): void {
     if (config.level <= LogLevel.INFO) {
-      console.log(chalk.bold(formatMessage(message)));
+      console.log(pc.bold(formatMessage(message)));
     }
   },
 
@@ -146,7 +146,7 @@ export const log = {
    */
   cyan(message: string): void {
     if (config.level <= LogLevel.INFO) {
-      console.log(chalk.cyan(formatMessage(message)));
+      console.log(pc.cyan(formatMessage(message)));
     }
   },
 
@@ -156,7 +156,7 @@ export const log = {
    */
   blue(message: string): void {
     if (config.level <= LogLevel.INFO) {
-      console.log(chalk.blue(formatMessage(message)));
+      console.log(pc.blue(formatMessage(message)));
     }
   },
 
@@ -188,18 +188,18 @@ export const log = {
  *   log.raw(`${style.green("success")} - ${style.dim("details")}`)
  */
 export const style = {
-  dim: (text: string) => chalk.dim(text),
-  bold: (text: string) => chalk.bold(text),
-  red: (text: string) => chalk.red(text),
-  green: (text: string) => chalk.green(text),
-  yellow: (text: string) => chalk.yellow(text),
-  blue: (text: string) => chalk.blue(text),
-  cyan: (text: string) => chalk.cyan(text),
-  magenta: (text: string) => chalk.magenta(text),
+  dim: (text: string) => pc.dim(text),
+  bold: (text: string) => pc.bold(text),
+  red: (text: string) => pc.red(text),
+  green: (text: string) => pc.green(text),
+  yellow: (text: string) => pc.yellow(text),
+  blue: (text: string) => pc.blue(text),
+  cyan: (text: string) => pc.cyan(text),
+  magenta: (text: string) => pc.magenta(text),
   // Combinations
-  cyanBold: (text: string) => chalk.cyan.bold(text),
-  blueBold: (text: string) => chalk.blue.bold(text),
-  redBold: (text: string) => chalk.red.bold(text),
-  greenBold: (text: string) => chalk.green.bold(text),
-  yellowBold: (text: string) => chalk.yellow.bold(text),
+  cyanBold: (text: string) => pc.bold(pc.cyan(text)),
+  blueBold: (text: string) => pc.bold(pc.blue(text)),
+  redBold: (text: string) => pc.bold(pc.red(text)),
+  greenBold: (text: string) => pc.bold(pc.green(text)),
+  yellowBold: (text: string) => pc.bold(pc.yellow(text)),
 };

@@ -4,8 +4,8 @@
  * Handles interactive prompts for stack selection, dependency installation, etc.
  */
 
-import chalk from "chalk";
-import { input, confirm } from "@inquirer/prompts";
+import { style } from "./logger.js";
+import { input, confirm } from "./prompt-io.js";
 
 import {
   createConfig,
@@ -37,7 +37,7 @@ function validateDepsChoice(choice: string, maxOption: number): number | null {
  * Prompt user for dependency installation preference.
  */
 export async function promptDeps(depsList: DepsInfo[]): Promise<DepsMode> {
-  console.log(chalk.cyan.bold("Dependencies Detected"));
+  console.log(style.cyanBold("Dependencies Detected"));
   console.log();
 
   // Show detected package managers
@@ -46,7 +46,7 @@ export async function promptDeps(depsList: DepsInfo[]): Promise<DepsMode> {
       deps.files.length > 3
         ? `${deps.files.slice(0, 3).join(", ")} (+${deps.files.length - 3} more)`
         : deps.files.join(", ");
-    console.log(`  ${chalk.cyan(deps.name)}: ${filesStr}`);
+    console.log(`  ${style.cyan(deps.name)}: ${filesStr}`);
   }
 
   console.log();
@@ -55,10 +55,10 @@ export async function promptDeps(depsList: DepsInfo[]): Promise<DepsMode> {
   const hasDev = depsList.some((d) => d.hasDev);
 
   if (hasDev) {
-    console.log(chalk.bold("Install dependencies?"));
-    console.log(`  ${chalk.cyan("1")}. All (including dev/test)`);
-    console.log(`  ${chalk.cyan("2")}. Production only`);
-    console.log(`  ${chalk.cyan("3")}. Skip`);
+    console.log(style.bold("Install dependencies?"));
+    console.log(`  ${style.cyan("1")}. All (including dev/test)`);
+    console.log(`  ${style.cyan("2")}. Production only`);
+    console.log(`  ${style.cyan("3")}. Skip`);
     console.log();
 
     while (true) {
@@ -67,7 +67,7 @@ export async function promptDeps(depsList: DepsInfo[]): Promise<DepsMode> {
       if (validated === 1) {return "all";}
       if (validated === 2) {return "prod";}
       if (validated === 3) {return "skip";}
-      console.log(chalk.red("Invalid choice. Try again."));
+      console.log(style.red("Invalid choice. Try again."));
     }
   } else {
     // No dev distinction - just ask yes/no
@@ -83,14 +83,14 @@ export async function selectStack(
   detectedStack: LanguageStack,
   detectedLanguages: LanguageDetection[]
 ): Promise<LanguageStack | null> {
-  console.log(chalk.blue.bold("Stack Selection"));
+  console.log(style.blueBold("Stack Selection"));
   console.log();
 
   if (detectedLanguages.length > 0) {
     const summary = detectedLanguages
       .map((d) => `${d.language} (${d.confidence})`)
       .join(", ");
-    console.log(chalk.dim(`Detected: ${summary}`));
+    console.log(style.dim(`Detected: ${summary}`));
     console.log();
   }
 
@@ -105,21 +105,21 @@ export async function selectStack(
   const installedImages = await getInstalledCcboxImages();
 
   // Display options
-  console.log(chalk.bold("Available stacks:"));
+  console.log(style.bold("Available stacks:"));
   for (let idx = 0; idx < options.length; idx++) {
     const { name, isDetected } = options[idx]!;
     const { description, sizeMB } = STACK_INFO[name];
-    const marker = isDetected ? chalk.green("->") + " " : "   ";
-    const detectedLabel = isDetected ? chalk.green(" (detected)") : "";
+    const marker = isDetected ? style.green("->") + " " : "   ";
+    const detectedLabel = isDetected ? style.green(" (detected)") : "";
     const installed = installedImages.has(getImageName(name))
-      ? chalk.dim(" [installed]")
+      ? style.dim(" [installed]")
       : "";
-    console.log(`  ${marker}${chalk.cyan(idx + 1)}. ${name}${detectedLabel}${installed}`);
-    console.log(`      ${chalk.dim(`${description} (~${sizeMB}MB)`)}`);
+    console.log(`  ${marker}${style.cyan(String(idx + 1))}. ${name}${detectedLabel}${installed}`);
+    console.log(`      ${style.dim(`${description} (~${sizeMB}MB)`)}`);
   }
 
   console.log();
-  console.log(`  ${chalk.dim("0")}. Cancel`);
+  console.log(`  ${style.dim("0")}. Cancel`);
   console.log();
 
   // Get user choice
@@ -138,7 +138,7 @@ export async function selectStack(
     if (choiceInt >= 1 && choiceInt <= options.length) {
       return options[choiceInt - 1]!.name;
     }
-    console.log(chalk.red("Invalid choice. Try again."));
+    console.log(style.red("Invalid choice. Try again."));
   }
 }
 
@@ -157,7 +157,7 @@ export async function setupGitConfig(): Promise<Config> {
   }
 
   if (name || email) {
-    console.log(chalk.dim(`Git config: ${name || "(none)"} <${email || "(none)"}>`));
+    console.log(style.dim(`Git config: ${name || "(none)"} <${email || "(none)"}>`));
   }
 
   return config;
@@ -187,13 +187,13 @@ export async function resolveStack(
   if (stackName && stackName !== "auto") {
     const validStack = parseStack(stackName);
     if (!validStack) {
-      console.log(chalk.red(`Invalid stack: "${stackName}"`));
-      console.log(chalk.dim(`Valid stacks: ${getStackValues().join(", ")}`));
+      console.log(style.red(`Invalid stack: "${stackName}"`));
+      console.log(style.dim(`Valid stacks: ${getStackValues().join(", ")}`));
       return null;
     }
     // Double-check stack is in LanguageStack enum (defensive validation)
     if (!Object.values(LanguageStack).includes(validStack)) {
-      console.log(chalk.red(`Stack "${validStack}" not in LanguageStack enum`));
+      console.log(style.red(`Stack "${validStack}" not in LanguageStack enum`));
       return null;
     }
     return validStack;
