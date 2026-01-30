@@ -90,6 +90,16 @@ _die() {
 # Error trap - show what failed
 trap 'echo "[ccbox:ERROR] Command failed at line $LINENO: $BASH_COMMAND" >&2' ERR
 
+# Graceful FUSE cleanup on exit
+_cleanup_fuse() {
+    for _mp in /ccbox/.claude "$PWD/.claude"; do
+        if mountpoint -q "$_mp" 2>/dev/null; then
+            fusermount -u "$_mp" 2>/dev/null || umount -l "$_mp" 2>/dev/null || true
+        fi
+    done
+}
+trap _cleanup_fuse EXIT
+
 set -e
 
 # Set system timezone from TZ env var (passed from host by docker-runtime)
@@ -148,9 +158,10 @@ if [[ "$(id -u)" == "0" && -n "$CCBOX_UID" && -n "$CCBOX_GID" ]]; then
     mkdir -p /ccbox/.cache/tmp 2>/dev/null || true
     chown "$CCBOX_UID:$CCBOX_GID" /ccbox/.cache/tmp 2>/dev/null || true
 
+    _claude_dir="\${CLAUDE_CONFIG_DIR:-/ccbox/.claude}"
+
     # Fix .claude directory ownership (projects, sessions, etc. created by previous runs)
     # Uses CLAUDE_CONFIG_DIR env var for dynamic path resolution
-    _claude_dir="\${CLAUDE_CONFIG_DIR:-/ccbox/.claude}"
     if [[ -d "$_claude_dir" ]]; then
         # Fix projects directory and subdirectories (session files)
         if [[ -d "$_claude_dir/projects" ]]; then
