@@ -84,7 +84,7 @@ jobs:
         shell: bash
         run: |
           VERSION="v${{ needs.verify.outputs.version }}"
-          PREV_TAG=$(git tag --sort=-v:refname | grep -v "^${VERSION}$" | head -1)
+          PREV_TAG=$(git tag --sort=-v:refname | grep -v "^${VERSION}$" | head -1 || true)
           {
             echo 'content<<BODY_EOF'
             if [[ -n "$PREV_TAG" ]]; then
