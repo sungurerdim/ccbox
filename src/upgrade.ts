@@ -7,6 +7,7 @@
  */
 
 import chalk from "chalk";
+import { createHash } from "crypto";
 import { writeFileSync, renameSync, unlinkSync, chmodSync, existsSync } from "fs";
 import { VERSION } from "./constants.js";
 
@@ -88,6 +89,43 @@ async function downloadFile(url: string): Promise<Buffer> {
 }
 
 /**
+ * Fetch checksums.txt from a GitHub release and parse into a Map<filename, hash>.
+ * Returns null if the file is unavailable (old release, network error).
+ */
+async function fetchChecksums(tagName: string): Promise<Map<string, string> | null> {
+  const url = `https://github.com/${REPO}/releases/download/${tagName}/checksums.txt`;
+  try {
+    const response = await fetch(url, {
+      headers: { "User-Agent": "ccbox" },
+      redirect: "follow",
+    });
+    if (!response.ok) {return null;}
+    const text = await response.text();
+    const map = new Map<string, string>();
+    for (const line of text.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) {continue;}
+      // Format: "hash  filename" (two spaces)
+      const match = trimmed.match(/^([0-9a-f]{64})\s+(.+)$/);
+      if (match) {
+        map.set(match[2], match[1]);
+      }
+    }
+    return map.size > 0 ? map : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Verify a buffer's SHA-256 hash against an expected hex digest.
+ */
+function verifyChecksum(data: Buffer, expectedHash: string): boolean {
+  const actual = createHash("sha256").update(data).digest("hex");
+  return actual === expectedHash.toLowerCase();
+}
+
+/**
  * Clean up leftover .old file from previous update.
  */
 function cleanupOldBinary(): void {
@@ -162,6 +200,23 @@ export async function selfUpdate(force: boolean): Promise<void> {
   }
 
   console.log(chalk.green(" done"));
+
+  // Verify checksum
+  const checksums = await fetchChecksums(latestVersion);
+  if (checksums) {
+    const expectedHash = checksums.get(binaryName);
+    if (expectedHash) {
+      if (!verifyChecksum(data, expectedHash)) {
+        console.log(chalk.red("  Checksum verification failed — aborting update"));
+        process.exit(1);
+      }
+      console.log(chalk.green("  Checksum verified ✓"));
+    } else {
+      console.log(chalk.yellow("  Warning: no checksum entry for this binary, skipping verification"));
+    }
+  } else {
+    console.log(chalk.yellow("  Warning: checksums.txt unavailable, skipping verification"));
+  }
 
   // Replace binary
   const exePath = getExePath();
