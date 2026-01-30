@@ -4,8 +4,9 @@
  * All timeout values and shared constants are defined here (SSOT).
  */
 
-// === Version ===
-export const VERSION = "0.1.0"; // Package version
+// === Version (SSOT: package.json) ===
+import pkg from "../package.json" with { type: "json" };
+export const VERSION: string = pkg.version;
 
 // === Docker Timeouts (milliseconds) ===
 export const DOCKER_COMMAND_TIMEOUT = 30_000; // Quick docker commands (info, inspect, ps)
