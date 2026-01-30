@@ -540,9 +540,22 @@ export function generateProjectDockerfile(
   const installCmds = getInstallCommands(depsList, depsMode);
 
   if (installCmds.length > 0) {
-    lines.push("# Install dependencies");
+    lines.push("# Install dependencies (skip if runtime not available in stack)");
     for (const cmd of installCmds) {
-      lines.push(`RUN ${cmd}`);
+      // Extract the binary name from the command to check availability
+      const binary = cmd.match(/^(\S+)/)?.[1] ?? "";
+      // Commands starting with a runtime binary get a "which" guard
+      // so they gracefully skip when the stack doesn't include that runtime
+      const needsGuard = ["python3", "pip", "poetry", "pdm", "uv", "conda", "pipenv",
+        "go", "cargo", "dotnet", "nuget", "mix", "rebar3", "gleam",
+        "stack", "cabal", "swift", "dart", "flutter", "julia",
+        "lein", "clojure", "zig", "nimble", "opam", "cpanm",
+        "conan", "vcpkg", "luarocks", "Rscript"].includes(binary);
+      if (needsGuard) {
+        lines.push(`RUN which ${binary} >/dev/null 2>&1 && ${cmd} || echo "Skipping ${binary} (not in stack)"`);
+      } else {
+        lines.push(`RUN ${cmd}`);
+      }
     }
   }
 
