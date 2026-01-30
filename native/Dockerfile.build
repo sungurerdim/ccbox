@@ -9,10 +9,10 @@ WORKDIR /build
 COPY ccbox-fuse.c fakepath.c ./
 
 # Build FUSE helper (requires libfuse3)
-RUN gcc -Wall -O2 -s -o ccbox-fuse ccbox-fuse.c $(pkg-config fuse3 --cflags --libs)
+RUN gcc -Wall -Werror -O2 -s -o ccbox-fuse ccbox-fuse.c $(pkg-config fuse3 --cflags --libs)
 
 # Build fakepath.so (LD_PRELOAD library for path translation)
-RUN gcc -shared -fPIC -Wall -O2 -s -o fakepath.so fakepath.c -ldl -D_GNU_SOURCE
+RUN gcc -shared -fPIC -Wall -Werror -O2 -s -o fakepath.so fakepath.c -ldl -D_GNU_SOURCE
 
 FROM scratch
 COPY --from=builder /build/ccbox-fuse /ccbox-fuse

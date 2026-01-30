@@ -68,8 +68,11 @@ RUN set -e; \\
     mkdir -p /ccbox && chown ccbox:ccbox /ccbox
 
 # Cross-platform path compatibility (Windows/macOS/Linux host paths)
-# Windows: /{a..z} (all drive letters)  macOS: /Users  Linux: /home already exists
-RUN bash -c 'mkdir -p /{a..z} /Users && chown ccbox:ccbox /{a..z} /Users 2>/dev/null || true'
+# /{a..z}    — mount points for Docker volumes (D:/x → /d/x)
+# /{A..Z}:   — symlinks for Bun direct syscalls (lstat "D:/x" → /D: → /d → /d/x)
+# /Users     — macOS home directory mount point
+RUN bash -c 'mkdir -p /{a..z} /Users && chown ccbox:ccbox /{a..z} /Users 2>/dev/null || true' \
+ && bash -c 'for d in {a..z}; do u=$(echo "$d" | LC_ALL=C tr a-z A-Z); ln -sf /$d /$u: 2>/dev/null || true; done'
 
 # Locale and performance environment
 ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \\

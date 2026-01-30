@@ -5,7 +5,6 @@
  */
 
 import { basename } from "node:path";
-
 import { execa, type Options as ExecaOptions } from "execa";
 
 import {
@@ -139,25 +138,39 @@ async function executeContainer(
     log.dim("Docker command: " + cmd.join(" "));
   }
 
-  // stdin logic:
-  // -dd without -p: ignore stdin (watch-only, no user input)
-  // -dd with -p: inherit stdin (prompt piped to Claude Code)
-  // everything else: inherit (interactive or prompt mode)
-  const isWatchOnly = debug >= 2 && !prompt;
-  const stdio: ["ignore" | "inherit", "inherit", "inherit"] = [
-    isWatchOnly ? "ignore" : "inherit",
-    "inherit",
-    "inherit",
-  ];
+  // stdin: inherit for interactive, ignore for watch-only (-dd)
+  const stdin = debug >= 2 ? "ignore" : "inherit";
 
   let returncode = 0;
   try {
-    const result = await execa("docker", cmd.slice(1), {
-      stdio,
+    const child = execa("docker", cmd.slice(1), {
+      stdio: [stdin, "inherit", "pipe"],
       env: getDockerEnv(),
       reject: false,
     } as ExecaOptions);
 
+    // Filter Docker warnings from stderr (e.g. kernel swappiness, cgroup warnings)
+    // Pass through all other stderr output (Claude Code errors, debug info)
+    if (child.stderr) {
+      let partial = "";
+      child.stderr.on("data", (chunk: Buffer) => {
+        const text = partial + chunk.toString();
+        const lines = text.split("\n");
+        partial = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("WARNING:")) {
+            process.stderr.write(line + "\n");
+          }
+        }
+      });
+      child.stderr.on("end", () => {
+        if (partial && !partial.startsWith("WARNING:")) {
+          process.stderr.write(partial);
+        }
+      });
+    }
+
+    const result = await child;
     returncode = result.exitCode ?? 0;
   } catch (error: unknown) {
     const err = error as { exitCode?: number };

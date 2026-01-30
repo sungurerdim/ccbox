@@ -192,45 +192,19 @@ Docker container restrictions (not ccbox-specific):
 | No GUI apps | Use CLI alternatives |
 
 <details>
-<summary><b>Cross-platform path translation (FUSE)</b></summary>
+<summary><b>Cross-platform path translation</b></summary>
 
-Claude Code saves absolute paths in config files. ccbox uses FUSE to translate paths between host and container so your sessions work everywhere.
+ccbox uses a dual-layer path translation system (FUSE + fakepath) to make the container transparent — tools and Claude Code see host paths as if running natively.
 
-**Path mappings:**
 ```
 Host                           Container
-C:/Users/You/.claude      ↔    /ccbox/.claude
-D:/GitHub/project         ↔    /d/GitHub/project
+C:\Users\You\.claude      ↔    /ccbox/.claude
+D:\Projects\myapp         ↔    /d/Projects/myapp
 ```
 
-**What FUSE does:**
-- When Claude writes `/ccbox/.claude` → saved as `C:/Users/You/.claude`
-- When Claude reads config → `C:/Users/You/.claude` shown as `/ccbox/.claude`
+Sessions created in ccbox work seamlessly with native Claude Code and vice versa.
 
-**Why it matters:** Without this, sessions created in ccbox wouldn't work with native Claude Code on your host (path mismatch). With FUSE, you can switch between ccbox and native Claude Code freely.
-
-</details>
-
-<details>
-<summary><b>Cross-environment session compatibility (symlink bridge)</b></summary>
-
-Different environments encode project paths differently in Claude's session storage:
-
-| Environment | Path | Encoded as |
-|-------------|------|------------|
-| Native Windows | `D:\GitHub\project` | `D--GitHub-project` |
-| WSL | `/mnt/d/GitHub/project` | `mnt-d-GitHub-project` |
-| ccbox/Docker | `/d/GitHub/project` | `d-GitHub-project` |
-
-Claude stores sessions in `.claude/projects/<encoded-path>/`. Without bridging, sessions created in one environment wouldn't appear in another.
-
-**What ccbox does:** Automatically creates symlinks between encodings:
-```
-.claude/projects/d-GitHub-project → D--GitHub-project    (Windows bridge)
-.claude/projects/d-GitHub-project → mnt-d-GitHub-project (WSL bridge)
-```
-
-**Result:** Sessions created in native Windows Claude Code, WSL, or ccbox are all accessible from each other. You can switch between environments freely without losing your conversation history.
+> **Details:** [docs/PATH-TRANSLATION.md](docs/PATH-TRANSLATION.md)
 
 </details>
 
