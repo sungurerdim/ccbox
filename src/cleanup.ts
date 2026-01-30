@@ -8,8 +8,8 @@ import { existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import chalk from "chalk";
-import { execa, type Options as ExecaOptions } from "execa";
+import { exec } from "./exec.js";
+import { style } from "./logger.js";
 
 import { getImageName, LanguageStack } from "./config.js";
 import { PRUNE_TIMEOUT } from "./constants.js";
@@ -61,7 +61,7 @@ export async function pruneStaleResources(verbose = false): Promise<{ containers
   }
 
   if (verbose && results.containers > 0) {
-    console.log(chalk.dim(`Pruned: ${results.containers} stale container(s)`));
+    console.log(style.dim(`Pruned: ${results.containers} stale container(s)`));
   }
 
   return results;
@@ -172,47 +172,31 @@ export async function getDockerDiskUsage(): Promise<Record<string, string>> {
  * Prune entire Docker system (all unused resources).
  */
 export async function pruneSystem(): Promise<void> {
-  console.log(chalk.bold("\nCleaning Docker system..."));
+  console.log(style.bold("\nCleaning Docker system..."));
 
   const env = getDockerEnv();
 
   // 1. Remove stopped containers
-  console.log(chalk.dim("Removing stopped containers..."));
-  await execa("docker", ["container", "prune", "-f"], {
-    timeout: PRUNE_TIMEOUT,
-    env,
-    reject: false,
-  } as ExecaOptions);
+  console.log(style.dim("Removing stopped containers..."));
+  await exec("docker", ["container", "prune", "-f"], { timeout: PRUNE_TIMEOUT, env });
 
   // 2. Remove dangling images
-  console.log(chalk.dim("Removing dangling images..."));
-  await execa("docker", ["image", "prune", "-f"], {
-    timeout: PRUNE_TIMEOUT,
-    env,
-    reject: false,
-  } as ExecaOptions);
+  console.log(style.dim("Removing dangling images..."));
+  await exec("docker", ["image", "prune", "-f"], { timeout: PRUNE_TIMEOUT, env });
 
   // 3. Remove unused volumes
-  console.log(chalk.dim("Removing unused volumes..."));
-  await execa("docker", ["volume", "prune", "-f"], {
-    timeout: PRUNE_TIMEOUT,
-    env,
-    reject: false,
-  } as ExecaOptions);
+  console.log(style.dim("Removing unused volumes..."));
+  await exec("docker", ["volume", "prune", "-f"], { timeout: PRUNE_TIMEOUT, env });
 
   // 4. Remove build cache
-  console.log(chalk.dim("Removing build cache..."));
-  await execa("docker", ["builder", "prune", "-f", "--all"], {
-    timeout: PRUNE_TIMEOUT,
-    env,
-    reject: false,
-  } as ExecaOptions);
+  console.log(style.dim("Removing build cache..."));
+  await exec("docker", ["builder", "prune", "-f", "--all"], { timeout: PRUNE_TIMEOUT, env });
 
-  console.log(chalk.green("\nSystem cleanup complete"));
+  console.log(style.green("\nSystem cleanup complete"));
 
   const newUsage = await getDockerDiskUsage();
   console.log(
-    chalk.dim(
+    style.dim(
       `Remaining: Images ${newUsage.images}, Volumes ${newUsage.volumes}, Cache ${newUsage.cache}`
     )
   );

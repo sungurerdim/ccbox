@@ -5,8 +5,8 @@
  */
 
 import { basename } from "node:path";
-import { execa, type Options as ExecaOptions } from "execa";
 
+import { exec, execInherit } from "../exec.js";
 import {
   type Config,
   imageExists,
@@ -61,14 +61,13 @@ async function diagnoseContainerFailure(returncode: number, projectName: string)
 
   // Check for container still running (shouldn't happen with --rm)
   try {
-    const result = await execa("docker", ["ps", "-q", "--filter", `name=ccbox-${projectName}`], {
+    const result = await exec("docker", ["ps", "-q", "--filter", `name=ccbox-${projectName}`], {
       timeout: DOCKER_COMMAND_TIMEOUT,
       env: getDockerEnv(),
-      reject: false,
       encoding: "utf8",
-    } as ExecaOptions);
+    });
 
-    if (String(result.stdout ?? "").trim()) {
+    if (result.stdout.trim()) {
       log.warn("Container still running (cleanup failed)");
       log.dim(`Run: docker rm -f ccbox-${projectName}`);
       return;
@@ -144,11 +143,13 @@ async function executeContainer(
 
   let returncode = 0;
   try {
-    const child = execa("docker", cmd.slice(1), {
-      stdio: [stdin, "inherit", "pipe"],
+    const p = execInherit("docker", cmd.slice(1), {
       env: getDockerEnv(),
-      reject: false,
-    } as ExecaOptions);
+      stdin: stdin as "inherit" | "ignore",
+      stdio: [stdin, "inherit", "pipe"],
+    });
+
+    const child = p.child;
 
     // Filter Docker warnings from stderr (e.g. kernel swappiness, cgroup warnings)
     // Pass through all other stderr output (Claude Code errors, debug info)
@@ -171,8 +172,8 @@ async function executeContainer(
       });
     }
 
-    const result = await child;
-    returncode = result.exitCode ?? 0;
+    const result = await p;
+    returncode = result.exitCode;
   } catch (error: unknown) {
     const err = error as { exitCode?: number };
     returncode = err.exitCode ?? 1;

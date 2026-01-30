@@ -5,9 +5,8 @@
  */
 
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { globbySync } from "globby";
 import { PRIORITY } from "./constants.js";
 
 /** Dependency installation mode. */
@@ -576,10 +575,18 @@ function detectPipSetup(path: string, files: string[]): DepsInfo | null {
   return createDepsInfo("pip", files, installScript, installScript, false, PRIORITY.HIGH);
 }
 
+function readdirGlob(dir: string, ext: string): string[] {
+  try {
+    return readdirSync(dir).filter(f => f.endsWith(ext));
+  } catch {
+    return [];
+  }
+}
+
 function detectDotnet(path: string, _files: string[]): DepsInfo | null {
-  const csproj = globbySync("*.csproj", { cwd: path });
-  const fsproj = globbySync("*.fsproj", { cwd: path });
-  const sln = globbySync("*.sln", { cwd: path });
+  const csproj = readdirGlob(path, ".csproj");
+  const fsproj = readdirGlob(path, ".fsproj");
+  const sln = readdirGlob(path, ".sln");
 
   if (csproj.length > 0 || fsproj.length > 0 || sln.length > 0) {
     return createDepsInfo(
@@ -595,7 +602,7 @@ function detectDotnet(path: string, _files: string[]): DepsInfo | null {
 }
 
 function detectCabal(path: string, _files: string[]): DepsInfo | null {
-  const cabalFiles = globbySync("*.cabal", { cwd: path });
+  const cabalFiles = readdirGlob(path, ".cabal");
   const cabalProject = existsSync(join(path, "cabal.project"));
 
   if (cabalFiles.length > 0 || cabalProject) {
@@ -615,7 +622,7 @@ function detectCabal(path: string, _files: string[]): DepsInfo | null {
 }
 
 function detectLuarocks(path: string, _files: string[]): DepsInfo | null {
-  const rockspecs = globbySync("*.rockspec", { cwd: path });
+  const rockspecs = readdirGlob(path, ".rockspec");
   if (rockspecs.length > 0) {
     return createDepsInfo(
       "luarocks",
@@ -630,7 +637,7 @@ function detectLuarocks(path: string, _files: string[]): DepsInfo | null {
 }
 
 function detectNimble(path: string, _files: string[]): DepsInfo | null {
-  const nimbleFiles = globbySync("*.nimble", { cwd: path });
+  const nimbleFiles = readdirGlob(path, ".nimble");
   if (nimbleFiles.length > 0) {
     return createDepsInfo("nimble", nimbleFiles, "nimble install -d", "nimble install -d", false, PRIORITY.HIGH);
   }
@@ -638,7 +645,7 @@ function detectNimble(path: string, _files: string[]): DepsInfo | null {
 }
 
 function detectOpam(path: string, _files: string[]): DepsInfo | null {
-  const opamFiles = globbySync("*.opam", { cwd: path });
+  const opamFiles = readdirGlob(path, ".opam");
   const duneProject = existsSync(join(path, "dune-project"));
 
   if (opamFiles.length > 0 || duneProject) {
@@ -819,7 +826,9 @@ const DETECT_FUNCTIONS: Record<string, DetectFn> = {
 
 function matchesPattern(path: string, pattern: string): string[] {
   if (pattern.includes("*")) {
-    return globbySync(pattern, { cwd: path });
+    // Extract extension from glob pattern like "*.ext"
+    const ext = pattern.replace("*", "");
+    return readdirGlob(path, ext);
   } else if (existsSync(join(path, pattern))) {
     return [pattern];
   }
