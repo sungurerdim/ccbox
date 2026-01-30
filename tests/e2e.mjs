@@ -196,16 +196,6 @@ await testAsync("Build minimal stack image", async () => {
   return checkCode === 0;
 });
 
-test("Minimal image has correct base", () => {
-  if (!DOCKER_AVAILABLE) return "skip";
-
-  const { code } = docker("image inspect ccbox/minimal");
-  if (code !== 0) return "skip"; // Image not built
-
-  const { stdout } = docker("image inspect ccbox/minimal --format '{{.Config.Labels}}'");
-  return true; // Image exists and is inspectable
-});
-
 await testAsync("Build base stack image", async () => {
   if (!DOCKER_AVAILABLE) return "skip";
 

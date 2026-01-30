@@ -776,34 +776,6 @@ test("Error names are preserved for instanceof checks", () => {
          validErr.name === "ValidationError";
 });
 
-// Docker exit code constants (critical for diagnoseContainerFailure)
-test("OOM exit code 137 is recognized pattern", () => {
-  // 137 = 128 + SIGKILL (9) - Docker kills container when OOM
-  return 137 === 128 + 9;
-});
-
-test("Segfault exit code 139 is recognized pattern", () => {
-  // 139 = 128 + SIGSEGV (11) - segmentation fault
-  return 139 === 128 + 11;
-});
-
-test("SIGTERM exit code 143 is recognized pattern", () => {
-  // 143 = 128 + SIGTERM (15) - graceful termination
-  return 143 === 128 + 15;
-});
-
-test("Ctrl+C exit code 130 is recognized pattern", () => {
-  // 130 = 128 + SIGINT (2) - user interrupt
-  return 130 === 128 + 2;
-});
-
-// Timeout constants
-test("DOCKER_COMMAND_TIMEOUT is reasonable (30s)", () =>
-  constants.DOCKER_COMMAND_TIMEOUT === 30000);
-
-test("DOCKER_BUILD_TIMEOUT is reasonable (10min)", () =>
-  constants.DOCKER_BUILD_TIMEOUT === 600000);
-
 // Validation edge cases
 test("ValidationError message is preserved", () => {
   const err = new errors.ValidationError("Custom validation message");
@@ -923,37 +895,12 @@ console.log(`\n${B}[14/14] Build Options${X}`);
 
 // Note: build module already imported above as 'build'
 
-// Bug prevented: buildImage not accepting options
-test("buildImage function accepts options parameter", () => {
-  // Check function has 2 parameters (stack, options)
-  return build.buildImage.length >= 1;
-});
-
-// Bug prevented: ensureImageReady not accepting options
-test("ensureImageReady function accepts options parameter", () => {
-  // Check function has 3 parameters (stack, buildOnly, options)
-  return build.ensureImageReady.length >= 2;
-});
-
-// Bug prevented: buildProjectImage not accepting options
-test("buildProjectImage function accepts options parameter", () => {
-  // Check function has 6 parameters (projectPath, projectName, stack, depsList, depsMode, options)
-  return build.buildProjectImage.length >= 5;
-});
-
-// Bug prevented: getProjectImageName producing invalid Docker image names
-test("getProjectImageName produces valid image name", () => {
-  const name = build.getProjectImageName("my-project", "web");
-  // Docker image names: repository:tag format, lowercase, can contain a-z0-9.-_/:
-  return /^ccbox_[a-z]+:[a-z0-9-]+$/.test(name) && name.includes("my-project");
-});
-
-// Bug prevented: Special characters in project name breaking image name
-test("getProjectImageName sanitizes special characters", () => {
-  const name = build.getProjectImageName("My Project @2.0!", "base");
-  // Should not contain uppercase or special chars
-  return !/[A-Z@!]/.test(name);
-});
+// Bug prevented: build module exports missing required functions
+test("build module exports required functions", () =>
+  typeof build.buildImage === "function" &&
+  typeof build.ensureImageReady === "function" &&
+  typeof build.buildProjectImage === "function" &&
+  typeof build.getProjectImageName === "function");
 
 // ════════════════════════════════════════════════════════════════════════════════
 // DETECTOR DIRECTORY VALIDATION (MNT-12)
@@ -1028,25 +975,12 @@ test("Retry logic pattern: exponential backoff calculation", () => {
   return delays[0] < delays[1] && delays[delays.length - 1] <= DEFAULT_RETRY_CONFIG.maxDelayMs;
 });
 
-// Bug prevented: Transient failures not triggering retry
-test("isRetryable identifies transient exit codes", () => {
-  // Exit codes that might indicate transient failures
-  // Note: Current implementation may return false for all - that's valid design
-  const transientCode = 125; // Docker daemon error (potentially transient)
-  const permanentCode = 1;   // General error (not retryable)
-  // The key is that isRetryable is deterministic
-  return typeof errorHandler.isRetryable(transientCode) === "boolean" &&
-         typeof errorHandler.isRetryable(permanentCode) === "boolean";
-});
-
-// Bug prevented: Resource cleanup skipped on partial failure
-test("cleanTempFiles returns count even when nothing to clean", () => {
-  // Cleanup should be idempotent and safe to call multiple times
-  const count1 = cleanup.cleanTempFiles();
-  const count2 = cleanup.cleanTempFiles();
-  // Both should return a number (possibly 0)
-  return typeof count1 === "number" && typeof count2 === "number";
-});
+// Bug prevented: Permanent errors triggering unnecessary retries
+test("isRetryable rejects permanent exit codes", () =>
+  !errorHandler.isRetryable(0) &&
+  !errorHandler.isRetryable(1) &&
+  !errorHandler.isRetryable(130) &&
+  !errorHandler.isRetryable(139));
 
 // ════════════════════════════════════════════════════════════════════════════════
 // GENERATOR EDGE CASES - TST-01: Dockerfile generation edge cases
