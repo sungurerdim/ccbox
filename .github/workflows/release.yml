@@ -104,12 +104,18 @@ jobs:
           sha256sum * > checksums.txt
           cat checksums.txt
 
+      - name: Delete existing release (for clean re-runs)
+        run: gh release delete ${{ github.ref_name }} --yes || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/*
           generate_release_notes: true
+          make_latest: true
           draft: false
           prerelease: ${{ contains(github.ref, '-') }}
         env:

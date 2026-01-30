@@ -531,8 +531,7 @@ export function generateProjectDockerfile(
   if (installCmds.length > 0) {
     lines.push("# Install dependencies");
     for (const cmd of installCmds) {
-      const pkgManager = cmd.split(" ")[0] ?? "package";
-      lines.push(`RUN ${cmd} || echo 'Warning: ${pkgManager} install failed'`);
+      lines.push(`RUN ${cmd}`);
     }
   }
 

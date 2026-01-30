@@ -294,16 +294,18 @@ async function buildAndRun(
       builtProjectImage = getProjectImageName(projectName, selectedStack);
       log.dim(`Dependencies unchanged (${currentHash}), reusing project image`);
     } else {
-      builtProjectImage = (await buildProjectImage(
-        projectPath,
-        projectName,
-        selectedStack,
-        depsList,
-        resolvedDepsMode,
-        { progress, cache }
-      )) ?? undefined;
-      if (!builtProjectImage) {
-        log.warn("Failed to build project image, continuing without deps");
+      try {
+        builtProjectImage = await buildProjectImage(
+          projectPath,
+          projectName,
+          selectedStack,
+          depsList,
+          resolvedDepsMode,
+          { progress, cache }
+        );
+      } catch (buildError) {
+        log.error("Failed to build project image with dependencies");
+        process.exit(1);
       }
     }
   }
