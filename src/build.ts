@@ -18,6 +18,7 @@ import {
 } from "./config.js";
 import { DOCKER_BUILD_TIMEOUT, DOCKER_COMMAND_TIMEOUT } from "./constants.js";
 import type { DepsInfo, DepsMode } from "./deps.js";
+import { computeDepsHash } from "./deps.js";
 import { ImageBuildError } from "./errors.js";
 import { generateProjectDockerfile, writeBuildFiles } from "./generator.js";
 import { log } from "./logger.js";
@@ -72,7 +73,7 @@ async function runClaudeInstall(): Promise<void> {
 export interface BuildOptions {
   /** Docker build progress mode: auto (default), plain, or tty. */
   progress?: string;
-  /** Use Docker build cache (default: false, i.e. --no-cache). */
+  /** Use Docker build cache (default: true). */
   cache?: boolean;
 }
 
@@ -86,7 +87,7 @@ export async function buildImage(
   stack: LanguageStack,
   options: BuildOptions = {}
 ): Promise<boolean> {
-  const { progress = "auto", cache = false } = options;
+  const { progress = "auto", cache = true } = options;
 
   // Check if this stack depends on base image
   const dependency = STACK_DEPENDENCIES[stack];
@@ -217,9 +218,12 @@ export async function buildProjectImage(
   depsMode: DepsMode,
   options: BuildOptions = {}
 ): Promise<string | null> {
-  const { progress = "auto", cache = false } = options;
+  const { progress = "auto", cache = true } = options;
   const imageName = getProjectImageName(projectName, stack);
   const baseImage = getImageName(stack);
+
+  // Compute dependency hash for cache invalidation
+  const depsHash = computeDepsHash(depsList, projectPath);
 
   log.newline();
   log.bold("Building project image with dependencies...");
@@ -243,7 +247,7 @@ export async function buildProjectImage(
     // Note: no --pull flag since we're building on top of local ccbox images
     await execa(
       "docker",
-      ["build", "-t", imageName, "-f", dockerfilePath, ...(cache ? [] : ["--no-cache"]), `--progress=${progress}`, projectPath],
+      ["build", "-t", imageName, "-f", dockerfilePath, "--label", `ccbox.deps-hash=${depsHash}`, ...(cache ? [] : ["--no-cache"]), `--progress=${progress}`, projectPath],
       {
         stdio: "inherit",
         env,
@@ -298,6 +302,31 @@ export async function buildProjectImage(
       // Ignore cleanup errors
     }
 
+    return null;
+  }
+}
+
+/**
+ * Get the deps hash label from an existing project image.
+ * Returns null if image doesn't exist or has no hash label.
+ */
+export async function getProjectImageDepsHash(projectName: string, stack: LanguageStack): Promise<string | null> {
+  const imageName = getProjectImageName(projectName, stack);
+  try {
+    const result = await execa(
+      "docker",
+      ["inspect", "--format", "{{index .Config.Labels \"ccbox.deps-hash\"}}", imageName],
+      {
+        timeout: DOCKER_COMMAND_TIMEOUT,
+        env: getDockerEnv(),
+        reject: false,
+        encoding: "utf8",
+      } as ExecaOptions
+    );
+    if (result.exitCode !== 0) { return null; }
+    const hash = String(result.stdout ?? "").trim();
+    return hash || null;
+  } catch {
     return null;
   }
 }

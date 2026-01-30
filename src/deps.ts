@@ -4,6 +4,7 @@
  * Supports any programming language and tech stack with automatic detection.
  */
 
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { globbySync } from "globby";
@@ -880,6 +881,35 @@ export function detectDependencies(path: string): DepsInfo[] {
   // Sort by priority (highest first)
   results.sort((a, b) => b.priority - a.priority);
   return results;
+}
+
+/**
+ * Compute a stable hash of dependency files for cache invalidation.
+ *
+ * Reads the content of all dependency files and produces a short SHA-256 hash.
+ * Used to determine if project image needs rebuilding.
+ *
+ * @param depsList - Detected dependencies with file lists.
+ * @param projectPath - Project root directory.
+ * @returns Hex hash string (first 16 chars of SHA-256).
+ */
+export function computeDepsHash(depsList: DepsInfo[], projectPath: string): string {
+  const hash = createHash("sha256");
+
+  // Sort for deterministic ordering
+  const allFiles = [...new Set(depsList.flatMap((d) => [...d.files]))].sort();
+
+  for (const file of allFiles) {
+    const filePath = join(projectPath, file);
+    try {
+      const content = readFileSync(filePath, "utf-8");
+      hash.update(`${file}\n${content}\n`);
+    } catch {
+      hash.update(`${file}\n<missing>\n`);
+    }
+  }
+
+  return hash.digest("hex").slice(0, 16);
 }
 
 /**

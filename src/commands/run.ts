@@ -14,7 +14,7 @@ import {
 } from "../config.js";
 import { DOCKER_COMMAND_TIMEOUT } from "../constants.js";
 import type { DepsInfo, DepsMode } from "../deps.js";
-import { detectDependencies } from "../deps.js";
+import { computeDepsHash, detectDependencies } from "../deps.js";
 import { detectProjectType } from "../detector.js";
 import { checkDockerStatus } from "../docker.js";
 import { ImageBuildError } from "../errors.js";
@@ -26,6 +26,7 @@ import {
   buildProjectImage,
   ensureImageReady,
   getProjectImageName,
+  getProjectImageDepsHash,
   projectImageExists,
 } from "../build.js";
 import { pruneStaleResources } from "../cleanup.js";
@@ -253,7 +254,7 @@ async function buildAndRun(
     envVars?: string[];
   } = {}
 ): Promise<void> {
-  const { progress = "auto", cache = false } = options;
+  const { progress = "auto", cache = true } = options;
 
   log.newline();
   log.blue(`[${projectName}] -> ccbox/${selectedStack}`);
@@ -285,16 +286,25 @@ async function buildAndRun(
   // Build project-specific image if deps requested
   let builtProjectImage: string | undefined = undefined;
   if (resolvedDepsMode !== "skip" && depsList.length > 0) {
-    builtProjectImage = (await buildProjectImage(
-      projectPath,
-      projectName,
-      selectedStack,
-      depsList,
-      resolvedDepsMode,
-      { progress, cache }
-    )) ?? undefined;
-    if (!builtProjectImage) {
-      log.warn("Failed to build project image, continuing without deps");
+    // Check if existing project image has matching deps hash (skip rebuild)
+    const currentHash = computeDepsHash(depsList, projectPath);
+    const existingHash = await getProjectImageDepsHash(projectName, selectedStack);
+
+    if (existingHash && existingHash === currentHash) {
+      builtProjectImage = getProjectImageName(projectName, selectedStack);
+      log.dim(`Dependencies unchanged (${currentHash}), reusing project image`);
+    } else {
+      builtProjectImage = (await buildProjectImage(
+        projectPath,
+        projectName,
+        selectedStack,
+        depsList,
+        resolvedDepsMode,
+        { progress, cache }
+      )) ?? undefined;
+      if (!builtProjectImage) {
+        log.warn("Failed to build project image, continuing without deps");
+      }
     }
   }
 
@@ -350,7 +360,7 @@ export async function run(
     unrestricted = false,
     verbose = false,
     progress = "auto",
-    cache = false,
+    cache = true,
     envVars,
     timeout: _timeout,
     buildTimeout: _buildTimeout,
@@ -387,14 +397,20 @@ export async function run(
     initialStack = detection.recommendedStack;
   }
 
-  // Show detection details in verbose mode
-  if (verbose && detection.detectedLanguages.length > 0) {
-    log.dim("Detection:");
-    for (const lang of detection.detectedLanguages) {
-      const trigger = detection.detectionDetails?.[lang] || "pattern match";
-      log.dim(`  ${lang} → ${trigger}`);
+  // Show detection details
+  if (detection.detectedLanguages.length > 0) {
+    if (verbose) {
+      log.dim("Detection:");
+      for (const det of detection.detectedLanguages) {
+        log.dim(`  ${det.language.padEnd(12)} ${String(det.confidence).padStart(2)}  ${det.trigger}`);
+      }
+      log.dim(`  → Stack: ${initialStack}`);
+    } else {
+      const summary = detection.detectedLanguages
+        .map((d) => `${d.language} (${d.confidence})`)
+        .join(", ");
+      log.dim(`Detection: ${summary} → ${initialStack}`);
     }
-    log.dim(`  → Stack: ${initialStack}`);
   } else if (verbose) {
     log.dim(`Detection: no languages found → ${initialStack}`);
   }
