@@ -5,7 +5,7 @@
  * Separated from generator.ts to reduce file size and improve modularity.
  */
 
-import { existsSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
 import { platform } from "node:os";
 import { join, resolve } from "node:path";
 import { env } from "node:process";
@@ -257,12 +257,14 @@ function addMinimalMounts(cmd: string[], claudeConfig: string): void {
   // Mount home dir location -> /ccbox/.claude.json
   if (!existsSync(claudeJsonHome)) {
     // Create empty if missing (Docker would create a directory instead)
+    mkdirSync(homeDir, { recursive: true });
     writeFileSync(claudeJsonHome, "{}", { encoding: "utf-8" });
   }
   cmd.push("-v", `${resolveForDocker(claudeJsonHome)}:/ccbox/.claude.json:rw`);
 
   // Mount config dir location -> /ccbox/.claude/.claude.json
   if (!existsSync(claudeJsonConfig)) {
+    mkdirSync(claudeConfig, { recursive: true });
     writeFileSync(claudeJsonConfig, "{}", { encoding: "utf-8" });
   }
   cmd.push("-v", `${resolveForDocker(claudeJsonConfig)}:/ccbox/.claude/.claude.json:rw`);
@@ -515,6 +517,7 @@ export function getDockerRunCmd(
     const homeDir = join(claudeConfig, "..");
     const claudeJsonHome = join(homeDir, ".claude.json");
     if (!existsSync(claudeJsonHome)) {
+      mkdirSync(homeDir, { recursive: true });
       writeFileSync(claudeJsonHome, "{}", { encoding: "utf-8" });
     }
     cmd.push("-v", `${resolveForDocker(claudeJsonHome)}:/ccbox/.claude.json:rw`);
