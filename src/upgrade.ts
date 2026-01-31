@@ -7,12 +7,60 @@
  */
 
 import { style } from "./logger.js";
+import { log } from "./logger.js";
 import { createHash } from "crypto";
 import { writeFileSync, renameSync, unlinkSync, chmodSync, existsSync } from "fs";
 import { VERSION } from "./constants.js";
 
 const REPO = "sungurerdim/ccbox";
 const GITHUB_API_URL = `https://api.github.com/repos/${REPO}/releases/latest`;
+
+/** Wrap a promise with a timeout. Rejects with TimeoutError if not resolved in time. */
+async function withTimeout<T>(promise: Promise<T>, ms: number, label = "Operation"): Promise<T> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), ms);
+  try {
+    const result = await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        controller.signal.addEventListener("abort", () =>
+          reject(new Error(`${label} timed out after ${ms}ms`))
+        );
+      }),
+    ]);
+    return result;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/** Retry transient errors with exponential backoff. */
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  retries = 3,
+  label = "Operation"
+): Promise<T> {
+  const RETRYABLE = ["ECONNRESET", "ETIMEDOUT", "ENOTFOUND", "UND_ERR_CONNECT_TIMEOUT"];
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (err: unknown) {
+      const code = (err as { code?: string }).code ?? "";
+      const message = err instanceof Error ? err.message : String(err);
+      const isRetryable = RETRYABLE.includes(code)
+        || message.includes("fetch failed")
+        || /5\d{2}/.test(message);
+
+      if (!isRetryable || attempt === retries) {
+        throw err;
+      }
+      const delay = Math.min(1000 * 2 ** attempt, 8000);
+      log.debug(`${label} attempt ${attempt + 1} failed (${code || message}), retrying in ${delay}ms`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw new Error(`${label} failed after ${retries + 1} attempts`);
+}
 
 interface GitHubRelease {
   tag_name: string;
@@ -41,22 +89,29 @@ function detectPlatform(): string {
  * Fetch latest release info from GitHub.
  */
 async function fetchLatestRelease(): Promise<GitHubRelease | null> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 15_000);
+  if (!GITHUB_API_URL.startsWith("https://")) {
+    throw new Error(`Refusing to fetch from non-HTTPS URL: ${GITHUB_API_URL}`);
+  }
   try {
-    const response = await fetch(GITHUB_API_URL, {
-      headers: {
-        Accept: "application/vnd.github.v3+json",
-        "User-Agent": "ccbox",
-      },
-      signal: controller.signal,
-    });
+    const response = await withTimeout(
+      fetch(GITHUB_API_URL, {
+        headers: {
+          Accept: "application/vnd.github.v3+json",
+          "User-Agent": "ccbox",
+        },
+      }),
+      15_000,
+      "GitHub API fetch"
+    );
     if (!response.ok) {return null;}
-    return (await response.json()) as GitHubRelease;
+    const json = (await response.json()) as Record<string, unknown>;
+    if (!json || typeof json.tag_name !== "string") {
+      log.debug("Invalid GitHub release response: missing or non-string tag_name");
+      return null;
+    }
+    return json as unknown as GitHubRelease;
   } catch {
     return null;
-  } finally {
-    clearTimeout(timeoutId);
   }
 }
 
@@ -65,39 +120,36 @@ async function fetchLatestRelease(): Promise<GitHubRelease | null> {
  * Returns: -1 if a < b, 0 if a === b, 1 if a > b
  */
 function compareVersions(a: string, b: string): number {
-  const cleanA = a.replace(/^v/, "");
-  const cleanB = b.replace(/^v/, "");
-  const partsA = cleanA.split(".").map(Number);
-  const partsB = cleanB.split(".").map(Number);
+  const partsA = a.replace(/^v/, "").split(".").map(Number);
+  const partsB = b.replace(/^v/, "").split(".").map(Number);
+  const len = Math.max(partsA.length, partsB.length);
 
-  for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
-    const numA = partsA[i] || 0;
-    const numB = partsB[i] || 0;
-    if (numA < numB) {return -1;}
-    if (numA > numB) {return 1;}
-  }
-  return 0;
+  const diff = Array.from({ length: len }, (_, i) => (partsA[i] || 0) - (partsB[i] || 0))
+    .find((d) => d !== 0);
+  return diff === undefined ? 0 : diff > 0 ? 1 : -1;
 }
 
 /**
  * Download a file and return its contents as a Buffer.
  */
 async function downloadFile(url: string): Promise<Buffer> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 15_000);
-  try {
-    const response = await fetch(url, {
-      headers: { "User-Agent": "ccbox" },
-      redirect: "follow",
-      signal: controller.signal,
-    });
+  if (!url.startsWith("https://")) {
+    throw new Error(`Refusing to download from non-HTTPS URL: ${url}`);
+  }
+  return withRetry(async () => {
+    const response = await withTimeout(
+      fetch(url, {
+        headers: { "User-Agent": "ccbox" },
+        redirect: "follow",
+      }),
+      15_000,
+      "Binary download"
+    );
     if (!response.ok) {
       throw new Error(`Download failed: ${response.status} ${response.statusText}`);
     }
     return Buffer.from(await response.arrayBuffer());
-  } finally {
-    clearTimeout(timeoutId);
-  }
+  }, 3, "downloadFile");
 }
 
 /**
@@ -106,14 +158,15 @@ async function downloadFile(url: string): Promise<Buffer> {
  */
 async function fetchChecksums(tagName: string): Promise<Map<string, string> | null> {
   const url = `https://github.com/${REPO}/releases/download/${tagName}/checksums.txt`;
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 15_000);
   try {
-    const response = await fetch(url, {
-      headers: { "User-Agent": "ccbox" },
-      redirect: "follow",
-      signal: controller.signal,
-    });
+    const response = await withTimeout(
+      fetch(url, {
+        headers: { "User-Agent": "ccbox" },
+        redirect: "follow",
+      }),
+      15_000,
+      "Checksums fetch"
+    );
     if (!response.ok) {return null;}
     const text = await response.text();
     const map = new Map<string, string>();
@@ -129,8 +182,6 @@ async function fetchChecksums(tagName: string): Promise<Map<string, string> | nu
     return map.size > 0 ? map : null;
   } catch {
     return null;
-  } finally {
-    clearTimeout(timeoutId);
   }
 }
 
@@ -151,8 +202,14 @@ function cleanupOldBinary(): void {
     if (existsSync(oldPath)) {
       unlinkSync(oldPath);
     }
-  } catch {
-    // Ignore: might still be locked on Windows, will be cleaned next run
+  } catch (err: unknown) {
+    const code = (err as { code?: string }).code ?? "";
+    // EBUSY/EACCES expected on Windows when binary is still locked
+    if (code === "EBUSY" || code === "EACCES") {
+      // Silently ignore - will be cleaned next run
+    } else {
+      log.debug(`cleanupOldBinary failed (${code}): ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 }
 
@@ -259,13 +316,24 @@ export async function selfUpdate(force: boolean): Promise<void> {
       renameSync(newPath, exePath);
     }
   } catch (e: unknown) {
-    // Attempt rollback
+    // Attempt rollback with timeout to prevent indefinite blocking
     try {
-      if (existsSync(oldPath) && !existsSync(exePath)) {
-        renameSync(oldPath, exePath);
-      }
-    } catch {
-      // Rollback failed
+      await withTimeout(
+        new Promise<void>((resolve, reject) => {
+          try {
+            if (existsSync(oldPath) && !existsSync(exePath)) {
+              renameSync(oldPath, exePath);
+            }
+            resolve();
+          } catch (rollbackErr) {
+            reject(rollbackErr);
+          }
+        }),
+        5000,
+        "Rollback"
+      );
+    } catch (rollbackErr: unknown) {
+      log.debug(`Rollback failed: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}`);
     }
     console.log(style.red(`  Update failed: ${e instanceof Error ? e.message : String(e)}`));
     process.exit(1);
@@ -314,7 +382,16 @@ export async function selfUninstall(force: boolean): Promise<void> {
       unlinkSync(exePath);
     }
   } catch (e: unknown) {
-    console.log(style.red(`  Uninstall failed: ${e instanceof Error ? e.message : String(e)}`));
+    const code = (e as { code?: string }).code ?? "";
+    const message = e instanceof Error ? e.message : String(e);
+    // Permission/access errors are critical and actionable
+    if (code === "EPERM" || code === "EACCES") {
+      console.log(style.red(`  Uninstall failed (permission denied): ${message}`));
+      console.log(style.dim("  Try running with elevated permissions (sudo/admin)"));
+    } else {
+      console.log(style.red(`  Uninstall failed: ${message}`));
+    }
+    log.debug(`selfUninstall error code=${code}: ${message}`);
     process.exit(1);
   }
 

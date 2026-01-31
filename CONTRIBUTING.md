@@ -145,6 +145,10 @@ This structure ensures testability (services work without CLI), maintainability 
 5. Add detection patterns in `src/detector.ts`
 6. Test with a sample project
 
+## Security
+
+For security vulnerabilities, please see [SECURITY.md](SECURITY.md). Do not open public issues for security-related bugs.
+
 ## License
 
 By contributing, you agree that your contributions will be licensed under the MIT License.

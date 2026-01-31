@@ -100,6 +100,7 @@ ccbox --no-deps         # Skip installation
 
 ccbox auto-detects your project type. Use `-s <stack>` to override.
 
+<!-- Source of truth for stack definitions: src/config.ts STACK_INFO -->
 <details>
 <summary><b>View all 20 stacks</b></summary>
 

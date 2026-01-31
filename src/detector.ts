@@ -49,9 +49,10 @@ interface PatternEntry {
   confidence: number;
 }
 
-/** File patterns for language detection with confidence scores. */
+/** File patterns for language detection with confidence scores.
+ *  Organized by language family: core, extended (JVM, web, systems, scripting, functional, data). */
 const LANGUAGE_PATTERNS: Record<string, PatternEntry[]> = {
-  // Core languages
+  // --- Core languages ---
   python: [
     { pattern: "poetry.lock", confidence: CONFIDENCE.LOCK_FILE },
     { pattern: "uv.lock", confidence: CONFIDENCE.LOCK_FILE },
@@ -100,7 +101,7 @@ const LANGUAGE_PATTERNS: Record<string, PatternEntry[]> = {
     { pattern: "settings.gradle.kts", confidence: CONFIDENCE.SECONDARY_CONFIG },
   ],
 
-  // Extended languages
+  // --- Extended: JVM languages ---
   scala: [
     { pattern: "build.sbt", confidence: CONFIDENCE.PRIMARY_CONFIG },
     { pattern: "project/build.properties", confidence: CONFIDENCE.SECONDARY_CONFIG },
@@ -113,6 +114,7 @@ const LANGUAGE_PATTERNS: Record<string, PatternEntry[]> = {
     { pattern: "build.gradle.kts", confidence: CONFIDENCE.PRIMARY_CONFIG },
     { pattern: "settings.gradle.kts", confidence: CONFIDENCE.SECONDARY_CONFIG },
   ],
+  // --- Extended: Scripting languages ---
   ruby: [
     { pattern: "Gemfile.lock", confidence: CONFIDENCE.LOCK_FILE },
     { pattern: "Gemfile", confidence: CONFIDENCE.PRIMARY_CONFIG },
@@ -125,6 +127,7 @@ const LANGUAGE_PATTERNS: Record<string, PatternEntry[]> = {
     { pattern: "composer.json", confidence: CONFIDENCE.PRIMARY_CONFIG },
     { pattern: "artisan", confidence: CONFIDENCE.SECONDARY_CONFIG },
   ],
+  // --- Extended: Platform languages ---
   dotnet: [
     { pattern: "*.sln", confidence: CONFIDENCE.PRIMARY_CONFIG },
     { pattern: "*.csproj", confidence: CONFIDENCE.PRIMARY_CONFIG },
@@ -133,6 +136,7 @@ const LANGUAGE_PATTERNS: Record<string, PatternEntry[]> = {
     { pattern: "global.json", confidence: CONFIDENCE.SECONDARY_CONFIG },
     { pattern: "nuget.config", confidence: CONFIDENCE.SECONDARY_CONFIG },
   ],
+  // --- Extended: Functional languages ---
   elixir: [
     { pattern: "mix.lock", confidence: CONFIDENCE.LOCK_FILE },
     { pattern: "mix.exs", confidence: CONFIDENCE.PRIMARY_CONFIG },
@@ -169,6 +173,7 @@ const LANGUAGE_PATTERNS: Record<string, PatternEntry[]> = {
     { pattern: "dune", confidence: CONFIDENCE.SECONDARY_CONFIG },
     { pattern: "_opam", confidence: CONFIDENCE.SECONDARY_CONFIG },
   ],
+  // --- Extended: Systems languages ---
   cpp: [
     { pattern: "CMakeLists.txt", confidence: CONFIDENCE.PRIMARY_CONFIG },
     { pattern: "conanfile.txt", confidence: CONFIDENCE.PRIMARY_CONFIG },
@@ -178,6 +183,7 @@ const LANGUAGE_PATTERNS: Record<string, PatternEntry[]> = {
     { pattern: "*.cpp", confidence: CONFIDENCE.SOURCE_EXTENSION },
     { pattern: "*.hpp", confidence: CONFIDENCE.SOURCE_EXTENSION },
   ],
+  // --- Extended: Data/Science languages ---
   r: [
     { pattern: "renv.lock", confidence: CONFIDENCE.LOCK_FILE },
     { pattern: "DESCRIPTION", confidence: CONFIDENCE.AMBIGUOUS_CONFIG },
@@ -214,11 +220,19 @@ const LANGUAGE_PATTERNS: Record<string, PatternEntry[]> = {
  */
 type ContentValidator = (directory: string, originalConfidence: number) => number;
 
-/** Read first N bytes of a file (efficient for large files). */
+// File content cache - persists within a single detectProjectType() call
+let _fileContentCache = new Map<string, string>();
+
 function readHead(filePath: string, bytes = 2048): string {
+  const cacheKey = `${filePath}:${bytes}`;
+  const cached = _fileContentCache.get(cacheKey);
+  if (cached !== undefined) { return cached; }
   try {
-    return readFileSync(filePath, "utf-8").slice(0, bytes);
+    const content = readFileSync(filePath, "utf-8").slice(0, bytes);
+    _fileContentCache.set(cacheKey, content);
+    return content;
   } catch {
+    _fileContentCache.set(cacheKey, "");
     return "";
   }
 }
@@ -351,7 +365,7 @@ const PROMOTION_RULES: Array<{
 // Core detection logic
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/** Check if a file matches a pattern (supports * prefix wildcard) */
+// Supports *.ext wildcard prefix
 function matchesPattern(filename: string, pattern: string): boolean {
   if (pattern.startsWith("*.")) {
     const ext = pattern.slice(1);  // ".csproj", ".cabal" etc.
@@ -360,10 +374,10 @@ function matchesPattern(filename: string, pattern: string): boolean {
   return filename === pattern;
 }
 
-/** Cached directory listing for glob patterns (avoids repeated readdirSync) */
 let _dirCacheKey = "";
 let _dirCacheFiles: string[] = [];
 
+// Cached readdirSync - single read per directory
 function getDirFiles(directory: string): string[] {
   if (_dirCacheKey === directory) { return _dirCacheFiles; }
   try {
@@ -376,7 +390,6 @@ function getDirFiles(directory: string): string[] {
   return _dirCacheFiles;
 }
 
-/** Check if directory contains files matching the pattern */
 function hasMatchingFile(directory: string, pattern: string): boolean {
   // Exact match - fast path
   if (!pattern.includes("*")) {
@@ -440,6 +453,9 @@ function languageToStack(lang: string): LanguageStack {
  * @throws Never throws - returns BASE stack if directory doesn't exist or is unreadable.
  */
 export function detectProjectType(directory: string, verbose = false): DetectionResult {
+  // Clear file content cache from previous calls
+  _fileContentCache = new Map();
+
   // Defensive: verify directory exists before scanning
   if (!existsSync(directory)) {
     return {
