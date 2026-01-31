@@ -72,8 +72,8 @@ async function diagnoseContainerFailure(returncode: number, projectName: string)
       log.dim(`Run: docker rm -f ccbox-${projectName}`);
       return;
     }
-  } catch {
-    // Ignore errors
+  } catch (e) {
+    log.debug(`Container status check error: ${String(e)}`);
   }
 
   // Generic error with exit code

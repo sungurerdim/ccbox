@@ -116,7 +116,12 @@ program
   .option("-v, --verbose", "Show detection details (which files triggered stack selection)")
   .option("--progress <mode>", "Docker build progress mode (auto|plain|tty)", "auto")
   .option("--no-cache", "Disable Docker build cache (default: cache enabled)")
-  .option("-e, --env <KEY=VALUE...>", "Pass environment variables to container (can override defaults)")
+  .option("-e, --env <KEY=VALUE...>", "Pass environment variables to container (can override defaults)", (value: string, prev: string[]) => {
+    if (!value.includes('=') || value.startsWith('=')) {
+      throw new ValidationError(`Invalid env format '${value}'. Expected KEY=VALUE`);
+    }
+    return [...(prev || []), value];
+  })
   .option("--timeout <ms>", `Command timeout in milliseconds (default: ${DOCKER_COMMAND_TIMEOUT})`)
   .option("--build-timeout <ms>", `Build timeout in milliseconds (default: ${DOCKER_BUILD_TIMEOUT})`)
   .action(async (options) => {

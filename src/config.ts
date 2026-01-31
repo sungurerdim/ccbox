@@ -36,10 +36,10 @@ export enum LanguageStack {
   // ═══════════════════════════════════════════════════════════════════════════
   BASE = "base",         // Claude Code only (vanilla/benchmark)
   PYTHON = "python",     // Python + uv + ruff + pytest + mypy
-  WEB = "web",           // Node.js + TypeScript + eslint + vitest
+  WEB = "web",           // Node.js + Bun + TypeScript + pnpm + eslint + prettier + vitest
   GO = "go",             // Go + golangci-lint (golang base)
   RUST = "rust",         // Rust + clippy + rustfmt (rust base)
-  JAVA = "java",         // JDK + Maven + Gradle (temurin base)
+  JAVA = "java",         // JDK + Maven (temurin base)
   CPP = "cpp",           // C++ + CMake + Clang + Conan
   DOTNET = "dotnet",     // .NET SDK + C# + F#
   SWIFT = "swift",       // Swift
@@ -70,11 +70,11 @@ export const STACK_INFO: Record<LanguageStack, { description: string; sizeMB: nu
   // Core Language Stacks
   // ═══════════════════════════════════════════════════════════════════════════
   [LanguageStack.BASE]: { description: "Claude Code only (vanilla)", sizeMB: 200 },
-  [LanguageStack.PYTHON]: { description: "Python + uv + ruff + pytest", sizeMB: 350 },
-  [LanguageStack.WEB]: { description: "Node.js + TypeScript + eslint + vitest", sizeMB: 400 },
+  [LanguageStack.PYTHON]: { description: "Python + uv + ruff + pytest + mypy", sizeMB: 350 },
+  [LanguageStack.WEB]: { description: "Node.js + Bun + TypeScript + pnpm + eslint + prettier + vitest", sizeMB: 400 },
   [LanguageStack.GO]: { description: "Go + golangci-lint", sizeMB: 550 },
   [LanguageStack.RUST]: { description: "Rust + clippy + rustfmt", sizeMB: 700 },
-  [LanguageStack.JAVA]: { description: "JDK + Maven + Gradle", sizeMB: 600 },
+  [LanguageStack.JAVA]: { description: "JDK + Maven", sizeMB: 600 },
   [LanguageStack.CPP]: { description: "C++ + CMake + Clang + Conan", sizeMB: 450 },
   [LanguageStack.DOTNET]: { description: ".NET SDK + C# + F#", sizeMB: 500 },
   [LanguageStack.SWIFT]: { description: "Swift", sizeMB: 500 },

@@ -41,17 +41,22 @@ function detectPlatform(): string {
  * Fetch latest release info from GitHub.
  */
 async function fetchLatestRelease(): Promise<GitHubRelease | null> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15_000);
   try {
     const response = await fetch(GITHUB_API_URL, {
       headers: {
         Accept: "application/vnd.github.v3+json",
         "User-Agent": "ccbox",
       },
+      signal: controller.signal,
     });
     if (!response.ok) {return null;}
     return (await response.json()) as GitHubRelease;
   } catch {
     return null;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
@@ -78,14 +83,21 @@ function compareVersions(a: string, b: string): number {
  * Download a file and return its contents as a Buffer.
  */
 async function downloadFile(url: string): Promise<Buffer> {
-  const response = await fetch(url, {
-    headers: { "User-Agent": "ccbox" },
-    redirect: "follow",
-  });
-  if (!response.ok) {
-    throw new Error(`Download failed: ${response.status} ${response.statusText}`);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const response = await fetch(url, {
+      headers: { "User-Agent": "ccbox" },
+      redirect: "follow",
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`Download failed: ${response.status} ${response.statusText}`);
+    }
+    return Buffer.from(await response.arrayBuffer());
+  } finally {
+    clearTimeout(timeoutId);
   }
-  return Buffer.from(await response.arrayBuffer());
 }
 
 /**
@@ -94,10 +106,13 @@ async function downloadFile(url: string): Promise<Buffer> {
  */
 async function fetchChecksums(tagName: string): Promise<Map<string, string> | null> {
   const url = `https://github.com/${REPO}/releases/download/${tagName}/checksums.txt`;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15_000);
   try {
     const response = await fetch(url, {
       headers: { "User-Agent": "ccbox" },
       redirect: "follow",
+      signal: controller.signal,
     });
     if (!response.ok) {return null;}
     const text = await response.text();
@@ -114,6 +129,8 @@ async function fetchChecksums(tagName: string): Promise<Map<string, string> | nu
     return map.size > 0 ? map : null;
   } catch {
     return null;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 

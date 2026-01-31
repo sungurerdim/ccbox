@@ -5,7 +5,7 @@
  * for Docker operations and container failures.
  */
 
-import { log, style } from "./logger.js";
+import { log } from "./logger.js";
 
 /** Known Docker/container exit codes with their meanings and suggestions. */
 export interface ExitCodeInfo {
@@ -228,91 +228,3 @@ export function logDockerError(
   }
 }
 
-/** Retry configuration. */
-export interface RetryConfig {
-  /** Maximum number of attempts (including first try). */
-  maxAttempts: number;
-  /** Initial delay in milliseconds. */
-  initialDelayMs: number;
-  /** Multiplier for exponential backoff. */
-  backoffMultiplier: number;
-  /** Maximum delay in milliseconds. */
-  maxDelayMs: number;
-}
-
-/** Default retry configuration. */
-export const DEFAULT_RETRY_CONFIG: RetryConfig = {
-  maxAttempts: 3,
-  initialDelayMs: 1000,
-  backoffMultiplier: 2,
-  maxDelayMs: 10000,
-};
-
-/**
- * Execute an async operation with retry logic and exponential backoff.
- *
- * @param operation - Async function to execute
- * @param shouldRetry - Function to determine if error is retryable
- * @param config - Retry configuration
- * @returns Result of successful operation
- * @throws Last error if all retries exhausted
- */
-export async function withRetry<T>(
-  operation: () => Promise<T>,
-  shouldRetry: (error: unknown, attempt: number) => boolean,
-  config: Partial<RetryConfig> = {}
-): Promise<T> {
-  const cfg = { ...DEFAULT_RETRY_CONFIG, ...config };
-  let lastError: unknown;
-  let delay = cfg.initialDelayMs;
-
-  for (let attempt = 1; attempt <= cfg.maxAttempts; attempt++) {
-    try {
-      return await operation();
-    } catch (error) {
-      lastError = error;
-
-      if (attempt === cfg.maxAttempts || !shouldRetry(error, attempt)) {
-        throw error;
-      }
-
-      log.dim(`Retry ${attempt}/${cfg.maxAttempts - 1} in ${delay}ms...`);
-      await sleep(delay);
-
-      delay = Math.min(delay * cfg.backoffMultiplier, cfg.maxDelayMs);
-    }
-  }
-
-  throw lastError;
-}
-
-/**
- * Sleep for specified milliseconds.
- */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
- * Format error for user display (actionable message).
- */
-export function formatUserError(error: unknown, operation: string): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return `${style.red("Error:")} Failed to ${operation}\n${style.dim(message)}`;
-}
-
-/**
- * Exit process with error message and code.
- * Always logs context before exiting.
- */
-export function exitWithError(
-  message: string,
-  code: number = 1,
-  suggestion?: string
-): never {
-  log.error(message);
-  if (suggestion) {
-    log.dim(suggestion);
-  }
-  process.exit(code);
-}

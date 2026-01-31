@@ -111,8 +111,8 @@ export async function buildImage(
   // Stacks with ccbox dependencies (python, web, full) use local images
   const buildArgs = [
     "build",
-    "--output",
-    `type=image,name=${imageName},compression=zstd,compression-level=3`,
+    "-t",
+    imageName,
     "-f",
     join(buildDir, "Dockerfile"),
     `--progress=${progress}`,
@@ -139,8 +139,8 @@ export async function buildImage(
     // Post-build cleanup: remove temp build files
     try {
       rmSync(buildDir, { recursive: true, force: true });
-    } catch {
-      // Ignore cleanup errors
+    } catch (e) {
+      log.debug(`Cleanup error: ${String(e)}`);
     }
 
     // Clean dangling images
@@ -256,8 +256,8 @@ export async function buildProjectImage(
     // Cleanup temp build files
     try {
       rmSync(buildDir, { recursive: true, force: true });
-    } catch {
-      // Ignore cleanup errors
+    } catch (e) {
+      log.debug(`Cleanup error: ${String(e)}`);
     }
 
     return imageName;
@@ -285,15 +285,15 @@ export async function buildProjectImage(
     // Cleanup partial image on failure (prevent dangling)
     try {
       await removeImage(imageName, true);
-    } catch {
-      // Ignore - image may not have been created
+    } catch (e) {
+      log.debug(`Image cleanup error: ${String(e)}`);
     }
 
     // Cleanup temp build files
     try {
       rmSync(buildDir, { recursive: true, force: true });
-    } catch {
-      // Ignore cleanup errors
+    } catch (e) {
+      log.debug(`Cleanup error: ${String(e)}`);
     }
 
     throw error;
