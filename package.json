@@ -19,7 +19,7 @@
     "test:all": "bun run tests/verify.mjs && bun run tests/e2e.mjs",
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",
-    "circular": "bunx madge --circular src/"
+    "circular": "madge --circular --ts-config tsconfig.json src/index.ts"
   },
   "keywords": [
     "claude",
