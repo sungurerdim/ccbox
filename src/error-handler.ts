@@ -180,7 +180,9 @@ export function logError(
   log.error(`Failed to ${operation}: ${message}`);
 
   if (details) {
+    const SENSITIVE_KEY_PATTERN = /(password|secret|token|key|auth|credential)/i;
     const detailsStr = Object.entries(details)
+      .filter(([k]) => !SENSITIVE_KEY_PATTERN.test(k))
       .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
       .join(", ");
     log.dim(`Context: ${detailsStr}`);
@@ -192,6 +194,11 @@ export function logError(
   }
 }
 
+/** Type guard for execa-like error objects with stderr, exitCode, etc. */
+function isExecaError(err: unknown): err is { stderr?: string; shortMessage?: string; message?: string; exitCode?: number } {
+  return err instanceof Error || (typeof err === "object" && err !== null && ("stderr" in err || "exitCode" in err));
+}
+
 /**
  * Log Docker command error with extracted details.
  */
@@ -200,12 +207,7 @@ export function logDockerError(
   command: string,
   args: string[]
 ): void {
-  const execaError = error as {
-    stderr?: string;
-    shortMessage?: string;
-    message?: string;
-    exitCode?: number;
-  };
+  const execaError = isExecaError(error) ? error : { message: String(error) };
 
   const exitCode = execaError.exitCode ?? 1;
   const cmdStr = `docker ${command} ${args.slice(0, 3).join(" ")}...`;

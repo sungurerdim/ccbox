@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+<!-- Add entries here as changes are merged. Categories: Added, Changed, Fixed, Removed, Security. -->
+
 ## [0.1.0] - 2026-01-28
 
 Initial public release of ccbox - secure Docker sandbox for Claude Code.

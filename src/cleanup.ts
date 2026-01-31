@@ -146,8 +146,8 @@ export async function getDockerDiskUsage(): Promise<Record<string, string>> {
     if (result.exitCode === 0) {
       for (const line of result.stdout.trim().split("\n")) {
         const parts = line.split("\t");
-        const resourceType = parts[0]?.toLowerCase();
-        const reclaimable = parts[2];
+        const resourceType = parts?.[0]?.toLowerCase() ?? "";
+        const reclaimable = parts?.[2] ?? "";
         if (parts.length >= 3 && resourceType && reclaimable) {
           if (resourceType.includes("images")) {
             usage.images = reclaimable;

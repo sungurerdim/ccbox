@@ -402,11 +402,12 @@ export function normalizeProjectDirName(dirName: string): string {
   normalized = normalized.normalize("NFC");
 
   // 2. Remove null bytes (security - prevents path truncation attacks)
+  // Intentional control char escape: \x00 matches literal null byte in binary path data
   // eslint-disable-next-line no-control-regex
   normalized = normalized.replace(/\x00/g, "");
 
   // 3. Remove control characters (invisible, cause display issues)
-  // U+0000-U+001F (C0 controls) and U+007F-U+009F (DEL + C1 controls)
+  // Intentional control char escapes: \x00-\x1F (C0), \x7F-\x9F (DEL + C1)
   // eslint-disable-next-line no-control-regex
   normalized = normalized.replace(/[\x00-\x1F\x7F-\x9F]/g, "");
 

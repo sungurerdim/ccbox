@@ -73,7 +73,27 @@ if [[ "$(id -u)" == "0" && -n "$CCBOX_UID" && -n "$CCBOX_GID" ]]; then
 fi
 ```
 
-#### 3. User Switching with gosu
+#### 3. State Persistence: .claude.json Symlink
+
+The entrypoint creates a symlink so Claude Code finds its onboarding state at the expected `$HOME/.claude.json` location, even when the host stores it inside `.claude/`:
+
+```bash
+# See: src/templates/entrypoint.sh (Onboarding state symlink section)
+if [[ -f "/ccbox/.claude/.claude.json" && ! -e "/ccbox/.claude.json" ]]; then
+    ln -sf /ccbox/.claude/.claude.json /ccbox/.claude.json
+fi
+```
+
+#### 4. Plugin Cache Cleanup
+
+On startup, the entrypoint removes orphaned plugin markers that can accumulate across container restarts:
+
+```bash
+# See: src/templates/entrypoint.sh (Clean orphaned plugin markers section)
+find "/ccbox/.claude/plugins/cache" -name ".orphaned_at" -type f -exec rm -f {} +
+```
+
+#### 5. User Switching with gosu
 
 After UID/GID adjustment, the entrypoint uses `gosu` to switch to the ccbox user:
 
