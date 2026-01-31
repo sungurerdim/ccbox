@@ -69,7 +69,7 @@ export const STACK_INFO: Record<LanguageStack, { description: string; sizeMB: nu
   // ═══════════════════════════════════════════════════════════════════════════
   // Core Language Stacks
   // ═══════════════════════════════════════════════════════════════════════════
-  [LanguageStack.BASE]: { description: "Claude Code only (vanilla)", sizeMB: 200 },
+  [LanguageStack.BASE]: { description: "Claude Code only (vanilla)", sizeMB: 215 },
   [LanguageStack.PYTHON]: { description: "Python + uv + ruff + pytest + mypy", sizeMB: 350 },
   [LanguageStack.WEB]: { description: "Node.js + Bun + TypeScript + pnpm + eslint + prettier + vitest", sizeMB: 400 },
   [LanguageStack.GO]: { description: "Go + golangci-lint", sizeMB: 550 },

@@ -106,7 +106,7 @@ ccbox auto-detects your project type. Use `-s <stack>` to override.
 **Core Stacks:**
 | Stack | Includes |
 |-------|----------|
-| `base` | Claude Code only |
+| `base` | Claude Code + make, tree, zip, file, patch, wget, vim-tiny |
 | `python` | Python 3, uv, ruff, pytest, mypy |
 | `web` | Node.js, Bun, TypeScript, pnpm, eslint, prettier, vitest |
 | `go` | Go, golangci-lint |
@@ -119,6 +119,8 @@ ccbox auto-detects your project type. Use `-s <stack>` to override.
 | `lua` | Lua, LuaRocks |
 
 **Combined:** `jvm`, `functional`, `scripting`, `systems`
+
+> **Auto-promotion:** Projects with both a web language (TypeScript, Node, Bun, Deno) and Python are automatically promoted to `fullstack`.
 
 **Use-Case:** `data`, `ai`, `fullstack`, `mobile`, `game`
 
