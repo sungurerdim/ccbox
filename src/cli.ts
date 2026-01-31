@@ -75,6 +75,9 @@ function validateModel(model: string | undefined): string | undefined {
  * Validate timeout parameter.
  */
 function validateTimeout(value: string): number {
+  if (!value || value.length > 10) {
+    throw new ValidationError("Timeout must be a numeric string (1-10 digits)");
+  }
   const parsed = parseInt(value, 10);
   if (isNaN(parsed) || parsed <= 0) {
     throw new ValidationError("Timeout must be a positive integer (milliseconds)");
@@ -119,6 +122,11 @@ program
   .option("-e, --env <KEY=VALUE...>", "Pass environment variables to container (can override defaults)", (value: string, prev: string[]) => {
     if (!value.includes('=') || value.startsWith('=')) {
       throw new ValidationError(`Invalid env format '${value}'. Expected KEY=VALUE`);
+    }
+    // Validate key: alphanumeric + underscore only (POSIX env var standard)
+    const key = value.split('=')[0]!;
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      throw new ValidationError(`Invalid env var key '${key}'. Must be alphanumeric/underscore, starting with letter or underscore.`);
     }
     return [...(prev || []), value];
   })

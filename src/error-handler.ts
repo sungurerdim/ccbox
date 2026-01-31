@@ -221,9 +221,15 @@ export function logDockerError(
   // Extract meaningful error from stderr
   if (execaError.stderr) {
     const stderr = execaError.stderr.trim();
+    // Show first meaningful line to user, log full stderr for debugging
     const firstLine = stderr.split("\n")[0] ?? stderr;
-    if (firstLine.length > 0 && firstLine.length < 200) {
+    if (firstLine.length > 0 && firstLine.length < 500) {
       log.dim(`Error: ${firstLine}`);
+    } else if (firstLine.length >= 500) {
+      log.dim(`Error: ${firstLine.slice(0, 500)}...`);
+    }
+    if (stderr.length > firstLine.length) {
+      log.debug(`Full stderr: ${stderr.slice(0, 1000)}`);
     }
   } else if (execaError.shortMessage) {
     log.dim(`Error: ${execaError.shortMessage}`);

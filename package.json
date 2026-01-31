@@ -14,6 +14,7 @@
     "build:binary": "bun run scripts/build.ts",
     "build:binary:all": "bun run scripts/build.ts --all",
     "test": "bun run tests/verify.mjs",
+    "test:coverage": "c8 --reporter=text bun run tests/verify.mjs",
     "test:e2e": "bun run tests/e2e.mjs",
     "test:all": "bun run tests/verify.mjs && bun run tests/e2e.mjs",
     "lint": "eslint src",
@@ -51,6 +52,7 @@
     "@typescript-eslint/parser": "^8.54.0",
     "eslint": "^9.39.2",
     "eslint-plugin-import": "^2.31.0",
+    "c8": "^7.13.0",
     "madge": "^8.0.0",
     "typescript": "^5.9.3"
   }

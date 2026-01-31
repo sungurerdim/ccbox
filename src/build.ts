@@ -12,7 +12,7 @@ import { exec, execInherit } from "./exec.js";
 
 import {
   getImageName,
-  imageExists,
+  imageExistsAsync,
   LanguageStack,
   STACK_DEPENDENCIES,
 } from "./config.js";
@@ -87,9 +87,9 @@ export async function buildImage(
 ): Promise<boolean> {
   const { progress = "auto", cache = true } = options;
 
-  // Check if this stack depends on base image
+  // Check if this stack depends on base image (async to avoid blocking)
   const dependency = STACK_DEPENDENCIES[stack];
-  if (dependency !== null && !imageExists(dependency)) {
+  if (dependency !== null && !(await imageExistsAsync(dependency))) {
     log.dim(`Building dependency: ccbox_${dependency}:latest...`);
     if (!(await buildImage(dependency, options))) {
       throw new ImageBuildError(`Failed to build dependency ccbox/${dependency}`);
@@ -149,8 +149,10 @@ export async function buildImage(
       log.debug(`Cleanup error: ${String(e)}`);
     }
 
-    // Clean dangling images
-    await cleanupCcboxDanglingImages();
+    // Clean dangling images (fire-and-forget with error handler)
+    cleanupCcboxDanglingImages().catch((e: unknown) => {
+      log.debug(`Dangling image cleanup failed: ${e instanceof Error ? e.message : String(e)}`);
+    });
 
     // For base image: run claude install to set up installMethod in host config
     if (stack === LanguageStack.BASE) {
@@ -164,7 +166,7 @@ export async function buildImage(
     if (error instanceof Error) {
       const execaError = error as { stderr?: string; shortMessage?: string };
       if (execaError.stderr) {
-        errorDetails = execaError.stderr.slice(0, 500);
+        errorDetails = execaError.stderr.slice(0, 1000);
       } else if (execaError.shortMessage) {
         errorDetails = execaError.shortMessage;
       } else {
@@ -275,7 +277,9 @@ export async function buildProjectImage(
       const execaError = error as { stderr?: string; shortMessage?: string; timedOut?: boolean };
       isTimeout = !!execaError.timedOut;
       if (execaError.stderr) {
-        errorDetails = execaError.stderr.slice(0, 500);
+        // Log full stderr for debugging, show truncated version to user
+        log.debug(`Full stderr: ${execaError.stderr}`);
+        errorDetails = execaError.stderr.slice(0, 1000);
       } else if (execaError.shortMessage) {
         errorDetails = execaError.shortMessage;
       } else {
@@ -362,7 +366,7 @@ export async function ensureImageReady(
   buildOnly: boolean,
   options: BuildOptions = {}
 ): Promise<boolean> {
-  const needsBuild = buildOnly || !imageExists(stack);
+  const needsBuild = buildOnly || !(await imageExistsAsync(stack));
   if (needsBuild) {
     return buildImage(stack, options);
   }

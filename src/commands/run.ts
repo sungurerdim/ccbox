@@ -4,33 +4,27 @@
  * Handles container execution, diagnostics, and the main run workflow.
  */
 
-import { basename } from "node:path";
-
 import { exec, execInherit } from "../exec.js";
 import {
   type Config,
-  imageExists,
   LanguageStack,
 } from "../config.js";
 import { DOCKER_COMMAND_TIMEOUT } from "../constants.js";
 import type { DepsInfo, DepsMode } from "../deps.js";
-import { computeDepsHash, detectDependencies } from "../deps.js";
-import { detectProjectType } from "../detector.js";
+import { detectDependencies } from "../deps.js";
 import { checkDockerStatus } from "../docker.js";
 import { getDockerRunCmd } from "../generator.js";
 import { log } from "../logger.js";
-import { getDockerEnv, validateProjectPath } from "../paths.js";
+import { getDockerEnv } from "../paths.js";
 import {
-  buildImage,
-  buildProjectImage,
-  ensureImageReady,
   getProjectImageName,
-  getProjectImageDepsHash,
   projectImageExists,
 } from "../build.js";
 import { pruneStaleResources } from "../cleanup.js";
 import { resolveStack, setupGitConfig } from "../prompts.js";
 import { checkDocker, ERR_DOCKER_NOT_RUNNING } from "../utils.js";
+import { detectAndReportStack } from "./run-phases.js";
+import { ensureBaseImage, ensureStackImage, buildProjectIfNeeded } from "./build-helpers.js";
 
 /**
  * Diagnose container failure and provide actionable feedback.
@@ -259,55 +253,13 @@ async function buildAndRun(
   log.newline();
   log.blue(`[${projectName}] -> ccbox/${selectedStack}`);
 
-  // Ensure base image exists (required for all stacks)
-  if (!imageExists(LanguageStack.BASE)) {
-    log.bold("First-time setup: building base image...");
-    try {
-      await buildImage(LanguageStack.BASE, { progress, cache });
-    } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : String(error);
-      log.error(msg);
-      process.exit(1);
-    }
-    log.newline();
-  }
-
-  // Ensure stack image is ready
-  try {
-    await ensureImageReady(selectedStack, false, { progress, cache });
-  } catch (error: unknown) {
-    const msg = error instanceof Error ? error.message : String(error);
-    log.error(msg);
-    process.exit(1);
-  }
-
-  // Build project-specific image if deps requested
-  let builtProjectImage: string | undefined = undefined;
-  if (resolvedDepsMode !== "skip" && depsList.length > 0) {
-    // Check if existing project image has matching deps hash (skip rebuild)
-    const currentHash = computeDepsHash(depsList, projectPath);
-    const existingHash = await getProjectImageDepsHash(projectName, selectedStack);
-
-    if (existingHash && existingHash === currentHash) {
-      builtProjectImage = getProjectImageName(projectName, selectedStack);
-      log.dim(`Dependencies unchanged (${currentHash}), reusing project image`);
-    } else {
-      try {
-        builtProjectImage = await buildProjectImage(
-          projectPath,
-          projectName,
-          selectedStack,
-          depsList,
-          resolvedDepsMode,
-          { progress, cache }
-        );
-      } catch (error: unknown) {
-        const msg = error instanceof Error ? error.message : String(error);
-        log.error(`Failed to build project image: ${msg}`);
-        process.exit(1);
-      }
-    }
-  }
+  // Build phase: ensure base, stack, and project images are ready
+  const buildOpts = { progress, cache };
+  await ensureBaseImage(buildOpts);
+  await ensureStackImage(selectedStack, buildOpts);
+  const builtProjectImage = await buildProjectIfNeeded(
+    projectPath, projectName, selectedStack, depsList, resolvedDepsMode, buildOpts
+  );
 
   if (buildOnly) {
     log.success("Build complete");
@@ -367,9 +319,8 @@ export async function run(
     buildTimeout: _buildTimeout,
   } = options;
 
-  // Note: timeout and buildTimeout are accepted but not yet passed through
-  // to underlying operations. This is a placeholder for future implementation.
-  // The CLI validation ensures they are valid values when provided.
+  // Timeouts accepted from CLI but not yet wired through to all operations.
+  // TODO: Pass timeout to DOCKER_COMMAND_TIMEOUT overrides, buildTimeout to DOCKER_BUILD_TIMEOUT
   void _timeout;
   void _buildTimeout;
 
@@ -384,37 +335,12 @@ export async function run(
     await pruneStaleResources(debug > 0);
   }
 
-  // Validate project path early
-  const projectPath = validateProjectPath(path);
+  // Phase 1: Detect project type and resolve initial stack
   const config = await setupGitConfig();
-  const projectName = basename(projectPath);
-
-  // Detect recommended stack first (no prompt yet)
-  const detection = detectProjectType(projectPath, verbose);
-  let initialStack: LanguageStack;
-  if (stackName && stackName !== "auto") {
-    initialStack = stackName as LanguageStack;
-  } else {
-    initialStack = detection.recommendedStack;
-  }
-
-  // Show detection details
-  if (detection.detectedLanguages.length > 0) {
-    if (verbose) {
-      log.dim("Detection:");
-      for (const det of detection.detectedLanguages) {
-        log.dim(`  ${det.language.padEnd(12)} ${String(det.confidence).padStart(2)}  ${det.trigger}`);
-      }
-      log.dim(`  → Stack: ${initialStack}`);
-    } else {
-      const summary = detection.detectedLanguages
-        .map((d) => `${d.language} (${d.confidence})`)
-        .join(", ");
-      log.dim(`Detection: ${summary} → ${initialStack}`);
-    }
-  } else if (verbose) {
-    log.dim(`Detection: no languages found → ${initialStack}`);
-  }
+  const { projectPath, projectName, stack: initialStack } = detectAndReportStack(path, {
+    stackName,
+    verbose,
+  });
 
   // Phase 1: Try existing project image (skip prompts if found)
   if (

@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { exec } from "./exec.js";
-import { style } from "./logger.js";
+import { log } from "./logger.js";
 
 import { getImageName, LanguageStack } from "./config.js";
 import { PRUNE_TIMEOUT } from "./constants.js";
@@ -61,7 +61,7 @@ export async function pruneStaleResources(verbose = false): Promise<{ containers
   }
 
   if (verbose && results.containers > 0) {
-    console.log(style.dim(`Pruned: ${results.containers} stale container(s)`));
+    log.dim(`Pruned: ${results.containers} stale container(s)`);
   }
 
   return results;
@@ -172,33 +172,31 @@ export async function getDockerDiskUsage(): Promise<Record<string, string>> {
  * Prune entire Docker system (all unused resources).
  */
 export async function pruneSystem(): Promise<void> {
-  console.log(style.bold("\nCleaning Docker system..."));
+  log.bold("\nCleaning Docker system...");
 
   const env = getDockerEnv();
 
   // 1. Remove stopped containers
-  console.log(style.dim("Removing stopped containers..."));
+  log.dim("Removing stopped containers...");
   await exec("docker", ["container", "prune", "-f"], { timeout: PRUNE_TIMEOUT, env });
 
   // 2. Remove dangling images
-  console.log(style.dim("Removing dangling images..."));
+  log.dim("Removing dangling images...");
   await exec("docker", ["image", "prune", "-f"], { timeout: PRUNE_TIMEOUT, env });
 
   // 3. Remove unused volumes
-  console.log(style.dim("Removing unused volumes..."));
+  log.dim("Removing unused volumes...");
   await exec("docker", ["volume", "prune", "-f"], { timeout: PRUNE_TIMEOUT, env });
 
   // 4. Remove build cache
-  console.log(style.dim("Removing build cache..."));
+  log.dim("Removing build cache...");
   await exec("docker", ["builder", "prune", "-f", "--all"], { timeout: PRUNE_TIMEOUT, env });
 
-  console.log(style.green("\nSystem cleanup complete"));
+  log.success("\nSystem cleanup complete");
 
   const newUsage = await getDockerDiskUsage();
-  console.log(
-    style.dim(
-      `Remaining: Images ${newUsage.images}, Volumes ${newUsage.volumes}, Cache ${newUsage.cache}`
-    )
+  log.dim(
+    `Remaining: Images ${newUsage.images}, Volumes ${newUsage.volumes}, Cache ${newUsage.cache}`
   );
 }
 

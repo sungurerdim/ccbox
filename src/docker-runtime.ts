@@ -16,19 +16,23 @@ import { DEFAULT_PIDS_LIMIT } from "./constants.js";
 import { log } from "./logger.js";
 
 import { resolveForDocker } from "./paths.js";
+import { selectStrategies, type StrategyOptions } from "./docker/strategies/index.js";
 
-// Container constraints (SSOT - used for both docker run and prompt generation)
-const CONTAINER_CONSTRAINTS = {
-  pidsLimit: DEFAULT_PIDS_LIMIT,         // from constants.ts
-  capDrop: "ALL",                        // Linux capabilities
+/**
+ * Container constraints (SSOT - used for both docker run and prompt generation).
+ * Override via environment variables: CCBOX_PIDS_LIMIT, CCBOX_TMP_SIZE, etc.
+ */
+export const CONTAINER_CONSTRAINTS = {
+  pidsLimit: parseInt(env.CCBOX_PIDS_LIMIT ?? "", 10) || DEFAULT_PIDS_LIMIT,
+  capDrop: "ALL",
   ephemeralPaths: ["/tmp", "/var/tmp", "~/.cache"],
   tmpfs: {
-    tmp: "512m",       // General temp files
-    varTmp: "256m",    // Secondary temp
-    run: "64m",        // Runtime files (PID, sockets)
-    shm: "256m",       // Shared memory
+    tmp: env.CCBOX_TMP_SIZE ?? "512m",
+    varTmp: "256m",
+    run: "64m",
+    shm: env.CCBOX_SHM_SIZE ?? "256m",
   },
-} as const;
+};
 
 /** Generate container awareness prompt with current constraints. */
 export function buildContainerAwarenessPrompt(persistentPaths: string): string {
@@ -241,31 +245,27 @@ function addMinimalMounts(cmd: string[], claudeConfig: string): void {
     }
   }
 
-  // Mount ~/.claude.json for onboarding state (hasCompletedOnboarding flag)
-  // Claude Code may look in two locations:
-  // 1. ~/.claude.json (home directory) - $HOME/.claude.json
-  // 2. ~/.claude/.claude.json (inside config dir) - $CLAUDE_CONFIG_DIR/.claude.json
-  // Mount both if they exist to ensure Claude finds the onboarding state
+  // Mount .claude.json onboarding state (hasCompletedOnboarding flag)
+  // Claude Code maintains this file in two locations simultaneously:
+  //   1. ~/.claude.json         (home directory)
+  //   2. ~/.claude/.claude.json (inside config dir)
+  // Both exist independently on the host — mount each one separately.
   const homeDir = join(claudeConfig, "..");
   const claudeJsonHome = join(homeDir, ".claude.json");
   const claudeJsonConfig = join(claudeConfig, ".claude.json");
 
   // Mount home dir location -> /ccbox/.claude.json
-  if (existsSync(claudeJsonHome)) {
-    const dockerPath = resolveForDocker(claudeJsonHome);
-    cmd.push("-v", `${dockerPath}:/ccbox/.claude.json:rw`);
-  } else {
+  if (!existsSync(claudeJsonHome)) {
     // Create empty if missing (Docker would create a directory instead)
     writeFileSync(claudeJsonHome, "{}", { encoding: "utf-8" });
-    const dockerPath = resolveForDocker(claudeJsonHome);
-    cmd.push("-v", `${dockerPath}:/ccbox/.claude.json:rw`);
   }
+  cmd.push("-v", `${resolveForDocker(claudeJsonHome)}:/ccbox/.claude.json:rw`);
 
-  // Mount config dir location -> /ccbox/.claude/.claude.json (if exists and different)
-  if (existsSync(claudeJsonConfig)) {
-    const dockerPath = resolveForDocker(claudeJsonConfig);
-    cmd.push("-v", `${dockerPath}:/ccbox/.claude/.claude.json:rw`);
+  // Mount config dir location -> /ccbox/.claude/.claude.json
+  if (!existsSync(claudeJsonConfig)) {
+    writeFileSync(claudeJsonConfig, "{}", { encoding: "utf-8" });
   }
+  cmd.push("-v", `${resolveForDocker(claudeJsonConfig)}:/ccbox/.claude/.claude.json:rw`);
 
   // Signal minimal mount mode
   cmd.push("-e", "CCBOX_MINIMAL_MOUNT=1");
@@ -507,20 +507,18 @@ export function getDockerRunCmd(
   }
 
   // Mount ~/.claude.json for onboarding state (hasCompletedOnboarding flag)
-  // Claude Code may look in two locations:
-  // 1. ~/.claude.json (home directory) - $HOME/.claude.json
-  // 2. ~/.claude/.claude.json (inside config dir) - already included in .claude mount
-  // Note: addMinimalMounts already handles this for minimal mount mode
+  // Claude Code maintains this in two locations simultaneously:
+  //   1. ~/.claude.json         — mount explicitly below
+  //   2. ~/.claude/.claude.json — already included via the .claude/ mount
+  // Note: addMinimalMounts handles both mounts explicitly for minimal mode
   if (!useMinimalMount) {
-    // In non-minimal mode, .claude is already mounted, so .claude/.claude.json is available
-    // Mount home dir location if it exists (for backwards compat with native installs)
     const homeDir = join(claudeConfig, "..");
     const claudeJsonHome = join(homeDir, ".claude.json");
-    if (existsSync(claudeJsonHome)) {
-      const dockerClaudeJson = resolveForDocker(claudeJsonHome);
-      cmd.push("-v", `${dockerClaudeJson}:/ccbox/.claude.json:rw`);
+    if (!existsSync(claudeJsonHome)) {
+      writeFileSync(claudeJsonHome, "{}", { encoding: "utf-8" });
     }
-    // .claude/.claude.json is already available via the .claude mount
+    cmd.push("-v", `${resolveForDocker(claudeJsonHome)}:/ccbox/.claude.json:rw`);
+    // .claude/.claude.json is already available via the .claude/ directory mount
   }
 
   // Working directory - use host path for session compatibility
@@ -542,9 +540,10 @@ export function getDockerRunCmd(
   addLogOptions(cmd);
   addDnsOptions(cmd);
 
-  // Resource limits
-  if (!options.unrestricted) {
-    cmd.push("--cpu-shares=512");
+  // Apply execution strategies (debug, restricted/unrestricted, etc.)
+  const strategies = selectStrategies(options as StrategyOptions);
+  for (const strategy of strategies) {
+    strategy.apply(cmd, config, stack, options as StrategyOptions);
   }
 
   // Environment variables
@@ -559,14 +558,6 @@ export function getDockerRunCmd(
   // Makes git, npm, and other glibc-based tools see the original host path
   if (dockerProjectPath !== hostProjectPath) {
     cmd.push("-e", `CCBOX_WIN_ORIGINAL_PATH=${dockerProjectPath}`);
-  }
-
-  if ((options.debug ?? 0) > 0) {
-    cmd.push("-e", `CCBOX_DEBUG=${options.debug}`);
-  }
-
-  if (options.unrestricted) {
-    cmd.push("-e", "CCBOX_UNRESTRICTED=1");
   }
 
   // Debug logs: ephemeral if requested, otherwise normal (persisted to host)
