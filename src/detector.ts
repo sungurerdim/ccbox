@@ -330,6 +330,24 @@ const SUPPRESSION_RULES: Array<{ if: string; suppress: string }> = [
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Promotion rules: multi-language → combined stack
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const WEB_FAMILY = new Set(["typescript", "node", "bun", "deno"]);
+
+const PROMOTION_RULES: Array<{
+  if: (langs: Set<string>) => boolean;
+  promote: LanguageStack;
+  label: string;
+}> = [
+  {
+    if: (langs) => [...langs].some(l => WEB_FAMILY.has(l)) && langs.has("python"),
+    promote: LanguageStack.FULLSTACK,
+    label: "web+python → fullstack",
+  },
+];
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // Core detection logic
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -541,6 +559,15 @@ export function detectProjectType(directory: string, verbose = false): Detection
   const stack = filtered.length > 0
     ? filtered[0]!.stack
     : LanguageStack.BASE;
+
+  // Apply promotion rules: multi-language → combined stack
+  const detectedLangSet2 = new Set(filtered.map(d => d.language));
+  for (const rule of PROMOTION_RULES) {
+    if (rule.if(detectedLangSet2)) {
+      if (verbose) log.debug(`  promote: ${rule.label}`);
+      return { recommendedStack: rule.promote, detectedLanguages: filtered };
+    }
+  }
 
   return {
     recommendedStack: stack,

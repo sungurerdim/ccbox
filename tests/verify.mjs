@@ -258,7 +258,10 @@ test("Java Maven -> java", () => testStack("java", { "Main.java": "class M{}", "
 test("Java Gradle -> java", () => testStack("gradle", { "App.java": "class A{}", "build.gradle": "plugins{}" }, "java", ["java"]));
 
 // Bug prevented: Mixed-language projects must pick sensible default
-test("Node + Python -> web", () => testStack("fullstack", { "package.json": '{"name":"t"}', "requirements.txt": "flask" }, "web", ["python", "node"]));
+test("Node + Python -> fullstack (auto-promotion)", () => testStack("fullstack", { "package.json": '{"name":"t"}', "requirements.txt": "flask" }, "fullstack", ["python", "node"]));
+
+// Bug prevented: TypeScript + Python not promoted to fullstack
+test("TypeScript + Python -> fullstack", () => testStack("ts-py", { "tsconfig.json": '{}', "index.ts": "console.log(1)", "requirements.txt": "flask", "main.py": "print(1)" }, "fullstack", ["python", "typescript"]));
 
 // Bug prevented: Scripting/functional stacks must be correctly identified
 test("Ruby -> scripting", () => testStack("ruby", { "Gemfile": 'source "https://rubygems.org"' }, "scripting", ["ruby"]));

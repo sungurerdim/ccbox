@@ -30,7 +30,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \\
     # GitHub CLI
     gh \\
     # Core utilities (grep/sed/findutils come with base image)
-    procps unzip \\
+    procps unzip make tree zip file patch wget vim-tiny \\
     && rm -rf /var/lib/apt/lists/* \\
     # Locale setup
     && sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen \\
