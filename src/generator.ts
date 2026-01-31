@@ -12,27 +12,49 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
 import { LanguageStack } from "./config.js";
 import type { DepsInfo, DepsMode } from "./deps.js";
 import { getInstallCommands } from "./deps.js";
-/** Read a pre-compiled native binary from native/ directory.
- *  Searches multiple locations to work both in development (source tree)
- *  and in compiled binary mode (executable directory). */
-function readNativeBinary(name: string): Buffer {
-  const candidates = [
-    join(__dirname, "..", "native", name),     // dev: src/../native/
-    join(process.execPath, "..", "native", name), // compiled: next to executable
-    join(process.cwd(), "native", name),       // cwd fallback
-  ];
-  for (const p of candidates) {
-    if (existsSync(p)) { return readFileSync(p); }
-  }
+
+// Embedded native binaries - Bun's compile embeds these into the executable.
+// In dev mode (bun run), they resolve to filesystem paths; in compiled mode, to embedded paths.
+// @ts-expect-error Bun embed import
+import fuseAmd64Path from "../native/ccbox-fuse-linux-amd64" with { type: "file" };
+// @ts-expect-error Bun embed import
+import fuseArm64Path from "../native/ccbox-fuse-linux-arm64" with { type: "file" };
+// @ts-expect-error Bun embed import
+import fakepathAmd64Path from "../native/fakepath-linux-amd64.so" with { type: "file" };
+// @ts-expect-error Bun embed import
+import fakepathArm64Path from "../native/fakepath-linux-arm64.so" with { type: "file" };
+// @ts-expect-error Bun embed import
+import fuseSrcPath from "../native/ccbox-fuse.c" with { type: "file" };
+// @ts-expect-error Bun embed import
+import fakepathSrcPath from "../native/fakepath.c" with { type: "file" };
+
+const EMBEDDED_NATIVES: Record<string, string> = {
+  "ccbox-fuse-linux-amd64": fuseAmd64Path,
+  "ccbox-fuse-linux-arm64": fuseArm64Path,
+  "fakepath-linux-amd64.so": fakepathAmd64Path,
+  "fakepath-linux-arm64.so": fakepathArm64Path,
+  "ccbox-fuse.c": fuseSrcPath,
+  "fakepath.c": fakepathSrcPath,
+};
+
+/** Get embedded path for a native file. */
+function readNativePath(name: string): string {
+  const embeddedPath = EMBEDDED_NATIVES[name];
+  if (embeddedPath) { return embeddedPath; }
   throw new Error(
-    `Native binary not found: ${name}\nSearched: ${candidates.join(", ")}\nRun: cd native && docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.build --output type=local,dest=. .`
+    `Native file not found: ${name}\nRun: cd native && docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.build --output type=local,dest=. .`
   );
+}
+
+/** Read a pre-compiled native binary.
+ *  Uses Bun's embedded file imports (works in both dev and compiled mode). */
+function readNativeBinary(name: string): Buffer {
+  return readFileSync(readNativePath(name));
 }
 
 // Import and re-export from dockerfile-gen.ts
@@ -50,23 +72,8 @@ export {
   transformSlashCommand,
 } from "./docker-runtime.js";
 
-// ES module equivalent of __dirname
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
 /** Generate entrypoint script with comprehensive debugging support. */
 export function generateEntrypoint(): string {
-  // Try to read from package resources first
-  const scriptPath = join(__dirname, "scripts", "entrypoint.sh");
-  try {
-    if (existsSync(scriptPath)) {
-      return readFileSync(scriptPath, "utf-8");
-    }
-  } catch {
-    // Fall through to embedded version
-  }
-
-  // Fallback to embedded script
   return `#!/bin/bash
 
 # Debug logging function (stdout for diagnostic, stderr for errors only)
@@ -453,23 +460,15 @@ chmod 755 /usr/local/bin/ccbox-fuse
 `;
   writeFileSync(join(buildDir, "install-fuse.sh"), archSelector, { encoding: "utf-8", mode: 0o755 });
 
-  // Also keep ccbox-fuse.c for source builds if needed
-  const fuseSrc = join(__dirname, "..", "native", "ccbox-fuse.c");
-  if (existsSync(fuseSrc)) {
-    const fuseContent = readFileSync(fuseSrc, "utf-8");
-    writeFileSync(join(buildDir, "ccbox-fuse.c"), fuseContent, { encoding: "utf-8" });
-  }
+  // Copy ccbox-fuse.c source for in-container source builds if needed
+  writeFileSync(join(buildDir, "ccbox-fuse.c"), readFileSync(readNativePath("ccbox-fuse.c"), "utf-8"), { encoding: "utf-8" });
 
-  // Copy pre-compiled fakepath.so binaries from native/ directory
+  // Copy pre-compiled fakepath.so binaries
   writeFileSync(join(buildDir, "fakepath-amd64.so"), readNativeBinary("fakepath-linux-amd64.so"), { mode: 0o755 });
   writeFileSync(join(buildDir, "fakepath-arm64.so"), readNativeBinary("fakepath-linux-arm64.so"), { mode: 0o755 });
 
-  // Also keep fakepath.c for source builds if needed
-  const fakepathSrc = join(__dirname, "..", "native", "fakepath.c");
-  if (existsSync(fakepathSrc)) {
-    const fakepathContent = readFileSync(fakepathSrc, "utf-8");
-    writeFileSync(join(buildDir, "fakepath.c"), fakepathContent, { encoding: "utf-8" });
-  }
+  // Copy fakepath.c source for in-container source builds if needed
+  writeFileSync(join(buildDir, "fakepath.c"), readFileSync(readNativePath("fakepath.c"), "utf-8"), { encoding: "utf-8" });
 
   return buildDir;
 }
