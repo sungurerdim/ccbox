@@ -33,7 +33,7 @@ jobs:
         run: bun run lint
 
       - name: Check for circular dependencies
-        run: bunx madge --circular --strict src/
+        run: bun run circular
 
       - name: Test
         run: bun run test
