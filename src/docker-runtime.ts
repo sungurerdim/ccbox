@@ -13,6 +13,7 @@ import { env } from "node:process";
 import type { Config } from "./config.js";
 import { getClaudeConfigDir, getContainerName, getImageName, LanguageStack } from "./config.js";
 import { DEFAULT_PIDS_LIMIT } from "./constants.js";
+import { log } from "./logger.js";
 
 import { resolveForDocker } from "./paths.js";
 
@@ -125,8 +126,8 @@ export function getHostTimezone(): string {
     if (tz && tz.includes("/")) {
       return tz;
     }
-  } catch {
-    // Ignore
+  } catch (e) {
+    log.debug(`Intl timezone detection error: ${String(e)}`);
   }
 
   // 3. Try /etc/timezone (Debian/Ubuntu) - Linux only
@@ -139,8 +140,8 @@ export function getHostTimezone(): string {
           return tz;
         }
       }
-    } catch {
-      // Ignore
+    } catch (e) {
+      log.debug(`/etc/timezone read error: ${String(e)}`);
     }
 
     // 4. Try /etc/localtime symlink (Linux/macOS)
@@ -153,8 +154,8 @@ export function getHostTimezone(): string {
           return tz;
         }
       }
-    } catch {
-      // Ignore
+    } catch (e) {
+      log.debug(`/etc/localtime read error: ${String(e)}`);
     }
   }
 

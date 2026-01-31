@@ -8,6 +8,7 @@
 import { DOCKER_COMMAND_TIMEOUT } from "./constants.js";
 import { exec, execInherit, type ExecResult } from "./exec.js";
 import { DockerError, DockerNotFoundError, DockerTimeoutError } from "./errors.js";
+import { log } from "./logger.js";
 import { getDockerEnv } from "./paths.js";
 
 /** Error message for Docker not running */
@@ -90,7 +91,8 @@ export async function getImageIds(imageFilter: string): Promise<Set<string>> {
 
     const ids = new Set(result.stdout.trim().split("\n").filter(Boolean));
     return ids;
-  } catch {
+  } catch (error) {
+    log.debug(`getImageIds failed for '${imageFilter}': ${error instanceof Error ? error.message : String(error)}`);
     return new Set();
   }
 }
@@ -128,7 +130,8 @@ export async function imageHasParent(imageId: string, parentIds: Set<string>): P
       if (parentIds.has(id)) {return true;}
     }
     return false;
-  } catch {
+  } catch (error) {
+    log.debug(`imageHasParent failed for '${imageId}': ${error instanceof Error ? error.message : String(error)}`);
     return false;
   }
 }
@@ -148,7 +151,8 @@ export async function removeImage(imageId: string, force = true): Promise<boolea
 
     const result = await safeDockerRun(args);
     return result.exitCode === 0;
-  } catch {
+  } catch (error) {
+    log.debug(`removeImage failed for '${imageId}': ${error instanceof Error ? error.message : String(error)}`);
     return false;
   }
 }
