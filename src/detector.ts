@@ -564,7 +564,7 @@ export function detectProjectType(directory: string, verbose = false): Detection
   const detectedLangSet2 = new Set(filtered.map(d => d.language));
   for (const rule of PROMOTION_RULES) {
     if (rule.if(detectedLangSet2)) {
-      if (verbose) log.debug(`  promote: ${rule.label}`);
+      if (verbose) { log.debug(`  promote: ${rule.label}`); }
       return { recommendedStack: rule.promote, detectedLanguages: filtered };
     }
   }
