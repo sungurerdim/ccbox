@@ -29,18 +29,23 @@ export interface DetectionResult {
   detectedLanguages: LanguageDetection[];  // Sorted by confidence (highest first)
 }
 
-/** Confidence levels for different signal types. */
+/**
+ * Confidence thresholds for different signal types.
+ *
+ * Higher values indicate stronger language ownership signals.
+ * Thresholds: >=90 = definitive, >=50 = probable, <30 = weak hint.
+ */
 const CONFIDENCE = {
-  LOCK_FILE: 95,
-  PACKAGE_MANAGER_FIELD: 95,
-  PRIMARY_CONFIG: 90,
-  SECONDARY_CONFIG: 80,
-  AMBIGUOUS_CONFIG: 50,
-  GENERAL_TOOL: 40,
-  SOURCE_EXTENSION: 30,
+  LOCK_FILE: 95,                 // Lock files are definitive (e.g., yarn.lock = Node)
+  PACKAGE_MANAGER_FIELD: 95,     // packageManager in package.json = definitive
+  PRIMARY_CONFIG: 90,            // Primary config files (e.g., Cargo.toml = Rust)
+  SECONDARY_CONFIG: 80,          // Supporting config (e.g., .ruby-version)
+  AMBIGUOUS_CONFIG: 50,          // Files shared across ecosystems (e.g., Project.toml)
+  GENERAL_TOOL: 40,              // Multi-purpose tools (e.g., Makefile)
+  SOURCE_EXTENSION: 30,          // Source files with 2+ files present
   SOURCE_EXTENSION_SINGLE: 15,   // Single source file = weak signal
-  MAKEFILE_DEMOTED: 20,
-  CONTENT_REJECTED: 0,          // Content validation failed
+  MAKEFILE_DEMOTED: 20,          // Makefile when primary language already detected
+  CONTENT_REJECTED: 0,           // Content validation failed (not this language)
 } as const;
 
 /** Pattern with confidence score. */
@@ -443,9 +448,19 @@ function languageToStack(lang: string): LanguageStack {
 /**
  * Detect the project type based on files in the directory.
  *
- * Uses a confidence scoring system where each file pattern has a score,
- * refined by content validation, source count scaling, and mutual exclusion.
- * The language with the highest confidence score determines the recommended stack.
+ * ## Scoring Algorithm
+ *
+ * 1. **Pattern matching**: Each language has file patterns with static confidence
+ *    scores (LOCK_FILE=95, PRIMARY_CONFIG=90, SOURCE_EXTENSION=30, etc.).
+ * 2. **Content validation**: Ambiguous files (pyproject.toml, DESCRIPTION) are
+ *    peeked into to confirm language ownership. Rejects set confidence to 0.
+ * 3. **Source count scaling**: Single source file (.cpp, .lua) gets demoted to 15;
+ *    2+ files keep the base score of 30.
+ * 4. **Context demotion**: Makefile-triggered C++ is demoted to 20 when a higher-
+ *    confidence primary language is also detected.
+ * 5. **Mutual exclusion**: TypeScript suppresses Node, Bun suppresses Node, etc.
+ * 6. **Promotion**: Multi-language combos (web+python) promote to combined stacks.
+ * 7. **Winner**: Highest confidence score after all adjustments wins.
  *
  * @param directory - Project root directory path.
  * @param verbose - If true, log detection details.

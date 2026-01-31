@@ -78,6 +78,51 @@ async function testAsync(name, fn) {
   }
 }
 
+// CI detection: increase timeouts in CI environments
+const IS_CI = !!process.env.CI;
+const TIMEOUT_MULTIPLIER = IS_CI ? 2 : 1;
+
+/**
+ * Retry wrapper for flaky Docker operations (TST-05).
+ * Retries on transient errors with exponential backoff.
+ */
+function isTransientError(err) {
+  const msg = String(err?.message || err || "");
+  return msg.includes("connection reset") ||
+    msg.includes("timeout") ||
+    msg.includes("ECONNREFUSED") ||
+    msg.includes("Cannot connect to the Docker daemon") ||
+    msg.includes("i/o timeout") ||
+    msg.includes("TLS handshake");
+}
+
+function withRetry(testFn, maxRetries = 2) {
+  for (let i = 0; i <= maxRetries; i++) {
+    try {
+      return testFn();
+    } catch (err) {
+      if (i === maxRetries || !isTransientError(err)) { throw err; }
+      const delayMs = 1000 * Math.pow(2, i);
+      console.log(`${Y}  Retry ${i + 1}/${maxRetries} after ${delayMs}ms...${X}`);
+      const start = Date.now();
+      while (Date.now() - start < delayMs) { /* busy wait for sync context */ }
+    }
+  }
+}
+
+async function withRetryAsync(testFn, maxRetries = 2) {
+  for (let i = 0; i <= maxRetries; i++) {
+    try {
+      return await testFn();
+    } catch (err) {
+      if (i === maxRetries || !isTransientError(err)) { throw err; }
+      const delayMs = 1000 * Math.pow(2, i);
+      console.log(`${Y}  Retry ${i + 1}/${maxRetries} after ${delayMs}ms...${X}`);
+      await new Promise(r => setTimeout(r, delayMs));
+    }
+  }
+}
+
 // Detect if bun is available (running under bun or bun command exists)
 const hasBun = typeof Bun !== "undefined" || (() => {
   try { execSync("bun --version", { stdio: "ignore" }); return true; } catch { return false; }
@@ -157,8 +202,10 @@ console.log(`${B}[1/4] Docker Prerequisites${X}`);
 
 test("Docker daemon is running", () => {
   if (!DOCKER_AVAILABLE) return "skip";
-  const { code, stdout } = docker("info");
-  return code === 0 && stdout.includes("Server Version");
+  return withRetry(() => {
+    const { code, stdout } = docker("info");
+    return code === 0 && stdout.includes("Server Version");
+  });
 });
 
 test("Docker can pull images", () => {
@@ -170,8 +217,10 @@ test("Docker can pull images", () => {
 
 test("Docker can run containers", () => {
   if (!DOCKER_AVAILABLE) return "skip";
-  const { code, stdout } = docker("run --rm alpine:latest echo 'test'");
-  return code === 0 && stdout.includes("test");
+  return withRetry(() => {
+    const { code, stdout } = docker("run --rm alpine:latest echo 'test'", { timeout: 30000 * TIMEOUT_MULTIPLIER });
+    return code === 0 && stdout.includes("test");
+  });
 });
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -184,7 +233,7 @@ await testAsync("Build minimal stack image", async () => {
   if (!DOCKER_AVAILABLE) return "skip";
 
   console.log(`${D}  Building minimal image (this may take a few minutes)...${X}`);
-  const { stdout, code } = cli("-s minimal -b -y", { timeout: 600000 });
+  const { stdout, code } = cli("-s minimal -b -y", { timeout: 600000 * TIMEOUT_MULTIPLIER });
 
   if (code !== 0) {
     console.log(`${D}  Build output: ${stdout.slice(0, 500)}${X}`);

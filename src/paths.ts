@@ -331,7 +331,10 @@ export function validateFilePath(path: string, mustExist = true): string {
 }
 
 /**
- * Get the Claude config directory path.
+ * Get the default Claude config directory path (~/.claude).
+ *
+ * This returns the default path without validation. For user-configured
+ * paths (from Config object), use `getClaudeConfigDir(config)` from config.ts.
  *
  * @returns Absolute path to ~/.claude directory.
  */

@@ -1,0 +1,9 @@
+{
+  "reporter": ["text", "html", "lcov"],
+  "all": true,
+  "branches": 70,
+  "lines": 70,
+  "functions": 70,
+  "statements": 70,
+  "exclude": ["tests/", "dist/", "node_modules/", "native/"]
+}

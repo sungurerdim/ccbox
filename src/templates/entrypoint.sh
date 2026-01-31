@@ -108,15 +108,12 @@ if [[ "$(id -u)" == "0" && -n "$CCBOX_UID" && -n "$CCBOX_GID" ]]; then
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Onboarding state symlink
-# Claude Code looks for ~/.claude.json at $HOME/.claude.json
-# But host may store it inside .claude/ directory (at .claude/.claude.json)
-# Create symlink so Claude finds it at expected location
+# Onboarding state (.claude.json)
+# Claude Code maintains .claude.json in two locations simultaneously:
+#   1. $HOME/.claude.json         (home directory)
+#   2. $HOME/.claude/.claude.json (inside config dir)
+# Both are bind-mounted from host by docker-runtime.ts — no symlink needed.
 # ══════════════════════════════════════════════════════════════════════════════
-if [[ -f "/ccbox/.claude/.claude.json" && ! -e "/ccbox/.claude.json" ]]; then
-    ln -sf /ccbox/.claude/.claude.json /ccbox/.claude.json 2>/dev/null || true
-    _log "Linked onboarding state: /ccbox/.claude.json -> .claude/.claude.json"
-fi
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Cross-platform path compatibility via FUSE (in-place overlay)

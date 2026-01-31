@@ -11,7 +11,7 @@ import {
   createConfig,
   getImageName,
   getStackValues,
-  imageExists,
+  imageExistsAsync,
   LanguageStack,
   parseStack,
   STACK_INFO,
@@ -205,7 +205,7 @@ export async function resolveStack(
   }
 
   // No --stack: interactive menu (or skip if image exists)
-  if (skipIfImageExists && imageExists(detection.recommendedStack)) {
+  if (skipIfImageExists && (await imageExistsAsync(detection.recommendedStack))) {
     return detection.recommendedStack;
   }
 

@@ -9,7 +9,7 @@ import { platform, env } from "node:process";
 import { join } from "node:path";
 
 import { exec, execDetached } from "./exec.js";
-import { style } from "./logger.js";
+import { log } from "./logger.js";
 
 import { DOCKER_CHECK_INTERVAL, DOCKER_COMMAND_TIMEOUT, DOCKER_STARTUP_TIMEOUT } from "./constants.js";
 import { checkDockerStatus } from "./docker.js";
@@ -81,7 +81,7 @@ export async function checkDocker(autoStart = true): Promise<boolean> {
   }
 
   if (autoStart) {
-    console.log(style.dim("Docker not running, attempting to start..."));
+    log.dim("Docker not running, attempting to start...");
     if (await startDockerDesktop()) {
       const maxWait = DOCKER_STARTUP_TIMEOUT / 1000; // Convert to seconds
       const checkInterval = DOCKER_CHECK_INTERVAL / 1000;
@@ -89,11 +89,11 @@ export async function checkDocker(autoStart = true): Promise<boolean> {
       for (let i = 0; i < maxWait; i++) {
         await sleep(1000);
         if (await checkDockerStatus()) {
-          console.log(style.green("Docker started successfully"));
+          log.success("Docker started successfully");
           return true;
         }
         if ((i + 1) % checkInterval === 0) {
-          console.log(style.dim(`Waiting for Docker... (${i + 1}s)`));
+          log.dim(`Waiting for Docker... (${i + 1}s)`);
         }
       }
     }
@@ -129,11 +129,11 @@ async function getGitConfigValue(key: string): Promise<string> {
 
   const resultWithCode = result as typeof result & { code?: string };
   if (resultWithCode.code === "ENOENT") {
-    console.log(style.dim("Git not found in PATH"));
+    log.dim("Git not found in PATH");
     return "";
   }
   if (result.timedOut) {
-    console.log(style.dim(`Git config ${key} timed out`));
+    log.dim(`Git config ${key} timed out`);
     return "";
   }
   if (result.exitCode === 0) {

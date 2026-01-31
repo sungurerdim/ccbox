@@ -73,15 +73,21 @@ if [[ "$(id -u)" == "0" && -n "$CCBOX_UID" && -n "$CCBOX_GID" ]]; then
 fi
 ```
 
-#### 3. State Persistence: .claude.json Symlink
+#### 3. State Persistence: .claude.json Mounts
 
-The entrypoint creates a symlink so Claude Code finds its onboarding state at the expected `$HOME/.claude.json` location, even when the host stores it inside `.claude/`:
+Claude Code maintains `.claude.json` (onboarding state) in **two locations simultaneously** on the host:
 
-```bash
-# See: src/templates/entrypoint.sh (Onboarding state symlink section)
-if [[ -f "/ccbox/.claude/.claude.json" && ! -e "/ccbox/.claude.json" ]]; then
-    ln -sf /ccbox/.claude/.claude.json /ccbox/.claude.json
-fi
+1. `~/.claude.json` — home directory
+2. `~/.claude/.claude.json` — inside the config directory
+
+Both files exist independently on the host. `docker-runtime.ts` bind-mounts each one separately into the container:
+
+```typescript
+// See: src/docker-runtime.ts (addMinimalMounts / getDockerRunCmd)
+// Mount 1: ~/.claude.json → /ccbox/.claude.json
+cmd.push("-v", `${claudeJsonHome}:/ccbox/.claude.json:rw`);
+// Mount 2: ~/.claude/.claude.json → /ccbox/.claude/.claude.json
+cmd.push("-v", `${claudeJsonConfig}:/ccbox/.claude/.claude.json:rw`);
 ```
 
 #### 4. Plugin Cache Cleanup
