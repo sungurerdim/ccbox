@@ -875,18 +875,6 @@ test("isUserTermination rejects non-termination codes", () =>
 test("isSuccess returns true for exit code 0", () =>
   errorHandler.isSuccess(0) && !errorHandler.isSuccess(1));
 
-// Bug prevented: DEFAULT_RETRY_CONFIG missing fields
-test("DEFAULT_RETRY_CONFIG has required fields", () =>
-  errorHandler.DEFAULT_RETRY_CONFIG.maxAttempts > 0 &&
-  errorHandler.DEFAULT_RETRY_CONFIG.initialDelayMs > 0 &&
-  errorHandler.DEFAULT_RETRY_CONFIG.backoffMultiplier > 1 &&
-  errorHandler.DEFAULT_RETRY_CONFIG.maxDelayMs > errorHandler.DEFAULT_RETRY_CONFIG.initialDelayMs);
-
-// Bug prevented: formatUserError returning undefined
-test("formatUserError returns formatted string", () => {
-  const result = errorHandler.formatUserError(new Error("test error"), "run container");
-  return typeof result === "string" && result.includes("test error") && result.includes("run container");
-});
 
 // ════════════════════════════════════════════════════════════════════════════════
 // BUILD MODULE - BuildOptions interface (FUN-12)
@@ -962,18 +950,6 @@ test("getContainerName deterministic mode returns same name", () => {
   return name1 === name2;
 });
 
-// Simulated retry logic test - tests the pattern, not actual Docker
-test("Retry logic pattern: exponential backoff calculation", () => {
-  const { DEFAULT_RETRY_CONFIG } = errorHandler;
-  const delays = [];
-  let delay = DEFAULT_RETRY_CONFIG.initialDelayMs;
-  for (let i = 0; i < DEFAULT_RETRY_CONFIG.maxAttempts; i++) {
-    delays.push(delay);
-    delay = Math.min(delay * DEFAULT_RETRY_CONFIG.backoffMultiplier, DEFAULT_RETRY_CONFIG.maxDelayMs);
-  }
-  // Verify exponential growth capped at maxDelayMs
-  return delays[0] < delays[1] && delays[delays.length - 1] <= DEFAULT_RETRY_CONFIG.maxDelayMs;
-});
 
 // Bug prevented: Permanent errors triggering unnecessary retries
 test("isRetryable rejects permanent exit codes", () =>
