@@ -99,7 +99,13 @@ export async function buildImage(
   const imageName = getImageName(stack);
   log.bold(`Building ${imageName}...`);
 
-  const buildDir = writeBuildFiles(stack);
+  let buildDir: string;
+  try {
+    buildDir = writeBuildFiles(stack);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    throw new ImageBuildError(`Failed to prepare build files for ${imageName}: ${msg}`);
+  }
 
   // Enable BuildKit for faster, more efficient builds
   const env = {

@@ -354,9 +354,10 @@ FROM ccbox_base:latest
 
 LABEL org.opencontainers.image.title="ccbox/cpp"
 
-# C++ toolchain + CMake + Ninja
+# C++ toolchain + CMake + Ninja + Python (needed for Conan)
 RUN apt-get update && apt-get install -y --no-install-recommends \\
     build-essential cmake ninja-build clang clang-format clang-tidy \\
+    python3 python3-pip \\
     && rm -rf /var/lib/apt/lists/*
 
 # Conan (C++ package manager)
@@ -370,6 +371,10 @@ function dotnetDockerfile(): string {
 FROM ccbox_base:latest
 
 LABEL org.opencontainers.image.title="ccbox/dotnet"
+
+# ICU libraries (required by .NET for globalization)
+RUN apt-get update && apt-get install -y --no-install-recommends libicu-dev \\
+    && rm -rf /var/lib/apt/lists/*
 
 # .NET SDK (latest LTS) - includes built-in tools: dotnet format, dotnet test
 RUN curl -fsSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel LTS --install-dir /usr/share/dotnet \\
@@ -403,7 +408,8 @@ RUN SWIFT_ARCH=\$(dpkg --print-architecture | sed 's/amd64/x86_64/;s/arm64/aarch
 
 # SwiftLint (linting)
 RUN SWIFTLINT_VER=\$(curl -sfL https://api.github.com/repos/realm/SwiftLint/releases/latest | jq -r .tag_name) \\
-    && curl -sfL "https://github.com/realm/SwiftLint/releases/download/\${SWIFTLINT_VER}/swiftlint_linux.zip" -o /tmp/swiftlint.zip \\
+    && SWIFTLINT_ARCH=\$(dpkg --print-architecture) \\
+    && curl -sfL "https://github.com/realm/SwiftLint/releases/download/\${SWIFTLINT_VER}/swiftlint_linux_\${SWIFTLINT_ARCH}.zip" -o /tmp/swiftlint.zip \\
     && unzip -q /tmp/swiftlint.zip -d /usr/local/bin && rm /tmp/swiftlint.zip \\
     && chmod +x /usr/local/bin/swiftlint
 `;
@@ -484,6 +490,11 @@ FROM ccbox_base:latest
 
 LABEL org.opencontainers.image.title="ccbox/functional"
 
+# Build tools needed for GHC compilation
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+    build-essential libgmp-dev libnuma-dev libffi-dev \\
+    && rm -rf /var/lib/apt/lists/*
+
 # GHCup (manages GHC, Stack, Cabal for Haskell)
 # Install to /opt/ghcup instead of ~/.ghcup for non-root access
 ENV GHCUP_INSTALL_BASE_PREFIX=/opt
@@ -521,8 +532,9 @@ FROM ccbox_base:latest
 LABEL org.opencontainers.image.title="ccbox/scripting"
 
 # Ruby + Bundler + quality tools (rubocop for linting/formatting)
+# build-essential needed for native gem extensions (rubocop depends on them)
 RUN apt-get update && apt-get install -y --no-install-recommends \\
-    ruby ruby-dev ruby-bundler \\
+    ruby ruby-dev ruby-bundler build-essential \\
     && rm -rf /var/lib/apt/lists/* \\
     && gem install bundler rubocop --no-document
 
@@ -552,11 +564,11 @@ FROM ccbox_cpp:latest
 
 LABEL org.opencontainers.image.title="ccbox/systems"
 
-# Zig
+# Zig (latest stable release)
 RUN ZIG_ARCH=\$(dpkg --print-architecture | sed 's/amd64/x86_64/;s/arm64/aarch64/') \\
-    && ZIG_VER=\$(curl -sfL https://ziglang.org/download/index.json | jq -r '.master.version') \\
-    && curl -fsSL "https://ziglang.org/builds/zig-linux-\${ZIG_ARCH}-\${ZIG_VER}.tar.xz" | tar -xJ -C /opt \\
-    && ln -s /opt/zig-linux-\${ZIG_ARCH}-\${ZIG_VER}/zig /usr/local/bin/zig
+    && ZIG_VER=\$(curl -sfL https://ziglang.org/download/index.json | jq -r 'to_entries | map(select(.key != "master")) | first | .key') \\
+    && curl -fsSL "https://ziglang.org/download/\${ZIG_VER}/zig-\${ZIG_ARCH}-linux-\${ZIG_VER}.tar.xz" | tar -xJ -C /opt \\
+    && ln -s /opt/zig-\${ZIG_ARCH}-linux-\${ZIG_VER}/zig /usr/local/bin/zig
 
 # Nim - install then copy binaries (not symlink) to /usr/local/bin
 RUN curl -fsSL https://nim-lang.org/choosenim/init.sh | sh -s -- -y \\
@@ -628,11 +640,11 @@ FROM ccbox_dart:latest
 
 LABEL org.opencontainers.image.title="ccbox/mobile"
 
-# Flutter SDK (remove .git to save ~100MB)
+# Flutter SDK (remove .git after precache to save ~100MB)
 RUN git clone https://github.com/flutter/flutter.git -b stable /opt/flutter --depth 1 \\
-    && rm -rf /opt/flutter/.git \\
     && /opt/flutter/bin/flutter precache \\
-    && /opt/flutter/bin/flutter config --no-analytics
+    && /opt/flutter/bin/flutter config --no-analytics \\
+    && rm -rf /opt/flutter/.git
 ENV PATH="/opt/flutter/bin:$PATH"
 
 # Android command-line tools (for flutter doctor)

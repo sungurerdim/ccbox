@@ -17,7 +17,6 @@ import type { DepsInfo, DepsMode } from "../deps.js";
 import { computeDepsHash, detectDependencies } from "../deps.js";
 import { detectProjectType } from "../detector.js";
 import { checkDockerStatus } from "../docker.js";
-import { ImageBuildError } from "../errors.js";
 import { getDockerRunCmd } from "../generator.js";
 import { log } from "../logger.js";
 import { getDockerEnv, validateProjectPath } from "../paths.js";
@@ -265,10 +264,9 @@ async function buildAndRun(
     log.bold("First-time setup: building base image...");
     try {
       await buildImage(LanguageStack.BASE, { progress, cache });
-    } catch (error) {
-      if (error instanceof ImageBuildError) {
-        log.error(error.message);
-      }
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      log.error(msg);
       process.exit(1);
     }
     log.newline();
@@ -277,10 +275,9 @@ async function buildAndRun(
   // Ensure stack image is ready
   try {
     await ensureImageReady(selectedStack, false, { progress, cache });
-  } catch (error) {
-    if (error instanceof ImageBuildError) {
-      log.error(error.message);
-    }
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    log.error(msg);
     process.exit(1);
   }
 
@@ -304,8 +301,9 @@ async function buildAndRun(
           resolvedDepsMode,
           { progress, cache }
         );
-      } catch {
-        log.error("Failed to build project image with dependencies");
+      } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : String(error);
+        log.error(`Failed to build project image: ${msg}`);
         process.exit(1);
       }
     }

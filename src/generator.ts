@@ -547,10 +547,12 @@ export function generateProjectDockerfile(
       // Commands starting with a runtime binary get a "which" guard
       // so they gracefully skip when the stack doesn't include that runtime
       const needsGuard = ["python3", "pip", "poetry", "pdm", "uv", "conda", "pipenv",
+        "npm", "npx", "yarn", "pnpm", "bun", "bunx", "deno",
         "go", "cargo", "dotnet", "nuget", "mix", "rebar3", "gleam",
         "stack", "cabal", "swift", "dart", "flutter", "julia",
         "lein", "clojure", "zig", "nimble", "opam", "cpanm",
-        "conan", "vcpkg", "luarocks", "Rscript"].includes(binary);
+        "conan", "vcpkg", "luarocks", "Rscript",
+        "gem", "bundle", "bundler", "composer", "mvn", "gradle", "sbt"].includes(binary);
       if (needsGuard) {
         lines.push(`RUN which ${binary} >/dev/null 2>&1 && ${cmd} || echo "Skipping ${binary} (not in stack)"`);
       } else {
