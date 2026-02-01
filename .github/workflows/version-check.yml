@@ -1,0 +1,36 @@
+name: Version Label Check
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, labeled, unlabeled, synchronize]
+
+jobs:
+  check-label:
+    name: Check version label
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify version label exists
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const labels = context.payload.pull_request.labels.map(l => l.name);
+            const versionLabels = labels.filter(l =>
+              ['version:patch', 'version:minor', 'version:major'].includes(l)
+            );
+
+            if (versionLabels.length === 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: '⚠️ Bu PR\'da versiyon label\'ı eksik. Lütfen `version:patch`, `version:minor` veya `version:major` label\'larından birini ekleyin.'
+              });
+              core.setFailed('Versiyon label\'ı gerekli: version:patch, version:minor veya version:major');
+            }
+
+            if (versionLabels.length > 1) {
+              core.setFailed('Birden fazla versiyon label\'ı bulunamaz. Lütfen yalnızca bir tane bırakın.');
+            }
+
+            core.info(`Versiyon label: ${versionLabels[0]}`);
