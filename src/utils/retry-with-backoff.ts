@@ -43,15 +43,3 @@ export async function retryAsync<T>(
 
   throw new Error(`${label} failed after ${maxRetries + 1} attempts`);
 }
-
-/**
- * Check if an error is retryable based on its code or message.
- */
-export function isRetryableError(err: unknown): boolean {
-  const code = (err as { code?: string }).code ?? "";
-  const message = err instanceof Error ? err.message : String(err);
-
-  return ["ECONNRESET", "ETIMEDOUT", "ENOTFOUND"].includes(code)
-    || message.includes("fetch failed")
-    || /5\d{2}/.test(message);
-}

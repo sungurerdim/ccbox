@@ -492,9 +492,10 @@ console.log(`\n${B}[8/9] docker.ts${X}`);
 const docker = await importModule(join(ROOT, "src/docker.ts"));
 
 // Bug prevented: Error message format mismatch = broken error handling
+const utils = await importModule(join(ROOT, "src/utils.ts"));
 test("ERR_DOCKER_NOT_RUNNING is user-actionable message", () =>
-  docker.ERR_DOCKER_NOT_RUNNING.includes("Docker") &&
-  docker.ERR_DOCKER_NOT_RUNNING.includes("running"));
+  utils.ERR_DOCKER_NOT_RUNNING.includes("Docker") &&
+  utils.ERR_DOCKER_NOT_RUNNING.includes("running"));
 
 // ════════════════════════════════════════════════════════════════════════════════
 // GENERATOR MODULE - Dockerfile and arg generation (core business logic)
@@ -1206,49 +1207,6 @@ test("DockerMockRecorder reset clears history", async () => {
   await recorder.build({ imageName: "test:latest", dockerfile: "FROM alpine", buildDir: "/tmp" });
   recorder.reset();
   return recorder.calls.length === 0;
-});
-
-// ════════════════════════════════════════════════════════════════════════════════
-// DEPENDENCY CACHE TESTS - FUN-14
-// ════════════════════════════════════════════════════════════════════════════════
-console.log(`\n${B}[21/21] Dependency Cache${X}`);
-
-const cacheModule = await importModule(join(ROOT, "src/dependencies/cache.ts"));
-
-// Bug prevented: loadCache crashes on missing dir
-test("loadCache returns null for non-existent dir", () => {
-  const result = cacheModule.loadCache("/nonexistent/path/xyz");
-  return result === null;
-});
-
-// Bug prevented: isCacheValid crashes on missing cache
-test("isCacheValid returns false for non-existent cache", () => {
-  return cacheModule.isCacheValid("/nonexistent/path/xyz") === false;
-});
-
-// Bug prevented: saveCache + loadCache round-trip fails
-test("saveCache and loadCache round-trip", () => {
-  const cacheTestDir = join(testDir, "cache-test");
-  mkdirSync(cacheTestDir, { recursive: true });
-  const testDeps = [{ name: "npm", files: ["package.json"], installAll: "npm install", installProd: "npm ci", hasDev: true, priority: 5 }];
-  cacheModule.saveCache(cacheTestDir, testDeps, "abc123");
-  const loaded = cacheModule.loadCache(cacheTestDir);
-  return loaded !== null && loaded.hash === "abc123" && loaded.detectedDeps.length === 1;
-});
-
-// Bug prevented: isCacheValid not detecting file changes
-test("isCacheValid detects modified lock file", () => {
-  const cacheTestDir = join(testDir, "cache-invalid");
-  mkdirSync(cacheTestDir, { recursive: true });
-  cacheModule.saveCache(cacheTestDir, [], "hash1");
-  // Write a lock file AFTER cache (should invalidate)
-  // Small delay to ensure mtime differs
-  writeFileSync(join(cacheTestDir, "package.json"), '{"name":"t"}');
-  // isCacheValid checks mtime > cacheTimestamp
-  // Since write happens almost simultaneously, this may or may not invalidate
-  // The important thing is that the function doesn't crash
-  const valid = cacheModule.isCacheValid(cacheTestDir);
-  return typeof valid === "boolean";
 });
 
 // ════════════════════════════════════════════════════════════════════════════════

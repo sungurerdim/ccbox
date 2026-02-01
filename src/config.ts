@@ -85,24 +85,6 @@ export function getClaudeConfigDir(config: Config): string {
 }
 
 /**
- * Check if Docker image exists for stack (synchronous).
- *
- * @deprecated Prefer imageExistsAsync for non-blocking checks.
- */
-export function imageExists(stack: LanguageStack): boolean {
-  const { execSync } = require("node:child_process") as typeof import("node:child_process");
-  try {
-    execSync(`docker image inspect ${getImageName(stack)}`, {
-      stdio: "ignore",
-      timeout: DOCKER_COMMAND_TIMEOUT,
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Check if Docker image exists for stack (async, non-blocking).
  */
 export async function imageExistsAsync(stack: LanguageStack): Promise<boolean> {
