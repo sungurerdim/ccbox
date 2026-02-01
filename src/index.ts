@@ -6,7 +6,7 @@
 
 // Re-export main types and functions
 export { VERSION, VALID_MODELS } from "./constants.js";
-export { LanguageStack, STACK_INFO, type Config, createConfig, imageExists, imageExistsAsync } from "./config.js";
+export { LanguageStack, STACK_INFO, type Config, createConfig, imageExistsAsync } from "./config.js";
 export { CCBoxError, ValidationError, DockerError, PathError } from "./errors.js";
 export { detectDependencies, type DepsInfo, type DepsMode } from "./deps.js";
 export { detectProjectType, type DetectionResult } from "./detector.js";

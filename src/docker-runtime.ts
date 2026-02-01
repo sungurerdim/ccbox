@@ -5,7 +5,7 @@
  * Separated from generator.ts to reduce file size and improve modularity.
  */
 
-import { existsSync, mkdirSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
 import { platform } from "node:os";
 import { join, resolve } from "node:path";
 import { env } from "node:process";
@@ -16,7 +16,6 @@ import { DEFAULT_PIDS_LIMIT } from "./constants.js";
 import { log } from "./logger.js";
 
 import { resolveForDocker } from "./paths.js";
-import { selectStrategies, type StrategyOptions } from "./docker/strategies/index.js";
 
 /**
  * Container constraints (SSOT - used for both docker run and prompt generation).
@@ -477,6 +476,34 @@ export function getDockerRunCmd(
   // Project mount (always) - mount to host-like path for session compatibility
   cmd.push("-v", `${dockerProjectPath}:${hostProjectPath}:rw`);
 
+  // Git worktree support: if .git is a file (not a directory), this is a worktree.
+  // The main repo's .git directory must be mounted for git to work inside container.
+  const gitPath = join(resolve(projectPath), ".git");
+  if (existsSync(gitPath) && lstatSync(gitPath).isFile()) {
+    try {
+      const gitFileContent = readFileSync(gitPath, "utf-8").trim();
+      const gitdirMatch = gitFileContent.match(/^gitdir:\s*(.+)$/);
+      if (gitdirMatch) {
+        // Resolve relative to project dir, then find the main .git root
+        // gitdir points to .git/worktrees/<name>, we need the parent .git dir
+        const worktreeGitDir = resolve(resolve(projectPath), gitdirMatch[1]!);
+        const worktreesIdx = worktreeGitDir.replace(/\\/g, "/").indexOf("/.git/worktrees/");
+        if (worktreesIdx !== -1) {
+          const mainGitDir = worktreeGitDir.slice(0, worktreesIdx + 5); // include /.git
+          const dockerGitDir = resolveForDocker(mainGitDir);
+          const containerGitDir = dockerGitDir.replace(/^([A-Za-z]):/, (_, d: string) => `/${d.toLowerCase()}`);
+          // Only mount if not already under project path
+          if (!mainGitDir.startsWith(resolve(projectPath))) {
+            cmd.push("-v", `${dockerGitDir}:${containerGitDir}:rw`);
+            log.debug(`Worktree detected: mounting main .git at ${containerGitDir}`);
+          }
+        }
+      }
+    } catch (e) {
+      log.debug(`Worktree detection failed: ${String(e)}`);
+    }
+  }
+
   // Session bridge is handled by FUSE dirmap (directory name translation)
   // inside the container, no host-side junctions needed.
   const originalPath = resolve(projectPath);
@@ -543,10 +570,14 @@ export function getDockerRunCmd(
   addLogOptions(cmd);
   addDnsOptions(cmd);
 
-  // Apply execution strategies (debug, restricted/unrestricted, etc.)
-  const strategies = selectStrategies(options as StrategyOptions);
-  for (const strategy of strategies) {
-    strategy.apply(cmd, config, stack, options as StrategyOptions);
+  // Debug, restricted/unrestricted mode flags
+  if ((options.debug ?? 0) > 0) {
+    cmd.push("-e", `CCBOX_DEBUG=${options.debug}`);
+  }
+  if (options.unrestricted) {
+    cmd.push("-e", "CCBOX_UNRESTRICTED=1");
+  } else {
+    cmd.push("--cpu-shares=512");
   }
 
   // Environment variables
