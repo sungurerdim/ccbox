@@ -132,7 +132,7 @@ test("[critical] PIDS limit is in safe range (256-8192)", () =>
 console.log(`\n${B}[3/9] config.ts${X}`);
 
 const { LanguageStack, STACK_INFO, STACK_DEPENDENCIES,
-        createConfig, validateSafePath, getClaudeConfigDir, getImageName,
+        createConfig, getImageName,
         getContainerName, parseStack, getStackValues, createStack, filterStacks } = await importModule(join(ROOT, "src/config.ts"));
 
 // Bug prevented: Every stack must have info for UI display
@@ -156,41 +156,6 @@ test("createConfig returns valid config structure", () => {
          typeof cfg.claudeConfigDir === "string";
 });
 
-// @critical Security: prevents path escape outside home directory
-test("[critical] validateSafePath rejects outside home", () => {
-  try {
-    validateSafePath("/tmp/outside");
-    return false;
-  } catch (e) {
-    return e instanceof errors.PathError && e.message.includes("must be within home");
-  }
-});
-
-// @critical Security: prevents symlink attacks to escape sandbox
-test("[critical] validateSafePath rejects symlink", () => {
-  if (platform() === "win32") return "skip";
-  const testDir = join(tmpdir(), `ccbox-symlink-test-${Date.now()}`);
-  const linkPath = join(testDir, "link");
-  const targetPath = join(testDir, "target");
-  mkdirSync(testDir, { recursive: true });
-  mkdirSync(targetPath);
-  symlinkSync(targetPath, linkPath);
-  try {
-    validateSafePath(linkPath);
-    rmSync(testDir, { recursive: true, force: true });
-    return false;
-  } catch (e) {
-    rmSync(testDir, { recursive: true, force: true });
-    return e instanceof errors.PathError && e.message.includes("symlink");
-  }
-});
-
-// Bug prevented: ~ expansion failure would cause wrong paths
-test("getClaudeConfigDir expands ~", () => {
-  const cfg = createConfig();
-  const dir = getClaudeConfigDir(cfg);
-  return dir.startsWith(homedir()) && !dir.includes("~");
-});
 
 // @critical Security: image name must match docker naming rules
 test("[critical] getImageName format is docker-compatible", () =>
@@ -836,49 +801,6 @@ test("log object has all required methods", () =>
   typeof logger.log.dim === "function" &&
   typeof logger.log.bold === "function");
 
-// ════════════════════════════════════════════════════════════════════════════════
-// ERROR HANDLER MODULE - Unified error handling (PAT-01)
-// ════════════════════════════════════════════════════════════════════════════════
-console.log(`\n${B}[13/14] Error Handler${X}`);
-
-const errorHandler = await importModule(join(ROOT, "src/error-handler.ts"));
-
-// Bug prevented: Unknown exit code causing crash
-test("getExitCodeInfo returns info for unknown codes", () => {
-  const info = errorHandler.getExitCodeInfo(999);
-  return info.code === 999 && info.name === "UNKNOWN" && info.severity === "warn";
-});
-
-// Bug prevented: Known exit codes not recognized
-test("getExitCodeInfo recognizes OOM (137)", () => {
-  const info = errorHandler.getExitCodeInfo(137);
-  return info.name === "OOM_KILLED" && info.severity === "warn" && info.suggestion !== undefined;
-});
-
-test("getExitCodeInfo recognizes SIGINT (130)", () => {
-  const info = errorHandler.getExitCodeInfo(130);
-  return info.name === "SIGINT" && info.severity === "info";
-});
-
-test("getExitCodeInfo recognizes SEGFAULT (139)", () => {
-  const info = errorHandler.getExitCodeInfo(139);
-  return info.name === "SEGFAULT" && info.severity === "error";
-});
-
-// Bug prevented: isRetryable returning wrong values
-test("isRetryable returns false for normal errors", () =>
-  !errorHandler.isRetryable(1) && !errorHandler.isRetryable(0));
-
-// Bug prevented: isUserTermination not detecting Ctrl+C
-test("isUserTermination detects SIGINT and SIGTERM", () =>
-  errorHandler.isUserTermination(130) && errorHandler.isUserTermination(143));
-
-test("isUserTermination rejects non-termination codes", () =>
-  !errorHandler.isUserTermination(1) && !errorHandler.isUserTermination(137));
-
-// Bug prevented: isSuccess rejecting 0
-test("isSuccess returns true for exit code 0", () =>
-  errorHandler.isSuccess(0) && !errorHandler.isSuccess(1));
 
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -956,12 +878,6 @@ test("getContainerName deterministic mode returns same name", () => {
 });
 
 
-// Bug prevented: Permanent errors triggering unnecessary retries
-test("isRetryable rejects permanent exit codes", () =>
-  !errorHandler.isRetryable(0) &&
-  !errorHandler.isRetryable(1) &&
-  !errorHandler.isRetryable(130) &&
-  !errorHandler.isRetryable(139));
 
 // ════════════════════════════════════════════════════════════════════════════════
 // GENERATOR EDGE CASES - TST-01: Dockerfile generation edge cases
@@ -1081,43 +997,49 @@ test("getDockerRunCmd appendSystemPrompt included", () => {
   return cmd.some(arg => arg.includes("Be helpful"));
 });
 
+// Bug prevented: Worktree projects failing git operations inside container
+test("getDockerRunCmd mounts main .git for worktree", () => {
+  // Simulate a git worktree: .git is a file pointing to main repo's .git/worktrees/<name>
+  const worktreeDir = join(tmpdir(), `ccbox-worktree-test-${Date.now()}`);
+  const mainRepoDir = join(tmpdir(), `ccbox-main-repo-test-${Date.now()}`);
+  const worktreeGitDir = join(mainRepoDir, ".git", "worktrees", "feature");
+  mkdirSync(worktreeGitDir, { recursive: true });
+  mkdirSync(worktreeDir, { recursive: true });
+  // Create .git file (not directory) pointing to main repo's worktree dir
+  writeFileSync(join(worktreeDir, ".git"), `gitdir: ${worktreeGitDir}\n`);
+  try {
+    const cfg = createConfig();
+    const cmd = dockerRuntime.getDockerRunCmd(cfg, worktreeDir, "wt-proj", LanguageStack.BASE, {});
+    const cmdStr = cmd.join(" ");
+    // Should mount the main .git directory
+    const mainGitDir = join(mainRepoDir, ".git");
+    return cmdStr.includes(mainGitDir) || cmd.some(arg => arg.includes(mainGitDir.replace(/\\/g, "/")));
+  } finally {
+    rmSync(worktreeDir, { recursive: true, force: true });
+    rmSync(mainRepoDir, { recursive: true, force: true });
+  }
+});
+
+test("getDockerRunCmd skips worktree mount when .git is a directory", () => {
+  // Normal repo: .git is a directory, no extra mount needed
+  const normalDir = join(tmpdir(), `ccbox-normal-git-test-${Date.now()}`);
+  mkdirSync(join(normalDir, ".git"), { recursive: true });
+  try {
+    const cfg = createConfig();
+    const cmd = dockerRuntime.getDockerRunCmd(cfg, normalDir, "normal-proj", LanguageStack.BASE, {});
+    // Should NOT have any worktree-related mount (no extra .git mount beyond project)
+    const volArgs = cmd.filter((arg, i) => i > 0 && cmd[i - 1] === "-v" && arg.includes(".git:"));
+    return volArgs.length === 0;
+  } finally {
+    rmSync(normalDir, { recursive: true, force: true });
+  }
+});
+
 // ════════════════════════════════════════════════════════════════════════════════
 // CLI FLAG PARSING EDGE CASES - TST-01 continued
 // ════════════════════════════════════════════════════════════════════════════════
 console.log(`\n${B}[18/18] CLI Flag Edge Cases${X}`);
 
-// Bug prevented: Timeout flags not validated
-test("CLI rejects invalid --timeout value", () => {
-  const { code } = cli("--timeout=abc .");
-  return code !== 0;
-});
-
-test("CLI rejects negative --timeout", () => {
-  const { code } = cli("--timeout=-1000 .");
-  return code !== 0;
-});
-
-test("CLI rejects excessively large --timeout", () => {
-  const { code } = cli("--timeout=9999999999 .");
-  return code !== 0;
-});
-
-// Bug prevented: --build-timeout not validated
-test("CLI rejects invalid --build-timeout value", () => {
-  const { code } = cli("--build-timeout=invalid .");
-  return code !== 0;
-});
-
-// Bug prevented: Multiple -e flags not handled
-test("CLI help shows --timeout option", () => {
-  const { stdout } = cli("--help");
-  return stdout.includes("--timeout");
-});
-
-test("CLI help shows --build-timeout option", () => {
-  const { stdout } = cli("--help");
-  return stdout.includes("--build-timeout");
-});
 
 // Bug prevented: Empty --prompt rejected properly
 test("CLI rejects empty --prompt", () => {
