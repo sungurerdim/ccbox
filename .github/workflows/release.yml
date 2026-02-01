@@ -2,34 +2,88 @@ name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [main]
 
 permissions:
   contents: write
 
 jobs:
-  verify:
+  bump:
+    name: Version Bump
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.version.outputs.value }}
+      version: ${{ steps.bump.outputs.version }}
+      tag: ${{ steps.bump.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Verify version consistency
-        id: version
+      - name: Get version label from merged PR
+        id: label
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          PKG_VERSION=$(node -p "require('./package.json').version")
-          if [[ "$TAG_VERSION" != "$PKG_VERSION" ]]; then
-            echo "::error::Version mismatch: tag ($TAG_VERSION) != package.json ($PKG_VERSION)"
+          PR_NUMBER=$(gh pr list --state merged --base main --limit 1 --json number --jq '.[0].number')
+          if [[ -z "$PR_NUMBER" ]]; then
+            echo "::error::Merged PR bulunamadı"
             exit 1
           fi
-          echo "value=$TAG_VERSION" >> "$GITHUB_OUTPUT"
+
+          LABELS=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' | grep '^version:' || true)
+          if [[ -z "$LABELS" ]]; then
+            echo "::error::PR #${PR_NUMBER} üzerinde versiyon label'ı bulunamadı"
+            exit 1
+          fi
+
+          LABEL_COUNT=$(echo "$LABELS" | wc -l)
+          if [[ "$LABEL_COUNT" -gt 1 ]]; then
+            echo "::error::Birden fazla versiyon label'ı var"
+            exit 1
+          fi
+
+          BUMP_TYPE="${LABELS#version:}"
+          echo "bump=$BUMP_TYPE" >> "$GITHUB_OUTPUT"
+          echo "pr=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+
+      - name: Bump version
+        id: bump
+        shell: bash
+        run: |
+          CURRENT=$(node -p "require('./package.json').version")
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+
+          case "${{ steps.label.outputs.bump }}" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$NEW_VERSION" >> "$GITHUB_OUTPUT"
+
+          # Update package.json
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            pkg.version = '${NEW_VERSION}';
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+
+      - name: Commit and tag
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json
+          git commit -m "chore: bump version to ${{ steps.bump.outputs.tag }}"
+          git tag "${{ steps.bump.outputs.tag }}"
+          git push origin main --follow-tags
 
   build:
-    needs: verify
+    needs: bump
     strategy:
       fail-fast: true
       matrix:
@@ -42,6 +96,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.bump.outputs.tag }}
+
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
@@ -54,7 +111,7 @@ jobs:
         run: |
           mkdir -p dist
           EXT=$([[ "${{ matrix.platform }}" == windows-* ]] && echo ".exe" || echo "")
-          NAME="ccbox-v${{ needs.verify.outputs.version }}-${{ matrix.platform }}${EXT}"
+          NAME="ccbox-v${{ needs.bump.outputs.version }}-${{ matrix.platform }}${EXT}"
           bun build src/cli.ts --compile --target ${{ matrix.target }} --outfile "dist/${NAME}" --minify
 
       - uses: actions/upload-artifact@v4
@@ -63,11 +120,12 @@ jobs:
           path: dist/ccbox-*
 
   release:
-    needs: [verify, build]
+    needs: [bump, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ needs.bump.outputs.tag }}
           fetch-depth: 0
 
       - uses: actions/download-artifact@v4
@@ -83,7 +141,7 @@ jobs:
         id: body
         shell: bash
         run: |
-          VERSION="v${{ needs.verify.outputs.version }}"
+          VERSION="${{ needs.bump.outputs.tag }}"
           PREV_TAG=$(git tag --sort=-v:refname | grep -v "^${VERSION}$" | head -1 || true)
           {
             echo 'content<<BODY_EOF'
@@ -99,7 +157,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="v${{ needs.verify.outputs.version }}"
+          VERSION="${{ needs.bump.outputs.tag }}"
           PRERELEASE=$([[ "$VERSION" == *-* ]] && echo "--prerelease" || echo "")
           gh release create "$VERSION" \
             --title "$VERSION" \
