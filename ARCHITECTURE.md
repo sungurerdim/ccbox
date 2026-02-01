@@ -243,19 +243,25 @@ ccbox uses a modular TypeScript architecture:
 src/
 ├── cli.ts              # CLI entry point (Commander.js)
 ├── commands/
-│   └── run.ts          # Main run command logic
+│   ├── run.ts          # Main run command logic
+│   ├── run-phases.ts   # Phase 1: detection & stack resolution
+│   └── build-helpers.ts # Build phase helpers
 ├── config.ts           # Stack definitions, validation
+├── stacks.ts           # LanguageStack enum & metadata
 ├── constants.ts        # Shared constants (SSOT)
 ├── detector.ts         # Project type detection
 ├── deps.ts             # Dependency detection (55+ package managers)
 ├── generator.ts        # Dockerfile generation (re-exports)
 │   ├── dockerfile-gen.ts   # Dockerfile content generation
-│   └── docker-runtime.ts   # Runtime args & entrypoint
+│   └── docker-runtime.ts   # Runtime args, worktree support & entrypoint
 ├── build.ts            # Image building logic
-├── docker.ts           # Docker operations
+├── docker.ts           # Docker operations facade
+│   └── docker/
+│       ├── executor.ts     # safeDockerRun, checkDockerStatus
+│       ├── inspect.ts      # Image/container queries
+│       └── cleanup.ts      # Image/container removal
 ├── paths.ts            # Path validation & translation
 ├── logger.ts           # Unified logging abstraction
-├── error-handler.ts    # Exit code diagnostics & retry
 ├── errors.ts           # Custom error classes
 ├── cleanup.ts          # Container/image cleanup
 └── utils.ts            # Shared utilities
@@ -275,15 +281,10 @@ log.dim("Skipped optional step");
 console.log(style.cyan("Colored output"));
 ```
 
-### Error Handler Module
+### Git Worktree Support
 
-Exit code diagnostics and retry logic:
+When running inside a git worktree, the `.git` path is a file (not a directory) pointing to the main repo's `.git/worktrees/<name>`. `docker-runtime.ts` detects this and automatically mounts the main `.git` directory into the container, enabling full git operations.
 
 ```typescript
-import { getExitCodeInfo, isRetryable, withRetry } from "./error-handler.js";
-
-const info = getExitCodeInfo(137);  // { name: "OOM", suggestion: "Increase memory" }
-
-if (isRetryable(exitCode)) {
-  await withRetry(operation, shouldRetry, { maxRetries: 3 });
-}
+// See: src/docker-runtime.ts (getDockerRunCmd, lines 479-505)
+// Detects .git file → parses gitdir path → mounts main .git directory

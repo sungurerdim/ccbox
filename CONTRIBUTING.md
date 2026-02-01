@@ -97,7 +97,7 @@ The CLI layer is the "fan-in" point where multiple imports converge. This is by 
 
 ### Layer 3: Utilities
 
-**Files:** `logger.ts`, `errors.ts`, `paths.ts`, `constants.ts`, `utils.ts`, `error-handler.ts`
+**Files:** `logger.ts`, `errors.ts`, `paths.ts`, `constants.ts`, `utils.ts`
 
 - Low-level utilities with no business logic
 - Should only import from other utilities

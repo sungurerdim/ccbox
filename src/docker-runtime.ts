@@ -11,11 +11,11 @@ import { join, resolve } from "node:path";
 import { env } from "node:process";
 
 import type { Config } from "./config.js";
-import { getClaudeConfigDir, getContainerName, getImageName, LanguageStack } from "./config.js";
+import { getContainerName, getImageName, LanguageStack } from "./config.js";
 import { DEFAULT_PIDS_LIMIT } from "./constants.js";
 import { log } from "./logger.js";
 
-import { resolveForDocker } from "./paths.js";
+import { getClaudeConfigDir, resolveForDocker } from "./paths.js";
 
 /**
  * Container constraints (SSOT - used for both docker run and prompt generation).
@@ -454,7 +454,7 @@ export function getDockerRunCmd(
   } = {}
 ): string[] {
   const imageName = options.projectImage ?? getImageName(stack);
-  const claudeConfig = getClaudeConfigDir(config);
+  const claudeConfig = getClaudeConfigDir();
   const prompt = transformSlashCommand(options.prompt);
   const containerName = getContainerName(projectName);
   const dockerProjectPath = resolveForDocker(resolve(projectPath));
@@ -486,6 +486,7 @@ export function getDockerRunCmd(
       if (gitdirMatch) {
         // Resolve relative to project dir, then find the main .git root
         // gitdir points to .git/worktrees/<name>, we need the parent .git dir
+        // gitdirMatch[1] is guaranteed non-null: regex capture group 1 always exists when match succeeds
         const worktreeGitDir = resolve(resolve(projectPath), gitdirMatch[1]!);
         const worktreesIdx = worktreeGitDir.replace(/\\/g, "/").indexOf("/.git/worktrees/");
         if (worktreesIdx !== -1) {
@@ -500,7 +501,7 @@ export function getDockerRunCmd(
         }
       }
     } catch (e) {
-      log.debug(`Worktree detection failed: ${String(e)}`);
+      log.warn(`Worktree detection failed: ${String(e)}`);
     }
   }
 

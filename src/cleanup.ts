@@ -99,17 +99,16 @@ export async function removeCcboxImages(): Promise<number> {
     imagesToRemove.add(getImageName(stack));
   }
 
-  // Add all ccbox-prefixed images (project images + legacy formats)
-  // Covers: ccbox_ (current), ccbox/, ccbox., ccbox-, ccbox: (legacy)
-  for (const prefix of ["ccbox_", "ccbox/", "ccbox.", "ccbox-", "ccbox:"]) {
-    const images = await listImages(prefix);
-    for (const image of images) {
+  // Single Docker call to get all images, then filter in memory
+  const allImages = await listImages();
+  const ccboxPrefixes = ["ccbox_", "ccbox/", "ccbox.", "ccbox-", "ccbox:"];
+  for (const image of allImages) {
+    if (ccboxPrefixes.some(prefix => image.startsWith(prefix))) {
       imagesToRemove.add(image);
     }
   }
 
-  // Remove images - single listImages call instead of per-image queries
-  const existingImages = new Set(await listImages());
+  const existingImages = new Set(allImages);
   let removed = 0;
   for (const image of imagesToRemove) {
     if (existingImages.has(image) && await removeImage(image, true)) {

@@ -8,7 +8,6 @@ export {
   type DockerResult,
   safeDockerRun,
   checkDockerStatus,
-  buildImage,
 } from "./docker/executor.js";
 
 export {

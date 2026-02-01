@@ -11,12 +11,7 @@
  *   It should NOT import from: cli, generator
  */
 
-import { existsSync, lstatSync } from "node:fs";
-import { homedir } from "node:os";
-import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
-
-import { PathError } from "./errors.js";
 import { DOCKER_COMMAND_TIMEOUT } from "./constants.js";
 import { exec } from "./exec.js";
 import { getDockerEnv } from "./paths.js";
@@ -53,36 +48,6 @@ export function createConfig(): Config {
   };
 }
 
-/**
- * Validate that a path is safe (within user's home directory).
- */
-export function validateSafePath(path: string, description = "path"): string {
-  const home = homedir();
-  const resolved = resolve(path);
-
-  if (existsSync(resolved)) {
-    const stats = lstatSync(resolved);
-    if (stats.isSymbolicLink()) {
-      throw new PathError(`${description} cannot be a symlink: ${path}`);
-    }
-  }
-
-  if (!resolved.startsWith(home)) {
-    throw new PathError(
-      `Invalid ${description}: '${resolved}' must be within home directory '${home}'`
-    );
-  }
-
-  return resolved;
-}
-
-/**
- * Get expanded and validated Claude config directory path from Config object.
- */
-export function getClaudeConfigDir(config: Config): string {
-  const expanded = config.claudeConfigDir.replace(/^~/, homedir());
-  return validateSafePath(expanded, "claude_config_dir");
-}
 
 /**
  * Check if Docker image exists for stack (async, non-blocking).

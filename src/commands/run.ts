@@ -295,8 +295,6 @@ export async function run(
     progress?: string;
     cache?: boolean;
     envVars?: string[];
-    timeout?: number;
-    buildTimeout?: number;
   } = {}
 ): Promise<void> {
   const {
@@ -315,14 +313,7 @@ export async function run(
     progress = "auto",
     cache = true,
     envVars,
-    timeout: _timeout,
-    buildTimeout: _buildTimeout,
   } = options;
-
-  // Timeouts accepted from CLI but not yet wired through to all operations.
-  // TODO: Pass timeout to DOCKER_COMMAND_TIMEOUT overrides, buildTimeout to DOCKER_BUILD_TIMEOUT
-  void _timeout;
-  void _buildTimeout;
 
   if (!(await checkDocker())) {
     log.error(ERR_DOCKER_NOT_RUNNING);

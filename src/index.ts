@@ -12,4 +12,4 @@ export { detectDependencies, type DepsInfo, type DepsMode } from "./deps.js";
 export { detectProjectType, type DetectionResult } from "./detector.js";
 export { checkDocker, getGitConfig } from "./utils.js";
 export { buildImage, ensureImageReady } from "./build.js";
-export { removeCcboxContainers, removeCcboxImages, pruneSystem } from "./cleanup.js";
+export { removeCcboxContainers, removeCcboxImages } from "./cleanup.js";
