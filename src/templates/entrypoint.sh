@@ -207,6 +207,55 @@ _setup_fuse_overlay() {
     fi
 }
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Fix: Merge shadow (literal) session directories into native-encoded ones
+# When FUSE translates directory names, both literal (e.g. -d-GitHub-ccbox)
+# and native (e.g. D--GitHub-ccbox) dirs may exist on disk. Merge literal
+# into native so all sessions are accessible.
+# ══════════════════════════════════════════════════════════════════════════════
+if [[ -n "$CCBOX_DIR_MAP" ]]; then
+    _claude_projects="${CLAUDE_CONFIG_DIR:-/ccbox/.claude}/projects"
+    if [[ -d "$_claude_projects" ]]; then
+        # Parse CCBOX_DIR_MAP (format: container_name:native_name;...)
+        IFS=';' read -ra _dirmaps <<< "$CCBOX_DIR_MAP"
+        for _dm in "${_dirmaps[@]}"; do
+            _container_name="${_dm%%:*}"
+            _native_name="${_dm##*:}"
+            [[ -z "$_container_name" || -z "$_native_name" ]] && continue
+            _literal_dir="$_claude_projects/$_container_name"
+            _native_dir="$_claude_projects/$_native_name"
+            # Only merge if both exist and are different directories
+            if [[ -d "$_literal_dir" && -d "$_native_dir" && "$_literal_dir" != "$_native_dir" ]]; then
+                _log "Merging shadow sessions: $_container_name -> $_native_name"
+                _moved=0
+                for _sf in "$_literal_dir"/*.jsonl; do
+                    [[ -f "$_sf" ]] || continue
+                    _base=$(basename "$_sf")
+                    if [[ ! -f "$_native_dir/$_base" ]]; then
+                        mv "$_sf" "$_native_dir/$_base" 2>/dev/null && _moved=$((_moved+1))
+                    fi
+                done
+                _log "Moved $_moved session file(s)"
+                # Remove stale index from both dirs (Claude Code regenerates it)
+                rm -f "$_literal_dir/sessions-index.json" 2>/dev/null
+                rm -f "$_native_dir/sessions-index.json" 2>/dev/null
+                # Remove literal dir if empty
+                rmdir "$_literal_dir" 2>/dev/null || true
+            elif [[ -d "$_native_dir" ]]; then
+                # No shadow dir, but still check for stale index
+                _idx="$_native_dir/sessions-index.json"
+                if [[ -f "$_idx" ]]; then
+                    _newest_jsonl=$(find "$_native_dir" -maxdepth 1 -name '*.jsonl' -newer "$_idx" -print -quit 2>/dev/null)
+                    if [[ -n "$_newest_jsonl" ]]; then
+                        _log "Stale sessions-index.json detected, removing for regeneration"
+                        rm -f "$_idx" 2>/dev/null
+                    fi
+                fi
+            fi
+        done
+    fi
+fi
+
 if [[ -n "$CCBOX_PATH_MAP" && -x "/usr/local/bin/ccbox-fuse" ]]; then
     _log "Setting up FUSE for path translation (in-place overlay)..."
 
