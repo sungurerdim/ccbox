@@ -90,8 +90,6 @@ ccbox --no-deps         # Skip installation
 | `--no-prune` | off | Skip automatic cleanup of stale Docker resources |
 | `--no-cache` | off | Disable Docker build cache |
 | `--progress <mode>` | auto | Docker build progress mode (auto/plain/tty) |
-| `--timeout <ms>` | - | Command timeout in milliseconds |
-| `--build-timeout <ms>` | - | Build timeout in milliseconds |
 | `--no-debug-logs` | off | Don't persist debug logs |
 
 **Other commands:** `ccbox update`, `ccbox rebuild`, `ccbox clean`, `ccbox stacks`, `ccbox uninstall`, `ccbox version`

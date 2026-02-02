@@ -7,7 +7,7 @@
 
 import { basename } from "node:path";
 
-import { LanguageStack } from "../config.js";
+import { LanguageStack, parseStack } from "../config.js";
 import { detectProjectType } from "../detector.js";
 import { log } from "../logger.js";
 import { validateProjectPath } from "../paths.js";
@@ -40,7 +40,11 @@ export function detectAndReportStack(
 
   let stack: LanguageStack;
   if (options.stackName && options.stackName !== "auto") {
-    stack = options.stackName as LanguageStack;
+    const parsed = parseStack(options.stackName);
+    if (!parsed) {
+      throw new Error(`Invalid stack: '${options.stackName}'. Use 'ccbox stacks' to see available options.`);
+    }
+    stack = parsed;
   } else {
     stack = detected.recommendedStack;
   }
