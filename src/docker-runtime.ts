@@ -180,56 +180,44 @@ export function getTerminalSize(): { columns: number; lines: number } {
 
 /** Build Claude CLI arguments list. */
 export function buildClaudeArgs(options: {
-  model?: string;
   debug?: number;
-  prompt?: string;
-  quiet?: boolean;
-  appendSystemPrompt?: string;
+  headless?: boolean;
   persistentPaths?: string;
-  resume?: string | boolean;
-  continueSession?: boolean;
+  claudeArgs?: string[];
 }): string[] {
   const args: string[] = ["--dangerously-skip-permissions"];
 
-  if (options.model) {
-    args.push("--model", options.model);
-  }
-
-  const stream = (options.debug ?? 0) >= 2;
-  const verbose = stream || (Boolean(options.prompt) && !options.quiet);
-
-  if (verbose) {
+  if ((options.debug ?? 0) >= 2) {
     args.push("--verbose");
   }
 
-  // Build system prompt: always include container awareness, optionally append user's prompt
+  // Container awareness prompt (always added)
   const containerPrompt = buildContainerAwarenessPrompt(
     options.persistentPaths ?? "/ccbox/project, /ccbox/.claude"
   );
-  const systemPrompt = options.appendSystemPrompt
-    ? `${containerPrompt}\n\n${options.appendSystemPrompt}`
-    : containerPrompt;
-  args.push("--append-system-prompt", systemPrompt);
 
-  // Session resume/continue (must come before --print to allow interactive resume)
-  if (options.resume) {
-    if (typeof options.resume === "string") {
-      args.push("--resume", options.resume);
-    } else {
-      args.push("--resume");
-    }
-  } else if (options.continueSession) {
-    args.push("--continue");
+  // Check if user passed --append-system-prompt in claudeArgs
+  // If so, merge with container prompt; otherwise add standalone
+  const userArgs = options.claudeArgs ?? [];
+  const aspIdx = userArgs.indexOf("--append-system-prompt");
+  if (aspIdx !== -1 && aspIdx + 1 < userArgs.length) {
+    // Merge user's system prompt with container awareness
+    const userSystemPrompt = userArgs[aspIdx + 1]!;
+    args.push("--append-system-prompt", `${containerPrompt}\n\n${userSystemPrompt}`);
+    // Remove --append-system-prompt and its value from claudeArgs to avoid duplication
+    userArgs.splice(aspIdx, 2);
+  } else {
+    args.push("--append-system-prompt", containerPrompt);
   }
 
-  if (options.quiet || options.prompt) {
-    args.push("--print");
-    // stream-json avoids stdout buffering issues on Windows
-    args.push("--output-format", "stream-json");
+  // Headless mode: non-interactive output
+  if (options.headless || (options.debug ?? 0) >= 2) {
+    args.push("--print", "--output-format", "stream-json");
   }
 
-  if (options.prompt) {
-    args.push(options.prompt);
+  // Append all remaining user claude args
+  if (userArgs.length > 0) {
+    args.push(...userArgs);
   }
 
   return args;
@@ -459,27 +447,23 @@ export function getDockerRunCmd(
     fresh?: boolean;
     ephemeralLogs?: boolean;
     debug?: number;
-    prompt?: string;
-    model?: string;
-    quiet?: boolean;
-    appendSystemPrompt?: string;
-    resume?: string | boolean;
-    continueSession?: boolean;
+    headless?: boolean;
     projectImage?: string;
     unrestricted?: boolean;
     envVars?: string[];
+    claudeArgs?: string[];
   } = {}
 ): string[] {
   const imageName = options.projectImage ?? getImageName(stack);
   const claudeConfig = getClaudeConfigDir();
-  const prompt = transformSlashCommand(options.prompt);
   const containerName = getContainerName(projectName);
   const dockerProjectPath = resolveForDocker(resolve(projectPath));
 
   const cmd = ["docker", "run", "--rm"];
 
-  // TTY allocation: interactive sessions need -it, unattended needs -i only
-  const isInteractive = !prompt && !options.quiet && (options.debug ?? 0) < 2;
+  // TTY allocation: interactive sessions need -it, headless/debug needs -i only
+  const isHeadless = options.headless || (options.debug ?? 0) >= 2;
+  const isInteractive = !isHeadless;
   cmd.push(isInteractive ? "-it" : "-i");
 
   cmd.push("--name", containerName);
@@ -697,14 +681,10 @@ export function getDockerRunCmd(
 
   // Claude CLI arguments
   const claudeArgs = buildClaudeArgs({
-    model: options.model,
     debug: options.debug,
-    prompt,
-    quiet: options.quiet,
-    appendSystemPrompt: options.appendSystemPrompt,
+    headless: options.headless,
     persistentPaths,
-    resume: options.resume,
-    continueSession: options.continueSession,
+    claudeArgs: options.claudeArgs ? [...options.claudeArgs] : undefined,
   });
   cmd.push(...claudeArgs);
 

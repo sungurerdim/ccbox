@@ -15,11 +15,6 @@ export const DOCKER_STARTUP_TIMEOUT = 30_000; // Waiting for Docker to start
 export const DOCKER_CHECK_INTERVAL = 5_000; // Milliseconds between Docker status checks
 export const PRUNE_TIMEOUT = 60_000; // Prune operations
 
-// === Validation Constants ===
-export const MAX_PROMPT_LENGTH = 5000; // Maximum characters for --prompt parameter
-export const MAX_SYSTEM_PROMPT_LENGTH = 10000; // Maximum characters for --append-system-prompt
-export const VALID_MODELS = new Set(["opus", "sonnet", "haiku"]); // Known Claude models
-
 // === Prune Settings ===
 export const PRUNE_CACHE_AGE = "168h"; // 7 days - keep recent build cache
 

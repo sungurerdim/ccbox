@@ -9,7 +9,7 @@ import { Command } from "commander";
 
 import { style } from "./logger.js";
 
-import { VERSION, MAX_PROMPT_LENGTH, MAX_SYSTEM_PROMPT_LENGTH, VALID_MODELS } from "./constants.js";
+import { VERSION } from "./constants.js";
 import { LanguageStack, STACK_INFO, filterStacks } from "./config.js";
 import { ValidationError } from "./errors.js";
 import { checkDocker, ERR_DOCKER_NOT_RUNNING } from "./utils.js";
@@ -21,55 +21,6 @@ import {
   cleanTempFiles,
 } from "./cleanup.js";
 import { selfUpdate, selfUninstall, showVersion } from "./upgrade.js";
-
-/**
- * Validate and normalize prompt parameter.
- */
-function validatePrompt(prompt: string | undefined): string | undefined {
-  if (!prompt) {return undefined;}
-  const trimmed = prompt.trim();
-  if (!trimmed) {
-    throw new ValidationError("--prompt cannot be empty or whitespace-only");
-  }
-  if (trimmed.length > MAX_PROMPT_LENGTH) {
-    throw new ValidationError(`--prompt must be ${MAX_PROMPT_LENGTH} characters or less`);
-  }
-  return trimmed;
-}
-
-/**
- * Validate and normalize append-system-prompt parameter.
- */
-function validateSystemPrompt(prompt: string | undefined): string | undefined {
-  if (!prompt) {return undefined;}
-  const trimmed = prompt.trim();
-  if (!trimmed) {
-    throw new ValidationError("--append-system-prompt cannot be empty or whitespace-only");
-  }
-  if (trimmed.length > MAX_SYSTEM_PROMPT_LENGTH) {
-    throw new ValidationError(
-      `--append-system-prompt must be ${MAX_SYSTEM_PROMPT_LENGTH} characters or less`
-    );
-  }
-  return trimmed;
-}
-
-/**
- * Validate model parameter (warns on unknown, doesn't block).
- */
-function validateModel(model: string | undefined): string | undefined {
-  if (model) {
-    const modelLower = model.toLowerCase();
-    if (!VALID_MODELS.has(modelLower)) {
-      console.log(
-        style.yellow(
-          `Warning: Unknown model '${model}'. Known models: ${[...VALID_MODELS].sort().join(", ")}`
-        )
-      );
-    }
-  }
-  return model;
-}
 
 // Build the CLI program
 const program = new Command();
@@ -93,12 +44,7 @@ program
   .option("--deps-prod", "Install production dependencies only")
   .option("--no-deps", "Skip dependency installation")
   .option("-d, --debug", "Debug mode (-d entrypoint logs, -dd + stream output)", (_, prev) => prev + 1, 0)
-  .option("-p, --prompt <prompt>", "Initial prompt (enables --print + --verbose)")
-  .option("-m, --model <model>", "Model name (passed directly to Claude Code)")
-  .option("-q, --quiet", "Quiet mode (enables --print, shows only responses)")
-  .option("--append-system-prompt <prompt>", "Append custom instructions to Claude's system prompt")
-  .option("-r, --resume [sessionId]", "Resume a previous session (optionally specify session ID)")
-  .option("-c, --continue", "Continue the most recent session")
+  .option("--headless", "Non-interactive/unattended mode (adds --print --output-format stream-json)")
   .option("--no-prune", "Skip automatic cleanup of stale Docker resources")
   .option("-U, --unrestricted", "Remove CPU/priority limits (use full system resources)")
   .option("-v, --verbose", "Show detection details (which files triggered stack selection)")
@@ -115,30 +61,16 @@ program
     }
     return [...(prev || []), value];
   })
-  .action(async (options) => {
+  .allowUnknownOption()
+  .passThroughOptions()
+  .action(async (options, command: Command) => {
     // Change directory if --chdir/-C specified (like git -C)
     if (options.chdir) {
       process.chdir(options.chdir);
     }
 
-    // Validate parameters
-    try {
-      options.prompt = validatePrompt(options.prompt);
-      options.appendSystemPrompt = validateSystemPrompt(options.appendSystemPrompt);
-      options.model = validateModel(options.model);
-    } catch (e: unknown) {
-      if (e instanceof ValidationError) {
-        console.log(style.red(`Error: ${e.message}`));
-        process.exit(1);
-      }
-      throw e;
-    }
-
-    // -dd requires -p (Claude Code needs input in non-interactive mode)
-    if (options.debug >= 2 && !options.prompt) {
-      console.log(style.red("Error: -dd requires -p <prompt>. Example: ccbox -dd -p \"fix the tests\""));
-      process.exit(1);
-    }
+    // Collect all unknown/passthrough args for Claude CLI
+    const claudeArgs = command.args;
 
     // Determine deps mode from flags
     let depsMode: string | undefined = undefined;
@@ -155,12 +87,7 @@ program
       ephemeralLogs: !options.debugLogs,
       depsMode,
       debug: options.debug,
-      prompt: options.prompt,
-      model: options.model,
-      quiet: options.quiet,
-      appendSystemPrompt: options.appendSystemPrompt,
-      resume: options.resume,
-      continueSession: options.continue,
+      headless: options.headless,
       unattended: options.yes,
       prune: options.prune !== false,
       unrestricted: options.unrestricted,
@@ -168,6 +95,7 @@ program
       progress: options.progress,
       cache: options.cache,
       envVars: options.env,
+      claudeArgs,
     });
   });
 

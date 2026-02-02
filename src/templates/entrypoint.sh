@@ -409,7 +409,7 @@ if [[ -n "$CCBOX_CMD" ]]; then
     exec $EXEC_PREFIX env $FAKEPATH_PRELOAD $CCBOX_CMD "$@"
 elif [[ -t 1 ]]; then
     printf '\e[?2026h' 2>/dev/null || true
-    exec $EXEC_PREFIX env $FAKEPATH_PRELOAD $PRIORITY_CMD claude --dangerously-skip-permissions "$@"
+    exec $EXEC_PREFIX env $FAKEPATH_PRELOAD $PRIORITY_CMD claude "$@"
 else
-    exec $EXEC_PREFIX env $FAKEPATH_PRELOAD stdbuf -oL -eL $PRIORITY_CMD claude --dangerously-skip-permissions "$@"
+    exec $EXEC_PREFIX env $FAKEPATH_PRELOAD stdbuf -oL -eL $PRIORITY_CMD claude "$@"
 fi

@@ -88,30 +88,22 @@ async function executeContainer(
     fresh?: boolean;
     ephemeralLogs?: boolean;
     debug?: number;
-    prompt?: string;
-    model?: string;
-    quiet?: boolean;
-    appendSystemPrompt?: string;
-    resume?: string | boolean;
-    continueSession?: boolean;
+    headless?: boolean;
     projectImage?: string;
     unrestricted?: boolean;
     envVars?: string[];
+    claudeArgs?: string[];
   } = {}
 ): Promise<void> {
   const {
     fresh = false,
     ephemeralLogs = false,
     debug = 0,
-    prompt,
-    model,
-    quiet = false,
-    appendSystemPrompt,
-    resume,
-    continueSession,
+    headless = false,
     projectImage,
     unrestricted = false,
     envVars,
+    claudeArgs,
   } = options;
 
   log.dim("Starting Claude Code...");
@@ -121,15 +113,11 @@ async function executeContainer(
     fresh,
     ephemeralLogs,
     debug,
-    prompt,
-    model,
-    quiet,
-    appendSystemPrompt,
-    resume,
-    continueSession,
+    headless,
     projectImage,
     unrestricted,
     envVars,
+    claudeArgs,
   });
 
   // Debug: print docker command
@@ -137,8 +125,8 @@ async function executeContainer(
     log.dim("Docker command: " + cmd.join(" "));
   }
 
-  // stdin: inherit for interactive, ignore for watch-only (-dd)
-  const stdin = debug >= 2 ? "ignore" : "inherit";
+  // stdin: inherit for interactive, ignore for headless/watch-only (-dd)
+  const stdin = (headless || debug >= 2) ? "ignore" : "inherit";
 
   let returncode = 0;
   try {
@@ -199,14 +187,10 @@ async function tryRunExistingImage(
     fresh?: boolean;
     ephemeralLogs?: boolean;
     debug?: number;
-    prompt?: string;
-    model?: string;
-    quiet?: boolean;
-    appendSystemPrompt?: string;
-    resume?: string | boolean;
-    continueSession?: boolean;
+    headless?: boolean;
     unrestricted?: boolean;
     envVars?: string[];
+    claudeArgs?: string[];
   } = {}
 ): Promise<boolean> {
   if (!(await projectImageExists(projectName, stack))) {
@@ -246,16 +230,12 @@ async function buildAndRun(
     fresh?: boolean;
     ephemeralLogs?: boolean;
     debug?: number;
-    prompt?: string;
-    model?: string;
-    quiet?: boolean;
-    appendSystemPrompt?: string;
-    resume?: string | boolean;
-    continueSession?: boolean;
+    headless?: boolean;
     unrestricted?: boolean;
     progress?: string;
     cache?: boolean;
     envVars?: string[];
+    claudeArgs?: string[];
   } = {}
 ): Promise<void> {
   const { progress = "auto", cache = true } = options;
@@ -294,12 +274,7 @@ export async function run(
     ephemeralLogs?: boolean;
     depsMode?: string;
     debug?: number;
-    prompt?: string;
-    model?: string;
-    quiet?: boolean;
-    appendSystemPrompt?: string;
-    resume?: string | boolean;
-    continueSession?: boolean;
+    headless?: boolean;
     unattended?: boolean;
     prune?: boolean;
     unrestricted?: boolean;
@@ -307,6 +282,7 @@ export async function run(
     progress?: string;
     cache?: boolean;
     envVars?: string[];
+    claudeArgs?: string[];
   } = {}
 ): Promise<void> {
   const {
@@ -314,12 +290,7 @@ export async function run(
     ephemeralLogs = false,
     depsMode,
     debug = 0,
-    prompt,
-    model,
-    quiet = false,
-    appendSystemPrompt,
-    resume,
-    continueSession,
+    headless = false,
     unattended = false,
     prune = true,
     unrestricted = false,
@@ -327,6 +298,7 @@ export async function run(
     progress = "auto",
     cache = true,
     envVars,
+    claudeArgs,
   } = options;
 
   if (!(await checkDocker())) {
@@ -354,14 +326,10 @@ export async function run(
       fresh,
       ephemeralLogs,
       debug,
-      prompt,
-      model,
-      quiet,
-      appendSystemPrompt,
-      resume,
-      continueSession,
+      headless,
       unrestricted,
       envVars,
+      claudeArgs,
     })
   ) {
     return;
@@ -404,15 +372,11 @@ export async function run(
     fresh,
     ephemeralLogs,
     debug,
-    prompt,
-    model,
-    quiet,
-    appendSystemPrompt,
-    resume,
-    continueSession,
+    headless,
     unrestricted,
     progress,
     cache,
     envVars,
+    claudeArgs,
   });
 }
