@@ -97,6 +97,8 @@ program
   .option("-m, --model <model>", "Model name (passed directly to Claude Code)")
   .option("-q, --quiet", "Quiet mode (enables --print, shows only responses)")
   .option("--append-system-prompt <prompt>", "Append custom instructions to Claude's system prompt")
+  .option("-r, --resume [sessionId]", "Resume a previous session (optionally specify session ID)")
+  .option("-c, --continue", "Continue the most recent session")
   .option("--no-prune", "Skip automatic cleanup of stale Docker resources")
   .option("-U, --unrestricted", "Remove CPU/priority limits (use full system resources)")
   .option("-v, --verbose", "Show detection details (which files triggered stack selection)")
@@ -157,6 +159,8 @@ program
       model: options.model,
       quiet: options.quiet,
       appendSystemPrompt: options.appendSystemPrompt,
+      resume: options.resume,
+      continueSession: options.continue,
       unattended: options.yes,
       prune: options.prune !== false,
       unrestricted: options.unrestricted,
@@ -165,6 +169,38 @@ program
       cache: options.cache,
       envVars: options.env,
     });
+  });
+
+// Voice command (voice-to-text with whisper.cpp)
+program
+  .command("voice")
+  .description("Voice-to-text: record, transcribe with whisper.cpp, send to container")
+  .option("--model <model>", "Whisper model (tiny, base, small)", "base")
+  .option("--duration <seconds>", "Max recording duration in seconds", "10")
+  .option("-n, --name <container>", "Target container name (auto-detects if not specified)")
+  .action(async (options) => {
+    const { voicePipeline } = await import("./voice.js");
+    const success = await voicePipeline({
+      model: options.model,
+      duration: parseInt(options.duration, 10),
+      containerName: options.name,
+    });
+    if (!success) {
+      process.exit(1);
+    }
+  });
+
+// Paste command (clipboard image transfer to running container)
+program
+  .command("paste")
+  .description("Paste clipboard image into running ccbox container")
+  .option("-n, --name <container>", "Target container name (auto-detects if not specified)")
+  .action(async (options) => {
+    const { pasteToContainer } = await import("./clipboard.js");
+    const success = await pasteToContainer(options.name);
+    if (!success) {
+      process.exit(1);
+    }
   });
 
 // Rebuild command (rebuild Docker images with latest Claude Code)

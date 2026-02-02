@@ -21,15 +21,28 @@ _die() {
 # Error trap - show what failed
 trap 'echo "[ccbox:ERROR] Command failed at line $LINENO: $BASH_COMMAND" >&2' ERR
 
-# Graceful FUSE cleanup on exit
-_cleanup_fuse() {
+# Graceful cleanup on exit: FUSE unmount -> bind unmount -> process cleanup
+_cleanup() {
+    # 1. Unmount FUSE overlays
     for _mp in /ccbox/.claude "$PWD/.claude"; do
         if mountpoint -q "$_mp" 2>/dev/null; then
             fusermount -u "$_mp" 2>/dev/null || umount -l "$_mp" 2>/dev/null || true
         fi
     done
+    # 2. Unmount bind mounts in /run/ccbox-fuse/
+    if [[ -d /run/ccbox-fuse ]]; then
+        for _bp in /run/ccbox-fuse/*/; do
+            [[ -d "$_bp" ]] || continue
+            if mountpoint -q "$_bp" 2>/dev/null; then
+                umount "$_bp" 2>/dev/null || umount -l "$_bp" 2>/dev/null || true
+            fi
+            rmdir "$_bp" 2>/dev/null || true
+        done
+    fi
 }
-trap _cleanup_fuse EXIT
+trap _cleanup EXIT
+trap 'trap - TERM; _cleanup; kill -- -$$' TERM
+trap 'trap - INT; _cleanup; kill -- -$$' INT
 
 set -e
 
@@ -245,24 +258,36 @@ else
 fi
 
 
-# Git performance optimizations (I/O reduction)
-# Use --system for settings that must apply to all users (root runs this, ccbox runs claude)
-# Use --global for user-specific settings (will be inherited when gosu switches to ccbox)
-# CRITICAL: Add wildcard safe.directory to allow any mounted path (quotes prevent shell expansion)
-git config --system --add safe.directory "*" 2>/dev/null || true
-git config --system core.fileMode false 2>/dev/null || true
-# Also add current project directory explicitly (belt and suspenders)
+# Git configuration: batch write instead of individual git config calls (15+ → 2 file writes)
+# System config: safe.directory and core settings
+cat > /etc/gitconfig 2>/dev/null <<'SYSEOF' || true
+[safe]
+	directory = *
+[core]
+	fileMode = false
+SYSEOF
+# Also add current project directory explicitly
 git config --system --add safe.directory "$PWD" 2>/dev/null || true
-git config --global core.preloadindex true 2>/dev/null || true
-git config --global core.fscache true 2>/dev/null || true
-git config --global core.untrackedcache true 2>/dev/null || true
-git config --global core.commitgraph true 2>/dev/null || true
-git config --global core.splitIndex true 2>/dev/null || true
-git config --global fetch.writeCommitGraph true 2>/dev/null || true
-git config --global gc.auto 0 2>/dev/null || true
-git config --global credential.helper 'cache --timeout=86400' 2>/dev/null || true
-git config --global pack.threads 0 2>/dev/null || true
-git config --global index.threads 0 2>/dev/null || true
+
+# Global config: performance optimizations (single file write)
+cat > /root/.gitconfig 2>/dev/null <<'GLOBALEOF' || true
+[core]
+	preloadindex = true
+	fscache = true
+	untrackedcache = true
+	commitgraph = true
+	splitIndex = true
+[fetch]
+	writeCommitGraph = true
+[gc]
+	auto = 0
+[credential]
+	helper = cache --timeout=86400
+[pack]
+	threads = 0
+[index]
+	threads = 0
+GLOBALEOF
 
 # Copy root's gitconfig to ccbox user so performance settings are inherited
 if [[ -f /root/.gitconfig && -n "$CCBOX_UID" ]]; then
@@ -273,7 +298,6 @@ fi
 # If project has .git, ensure it's recognized despite path/ownership differences
 if [[ -d "$PWD/.git" ]]; then
     _log "Git repository detected at $PWD"
-    # Add this specific directory as safe (belt and suspenders with --system '*')
     git config --global --add safe.directory "$PWD" 2>/dev/null || true
 fi
 

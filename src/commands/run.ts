@@ -20,7 +20,7 @@ import {
   getProjectImageName,
   projectImageExists,
 } from "../build.js";
-import { pruneStaleResources } from "../cleanup.js";
+import { pruneStaleResources, cleanOrphanedBuildDirs } from "../cleanup.js";
 import { resolveStack, setupGitConfig } from "../prompts.js";
 import { checkDocker, ERR_DOCKER_NOT_RUNNING } from "../utils.js";
 import { detectAndReportStack } from "./run-phases.js";
@@ -92,6 +92,8 @@ async function executeContainer(
     model?: string;
     quiet?: boolean;
     appendSystemPrompt?: string;
+    resume?: string | boolean;
+    continueSession?: boolean;
     projectImage?: string;
     unrestricted?: boolean;
     envVars?: string[];
@@ -105,6 +107,8 @@ async function executeContainer(
     model,
     quiet = false,
     appendSystemPrompt,
+    resume,
+    continueSession,
     projectImage,
     unrestricted = false,
     envVars,
@@ -121,6 +125,8 @@ async function executeContainer(
     model,
     quiet,
     appendSystemPrompt,
+    resume,
+    continueSession,
     projectImage,
     unrestricted,
     envVars,
@@ -197,6 +203,8 @@ async function tryRunExistingImage(
     model?: string;
     quiet?: boolean;
     appendSystemPrompt?: string;
+    resume?: string | boolean;
+    continueSession?: boolean;
     unrestricted?: boolean;
     envVars?: string[];
   } = {}
@@ -242,6 +250,8 @@ async function buildAndRun(
     model?: string;
     quiet?: boolean;
     appendSystemPrompt?: string;
+    resume?: string | boolean;
+    continueSession?: boolean;
     unrestricted?: boolean;
     progress?: string;
     cache?: boolean;
@@ -288,6 +298,8 @@ export async function run(
     model?: string;
     quiet?: boolean;
     appendSystemPrompt?: string;
+    resume?: string | boolean;
+    continueSession?: boolean;
     unattended?: boolean;
     prune?: boolean;
     unrestricted?: boolean;
@@ -306,6 +318,8 @@ export async function run(
     model,
     quiet = false,
     appendSystemPrompt,
+    resume,
+    continueSession,
     unattended = false,
     prune = true,
     unrestricted = false,
@@ -321,7 +335,8 @@ export async function run(
     process.exit(1);
   }
 
-  // Pre-run cleanup: remove stale resources
+  // Pre-run cleanup: remove stale resources and orphaned build dirs
+  cleanOrphanedBuildDirs();
   if (prune) {
     await pruneStaleResources(debug > 0);
   }
@@ -343,6 +358,8 @@ export async function run(
       model,
       quiet,
       appendSystemPrompt,
+      resume,
+      continueSession,
       unrestricted,
       envVars,
     })
@@ -391,6 +408,8 @@ export async function run(
     model,
     quiet,
     appendSystemPrompt,
+    resume,
+    continueSession,
     unrestricted,
     progress,
     cache,

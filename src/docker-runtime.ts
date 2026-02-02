@@ -6,7 +6,6 @@
  */
 
 import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
-import { platform } from "node:os";
 import { join, resolve } from "node:path";
 import { env } from "node:process";
 
@@ -14,6 +13,7 @@ import type { Config } from "./config.js";
 import { getContainerName, getImageName, LanguageStack } from "./config.js";
 import { DEFAULT_PIDS_LIMIT } from "./constants.js";
 import { log } from "./logger.js";
+import { detectHostPlatform, needsFuse, needsPrivilegedForFuse, getHostOSName } from "./platform.js";
 
 import { getClaudeConfigDir, resolveForDocker } from "./paths.js";
 
@@ -36,9 +36,10 @@ export const CONTAINER_CONSTRAINTS = {
 /** Generate container awareness prompt with current constraints. */
 export function buildContainerAwarenessPrompt(persistentPaths: string): string {
   const { pidsLimit } = CONTAINER_CONSTRAINTS;
-  const hostOS = platform() === "win32" ? "Windows" : platform() === "darwin" ? "macOS" : "Linux";
+  const hostOS = getHostOSName();
 
-  const windowsNote = hostOS === "Windows"
+  const hostPlatform = detectHostPlatform();
+  const windowsNote = (hostPlatform === "windows-native" || hostPlatform === "windows-wsl")
     ? `\nPath format: D:\\GitHub\\x → /d/GitHub/x (auto-translated)\n`
     : "";
 
@@ -102,13 +103,14 @@ export function transformSlashCommand(prompt: string | undefined): string | unde
  * @returns Tuple of [uid, gid] to use for container processes.
  */
 export function getHostUserIds(): [number, number] {
-  if (platform() === "win32") {
+  const hostPlatform = detectHostPlatform();
+  if (hostPlatform === "windows-native") {
     // Windows: No native UID/GID. Docker Desktop maps to container's default user.
     // Use 1000:1000 (ccbox user created in Dockerfile)
     return [1000, 1000];
   }
 
-  // Linux/macOS: Use actual host UID/GID for proper file ownership
+  // Linux/macOS/WSL: Use actual host UID/GID for proper file ownership
   // Fallback to 1000 if process.getuid() is unavailable (shouldn't happen on Unix)
   return [process.getuid?.() ?? 1000, process.getgid?.() ?? 1000];
 }
@@ -134,7 +136,7 @@ export function getHostTimezone(): string {
   }
 
   // 3. Try /etc/timezone (Debian/Ubuntu) - Linux only
-  if (platform() !== "win32") {
+  if (detectHostPlatform() !== "windows-native") {
     try {
       const tzFile = "/etc/timezone";
       if (existsSync(tzFile)) {
@@ -184,6 +186,8 @@ export function buildClaudeArgs(options: {
   quiet?: boolean;
   appendSystemPrompt?: string;
   persistentPaths?: string;
+  resume?: string | boolean;
+  continueSession?: boolean;
 }): string[] {
   const args: string[] = ["--dangerously-skip-permissions"];
 
@@ -206,6 +210,17 @@ export function buildClaudeArgs(options: {
     ? `${containerPrompt}\n\n${options.appendSystemPrompt}`
     : containerPrompt;
   args.push("--append-system-prompt", systemPrompt);
+
+  // Session resume/continue (must come before --print to allow interactive resume)
+  if (options.resume) {
+    if (typeof options.resume === "string") {
+      args.push("--resume", options.resume);
+    } else {
+      args.push("--resume");
+    }
+  } else if (options.continueSession) {
+    args.push("--continue");
+  }
 
   if (options.quiet || options.prompt) {
     args.push("--print");
@@ -448,6 +463,8 @@ export function getDockerRunCmd(
     model?: string;
     quiet?: boolean;
     appendSystemPrompt?: string;
+    resume?: string | boolean;
+    continueSession?: boolean;
     projectImage?: string;
     unrestricted?: boolean;
     envVars?: string[];
@@ -527,12 +544,16 @@ export function getDockerRunCmd(
     cmd.push("-v", `${dockerClaudeConfig}:/ccbox/.claude:rw`);
 
     // FUSE device access for kernel-level path transformation
-    // Windows Docker Desktop requires --privileged for /dev/fuse
-    // Linux/macOS use --device /dev/fuse (capability added in addCapabilityRestrictions)
-    if (platform() === "win32") {
-      cmd.push("--privileged");
-    } else {
-      cmd.push("--device", "/dev/fuse");
+    // Only needed on Windows/WSL where host paths differ from container POSIX paths
+    // macOS and Linux use native POSIX paths — no FUSE needed
+    if (needsFuse()) {
+      if (needsPrivilegedForFuse()) {
+        // Windows Docker Desktop requires --privileged for /dev/fuse
+        cmd.push("--privileged");
+      } else {
+        // WSL/Linux: --device /dev/fuse (capability added in addCapabilityRestrictions)
+        cmd.push("--device", "/dev/fuse");
+      }
     }
   }
 
@@ -562,8 +583,8 @@ export function getDockerRunCmd(
   addContainerEssentials(cmd);
 
   // Capability restrictions — only when not using --privileged
-  // Windows + FUSE uses --privileged which already grants all capabilities
-  const usesPrivileged = platform() === "win32" && !useMinimalMount;
+  // Windows native + FUSE uses --privileged which already grants all capabilities
+  const usesPrivileged = needsPrivilegedForFuse() && needsFuse() && !useMinimalMount;
   if (!usesPrivileged) {
     addCapabilityRestrictions(cmd);
   }
@@ -611,7 +632,8 @@ export function getDockerRunCmd(
 
   // FUSE path mapping: host paths -> container paths (for JSON config transformation)
   // Maps Windows paths (D:/...) to POSIX paths (/d/...) in session files
-  // This ensures sessions created in container are visible on host and vice versa
+  // Only relevant on Windows/WSL where path formats differ
+  // macOS/Linux: paths are already POSIX, no mapping needed
   const pathMappings: string[] = [];
 
   // Map project directory (Windows D:/... -> POSIX /d/...)
@@ -681,6 +703,8 @@ export function getDockerRunCmd(
     quiet: options.quiet,
     appendSystemPrompt: options.appendSystemPrompt,
     persistentPaths,
+    resume: options.resume,
+    continueSession: options.continueSession,
   });
   cmd.push(...claudeArgs);
 
