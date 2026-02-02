@@ -143,8 +143,40 @@ jobs:
         run: |
           VERSION="${{ needs.bump.outputs.tag }}"
           PREV_TAG=$(git tag --sort=-v:refname | grep -v "^${VERSION}$" | head -1 || true)
+
+          declare -a feat fix refactor docs maint other
+          if [[ -n "$PREV_TAG" ]]; then
+            while IFS= read -r line; do
+              hash="${line%% *}"
+              msg="${line#* }"
+              short="${hash:0:7}"
+              case "$msg" in
+                feat\(*\):*|feat:*)    feat+=("- ${msg#*: } ($short)") ;;
+                fix\(*\):*|fix:*)      fix+=("- ${msg#*: } ($short)") ;;
+                refactor\(*\):*|refactor:*) refactor+=("- ${msg#*: } ($short)") ;;
+                docs\(*\):*|docs:*)    docs+=("- ${msg#*: } ($short)") ;;
+                ci\(*\):*|ci:*|chore\(*\):*|chore:*) maint+=("- ${msg#*: } ($short)") ;;
+                *)                     other+=("- ${msg} ($short)") ;;
+              esac
+            done < <(git log --oneline "${PREV_TAG}..${VERSION}" 2>/dev/null)
+          fi
+
           {
             echo 'content<<BODY_EOF'
+            echo "## What's Changed"
+            echo ""
+            for category in "feat:✨ New Features" "fix:🐛 Bug Fixes" \
+                            "refactor:♻️ Refactoring" "docs:📝 Documentation" \
+                            "maint:🔧 Maintenance" "other:📦 Other"; do
+              key="${category%%:*}"
+              title="${category#*:}"
+              eval "items=(\"\${${key}[@]}\")"
+              if [[ ${#items[@]} -gt 0 ]]; then
+                echo "### ${title}"
+                printf '%s\n' "${items[@]}"
+                echo ""
+              fi
+            done
             if [[ -n "$PREV_TAG" ]]; then
               echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${VERSION}"
             else
