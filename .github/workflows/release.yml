@@ -6,84 +6,25 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
-  bump:
-    name: Version Bump
+  release-please:
+    name: Release Please
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.bump.outputs.version }}
-      tag: ${{ steps.bump.outputs.tag }}
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: googleapis/release-please-action@v4
+        id: release
         with:
-          fetch-depth: 0
-
-      - name: Get version label from merged PR
-        id: label
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          PR_NUMBER=$(gh pr list --state merged --base main --limit 1 --json number --jq '.[0].number')
-          if [[ -z "$PR_NUMBER" ]]; then
-            echo "::error::Merged PR bulunamadı"
-            exit 1
-          fi
-
-          LABELS=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' | grep '^version:' || true)
-          if [[ -z "$LABELS" ]]; then
-            echo "::error::PR #${PR_NUMBER} üzerinde versiyon label'ı bulunamadı"
-            exit 1
-          fi
-
-          LABEL_COUNT=$(echo "$LABELS" | wc -l)
-          if [[ "$LABEL_COUNT" -gt 1 ]]; then
-            echo "::error::Birden fazla versiyon label'ı var"
-            exit 1
-          fi
-
-          BUMP_TYPE="${LABELS#version:}"
-          echo "bump=$BUMP_TYPE" >> "$GITHUB_OUTPUT"
-          echo "pr=$PR_NUMBER" >> "$GITHUB_OUTPUT"
-
-      - name: Bump version
-        id: bump
-        shell: bash
-        run: |
-          CURRENT=$(node -p "require('./package.json').version")
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
-
-          case "${{ steps.label.outputs.bump }}" in
-            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
-            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
-            patch) PATCH=$((PATCH + 1)) ;;
-          esac
-
-          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
-          echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=v$NEW_VERSION" >> "$GITHUB_OUTPUT"
-
-          # Update package.json
-          node -e "
-            const fs = require('fs');
-            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-            pkg.version = '${NEW_VERSION}';
-            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
-          "
-
-      - name: Commit and tag
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add package.json
-          git commit -m "chore: bump version to ${{ steps.bump.outputs.tag }}"
-          git tag "${{ steps.bump.outputs.tag }}"
-          git push origin main --follow-tags
+          release-type: node
 
   build:
-    needs: bump
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created }}
     strategy:
       fail-fast: true
       matrix:
@@ -97,7 +38,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.bump.outputs.tag }}
+          ref: ${{ needs.release-please.outputs.tag_name }}
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -111,7 +52,7 @@ jobs:
         run: |
           mkdir -p dist
           EXT=$([[ "${{ matrix.platform }}" == windows-* ]] && echo ".exe" || echo "")
-          NAME="ccbox-v${{ needs.bump.outputs.version }}-${{ matrix.platform }}${EXT}"
+          NAME="ccbox-v${{ needs.release-please.outputs.version }}-${{ matrix.platform }}${EXT}"
           bun build src/cli.ts --compile --target ${{ matrix.target }} --outfile "dist/${NAME}" --minify
 
       - uses: actions/upload-artifact@v4
@@ -119,15 +60,10 @@ jobs:
           name: binary-${{ matrix.platform }}
           path: dist/ccbox-*
 
-  release:
-    needs: [bump, build]
+  upload:
+    needs: [release-please, build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.bump.outputs.tag }}
-          fetch-depth: 0
-
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -137,63 +73,10 @@ jobs:
       - name: Generate checksums
         run: cd dist && sha256sum * > checksums.txt && cat checksums.txt
 
-      - name: Generate release body
-        id: body
-        shell: bash
-        run: |
-          VERSION="${{ needs.bump.outputs.tag }}"
-          PREV_TAG=$(git tag --sort=-v:refname | grep -v "^${VERSION}$" | head -1 || true)
-
-          declare -a feat fix refactor docs maint other
-          if [[ -n "$PREV_TAG" ]]; then
-            while IFS= read -r line; do
-              hash="${line%% *}"
-              msg="${line#* }"
-              short="${hash:0:7}"
-              case "$msg" in
-                feat\(*\):*|feat:*)    feat+=("- ${msg#*: } ($short)") ;;
-                fix\(*\):*|fix:*)      fix+=("- ${msg#*: } ($short)") ;;
-                refactor\(*\):*|refactor:*) refactor+=("- ${msg#*: } ($short)") ;;
-                docs\(*\):*|docs:*)    docs+=("- ${msg#*: } ($short)") ;;
-                ci\(*\):*|ci:*|chore\(*\):*|chore:*) maint+=("- ${msg#*: } ($short)") ;;
-                *)                     other+=("- ${msg} ($short)") ;;
-              esac
-            done < <(git log --oneline "${PREV_TAG}..${VERSION}" 2>/dev/null)
-          fi
-
-          {
-            echo 'content<<BODY_EOF'
-            echo "## What's Changed"
-            echo ""
-            for category in "feat:✨ New Features" "fix:🐛 Bug Fixes" \
-                            "refactor:♻️ Refactoring" "docs:📝 Documentation" \
-                            "maint:🔧 Maintenance" "other:📦 Other"; do
-              key="${category%%:*}"
-              title="${category#*:}"
-              eval "items=(\"\${${key}[@]}\")"
-              if [[ ${#items[@]} -gt 0 ]]; then
-                echo "### ${title}"
-                printf '%s\n' "${items[@]}"
-                echo ""
-              fi
-            done
-            if [[ -n "$PREV_TAG" ]]; then
-              echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${VERSION}"
-            else
-              echo "**Full Changelog**: https://github.com/${{ github.repository }}/commits/${VERSION}"
-            fi
-            echo 'BODY_EOF'
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Create release
+      - name: Upload release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="${{ needs.bump.outputs.tag }}"
-          PRERELEASE=$([[ "$VERSION" == *-* ]] && echo "--prerelease" || echo "")
-          gh release create "$VERSION" \
-            --title "$VERSION" \
-            --notes "${{ steps.body.outputs.content }}" \
-            --latest \
-            $PRERELEASE \
-            dist/*
+          gh release upload "${{ needs.release-please.outputs.tag_name }}" \
+            dist/* \
+            --repo "${{ github.repository }}"
