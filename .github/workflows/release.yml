@@ -6,7 +6,6 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
 
 jobs:
   bump:
@@ -32,14 +31,7 @@ jobs:
             exit 1
           fi
 
-          # Skip version bump PRs to prevent infinite loop
-          SKIP=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' | grep '^version:skip$' || true)
-          if [[ -n "$SKIP" ]]; then
-            echo "::notice::Version bump PR, skipping release"
-            exit 1
-          fi
-
-          LABELS=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' | grep '^version:' | grep -v 'skip' || true)
+          LABELS=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' | grep '^version:' || true)
           if [[ -z "$LABELS" ]]; then
             echo "::error::PR #${PR_NUMBER} üzerinde versiyon label'ı bulunamadı"
             exit 1
@@ -80,60 +72,15 @@ jobs:
             fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
 
-      - name: Create version bump PR
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Commit and tag
         shell: bash
         run: |
-          VERSION="${{ steps.bump.outputs.tag }}"
-          BRANCH="release/${VERSION}"
-
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -b "$BRANCH"
           git add package.json
-          git commit -m "chore: bump version to ${VERSION}"
-          git push origin "$BRANCH"
-
-          gh pr create \
-            --base main \
-            --head "$BRANCH" \
-            --title "chore: bump version to ${VERSION}" \
-            --body "Automated version bump to ${VERSION}" \
-            --label "version:skip"
-
-      - name: Merge version bump PR
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          VERSION="${{ steps.bump.outputs.tag }}"
-          BRANCH="release/${VERSION}"
-          gh pr merge "$BRANCH" --squash --auto --delete-branch
-
-      - name: Wait for merge and tag
-        shell: bash
-        run: |
-          VERSION="${{ steps.bump.outputs.tag }}"
-          BRANCH="release/${VERSION}"
-
-          for i in $(seq 1 30); do
-            STATE=$(gh pr view "$BRANCH" --json state --jq '.state' 2>/dev/null || echo "UNKNOWN")
-            if [[ "$STATE" == "MERGED" ]]; then
-              echo "PR merged"
-              break
-            fi
-            echo "Waiting for merge... ($i/30)"
-            sleep 10
-          done
-
-          git fetch origin main
-          git checkout main
-          git pull origin main
-          git tag "$VERSION"
-          git push origin "$VERSION"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          git commit -m "chore: bump version to ${{ steps.bump.outputs.tag }}"
+          git tag "${{ steps.bump.outputs.tag }}"
+          git push origin main --follow-tags
 
   build:
     needs: bump
