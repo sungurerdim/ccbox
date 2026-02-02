@@ -1,6 +1,6 @@
 {
   "name": "ccbox",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Secure Docker sandbox for Claude Code CLI",
   "type": "module",
   "private": true,
