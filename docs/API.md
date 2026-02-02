@@ -46,10 +46,6 @@ getContainerName(projectName: string, unique?: boolean): string
 // Parse and validate stack from string
 createStack(value: string): LanguageStack
 // Throws ValidationError if invalid
-
-// Validate path is within home directory
-validateSafePath(path: string, description?: string): string
-// Throws PathError if unsafe
 ```
 
 ### build.ts
@@ -219,11 +215,11 @@ log.raw(`${style.green("OK")} - ${style.dim("optional details")}`);
 ### Validate paths
 
 ```typescript
-import { validateSafePath } from "./config.js";
+import { validateProjectPath } from "./paths.js";
 import { PathError } from "./errors.js";
 
 try {
-  const safe = validateSafePath("/home/user/project", "project path");
+  const safe = validateProjectPath("/home/user/project");
 } catch (e) {
   if (e instanceof PathError) {
     console.error("Invalid path:", e.message);

@@ -1,19 +1,13 @@
 /**
  * Docker operations for ccbox.
  *
- * This module is a facade that re-exports from specialized sub-modules
- * for backward compatibility. New code should import from:
- * - ./docker/executor.js (safeDockerRun, checkDockerStatus, buildImage, runContainer)
- * - ./docker/inspect.js (getImageIds, getDanglingImageIds, imageHasParent, listContainers, listImages)
- * - ./docker/cleanup.js (removeImage, removeContainer)
+ * Facade that re-exports from specialized sub-modules.
  */
 
 export {
   type DockerResult,
   safeDockerRun,
   checkDockerStatus,
-  buildImage,
-  runContainer,
 } from "./docker/executor.js";
 
 export {
@@ -28,6 +22,3 @@ export {
   removeImage,
   removeContainer,
 } from "./docker/cleanup.js";
-
-/** Error message for Docker not running */
-export const ERR_DOCKER_NOT_RUNNING = "Error: Docker is not running.";

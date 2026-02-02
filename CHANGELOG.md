@@ -7,7 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-<!-- Add entries here as changes are merged. Categories: Added, Changed, Fixed, Removed, Security. -->
+### Added
+
+- **Git worktree support**: Automatically detects and mounts main `.git` directory when running inside a git worktree, enabling full git operations in container
+
+### Changed
+
+- `removeCcboxImages` uses single `listImages()` call with in-memory prefix filtering (was 5 separate Docker calls)
+- Worktree detection failure now logs at `warn` level instead of `debug` for better visibility
+- Stack validation in `run-phases.ts` uses `parseStack()` instead of unsafe type cast
+
+### Removed
+
+- **`--timeout` / `--build-timeout` CLI flags**: Removed misleading flags that were accepted but not wired to any Docker operations
+- **`src/error-handler.ts`**: Removed unused module (239 lines); exit code diagnostics handled inline in `commands/run.ts`
+- **`src/utils/retry-with-backoff.ts`**: Removed unused retry utility (46 lines); `upgrade.ts` has its own implementation
+- **`docker/executor.ts` `buildImage` and `runContainer`**: Removed unused functions; only `safeDockerRun` and `checkDockerStatus` are used
+- **`config.ts` `validateSafePath` and `getClaudeConfigDir`**: Removed duplicate functions; `docker-runtime.ts` now uses `paths.ts` version
+- **`pruneSystem` export from `index.ts`**: Removed unreachable public API export
+- ~1,500 lines of dead code from modular architecture refactor (unused service classes, command builders, strategies, type files)
 
 ## [0.1.0] - 2026-01-28
 

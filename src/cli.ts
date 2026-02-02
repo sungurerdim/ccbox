@@ -9,7 +9,7 @@ import { Command } from "commander";
 
 import { style } from "./logger.js";
 
-import { VERSION, MAX_PROMPT_LENGTH, MAX_SYSTEM_PROMPT_LENGTH, VALID_MODELS, DOCKER_COMMAND_TIMEOUT, DOCKER_BUILD_TIMEOUT } from "./constants.js";
+import { VERSION, MAX_PROMPT_LENGTH, MAX_SYSTEM_PROMPT_LENGTH, VALID_MODELS } from "./constants.js";
 import { LanguageStack, STACK_INFO, filterStacks } from "./config.js";
 import { ValidationError } from "./errors.js";
 import { checkDocker, ERR_DOCKER_NOT_RUNNING } from "./utils.js";
@@ -71,23 +71,6 @@ function validateModel(model: string | undefined): string | undefined {
   return model;
 }
 
-/**
- * Validate timeout parameter.
- */
-function validateTimeout(value: string): number {
-  if (!value || value.length > 10) {
-    throw new ValidationError("Timeout must be a numeric string (1-10 digits)");
-  }
-  const parsed = parseInt(value, 10);
-  if (isNaN(parsed) || parsed <= 0) {
-    throw new ValidationError("Timeout must be a positive integer (milliseconds)");
-  }
-  if (parsed > 3600000) {
-    throw new ValidationError("Timeout cannot exceed 3600000ms (1 hour)");
-  }
-  return parsed;
-}
-
 // Build the CLI program
 const program = new Command();
 
@@ -130,8 +113,6 @@ program
     }
     return [...(prev || []), value];
   })
-  .option("--timeout <ms>", `Command timeout in milliseconds (default: ${DOCKER_COMMAND_TIMEOUT})`)
-  .option("--build-timeout <ms>", `Build timeout in milliseconds (default: ${DOCKER_BUILD_TIMEOUT})`)
   .action(async (options) => {
     // Change directory if --chdir/-C specified (like git -C)
     if (options.chdir) {
@@ -143,13 +124,6 @@ program
       options.prompt = validatePrompt(options.prompt);
       options.appendSystemPrompt = validateSystemPrompt(options.appendSystemPrompt);
       options.model = validateModel(options.model);
-      // Validate timeouts if provided
-      if (options.timeout) {
-        options.timeout = validateTimeout(options.timeout);
-      }
-      if (options.buildTimeout) {
-        options.buildTimeout = validateTimeout(options.buildTimeout);
-      }
     } catch (e: unknown) {
       if (e instanceof ValidationError) {
         console.log(style.red(`Error: ${e.message}`));
@@ -190,8 +164,6 @@ program
       progress: options.progress,
       cache: options.cache,
       envVars: options.env,
-      timeout: options.timeout,
-      buildTimeout: options.buildTimeout,
     });
   });
 

@@ -4,10 +4,8 @@
 
 Tests marked with `@critical` and `[critical]` prefix cover security-sensitive code paths that **must never regress**. These tests validate the security boundary of the Docker sandbox.
 
-### Path Traversal Prevention (5 tests)
+### Path Traversal Prevention (3 tests)
 - `[critical] resolveForDocker rejects path traversal` - Blocks `../../etc/passwd` attacks
-- `[critical] validateSafePath rejects outside home` - Ensures paths stay within home directory
-- `[critical] validateSafePath rejects symlink` - Prevents symlink escape from sandbox
 - `[critical] PathError for path traversal attempt` - Validates `../` rejection in project paths
 - `[critical] resolveForDocker rejects null bytes` - Blocks null byte injection
 

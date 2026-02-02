@@ -28,7 +28,7 @@ sudo usermod -aG docker $USER
 
 **Fix:**
 ```bash
-ccbox prune --system  # Clean all Docker resources
+ccbox clean --deep    # Remove all ccbox resources + temp files
 # Or manually:
 docker system prune -a
 ```
@@ -112,7 +112,7 @@ Use `ccbox stacks` to list all available stacks.
 ```bash
 ccbox --stack=<stack>  # Auto-builds if missing
 # Or rebuild explicitly:
-ccbox update --stack=<stack>
+ccbox rebuild --stack=<stack>
 ```
 
 ## Performance Issues
