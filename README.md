@@ -34,9 +34,12 @@ That's it. ccbox detects your project type, builds an image with the right tools
 ```bash
 ccbox                        # Interactive session
 ccbox -y                     # Skip all prompts (CI/CD, scripts)
-ccbox -p "fix the tests"     # Start with a prompt
+ccbox -p "fix the tests"     # Start with a prompt (passthrough to Claude)
+ccbox -c                     # Continue most recent session
+ccbox -r                     # Resume a previous session
 ccbox -s python              # Force specific stack
 ccbox -e MY_API_KEY=secret   # Pass env variable to container
+ccbox --allowedTools bash    # Any Claude CLI flag works
 ```
 
 ### Dependencies
@@ -68,13 +71,12 @@ ccbox --no-deps         # Skip installation
 
 ## Options
 
+**ccbox options** (container management):
+
 | Option | Default | Description |
 |--------|---------|-------------|
 | `-y, --yes` | off | Skip all prompts |
 | `-s, --stack <name>` | auto | Language stack |
-| `-p, --prompt <text>` | - | Initial prompt (enables `--print` + `--verbose`) |
-| `-m, --model <name>` | - | Model name (passed directly to Claude Code) |
-| `-q, --quiet` | off | Quiet mode (enables `--print`, shows only responses) |
 | `-b, --build` | off | Build image only, don't start |
 | `--path <path>` | `.` | Project path |
 | `-C, --chdir <dir>` | - | Change to directory before running |
@@ -83,16 +85,27 @@ ccbox --no-deps         # Skip installation
 | `--no-deps` | off | Skip dependency installation |
 | `--fresh` | off | Clean slate (auth only, no rules/settings/commands) |
 | `-d` / `-dd` | off | Debug (`-d` entrypoint logs, `-dd` + stream output) |
+| `--headless` | off | Non-interactive mode (adds `--print --output-format stream-json`) |
 | `-v, --verbose` | off | Show detection details |
 | `-U, --unrestricted` | off | Remove CPU/priority limits |
 | `-e, --env <K=V>` | - | Pass environment variable (can override defaults) |
-| `--append-system-prompt <text>` | - | Append custom instructions to system prompt |
 | `--no-prune` | off | Skip automatic cleanup of stale Docker resources |
 | `--no-cache` | off | Disable Docker build cache |
 | `--progress <mode>` | auto | Docker build progress mode (auto/plain/tty) |
 | `--no-debug-logs` | off | Don't persist debug logs |
 
-**Other commands:** `ccbox update`, `ccbox rebuild`, `ccbox clean`, `ccbox stacks`, `ccbox uninstall`, `ccbox version`
+**Claude CLI flags** are passed through automatically — any flag not listed above goes directly to Claude Code:
+
+```bash
+ccbox -p "fix tests"                    # --prompt
+ccbox -c                                # --continue
+ccbox -r                                # --resume
+ccbox -m opus                           # --model
+ccbox --allowedTools bash edit          # --allowedTools
+ccbox --append-system-prompt "Be brief" # --append-system-prompt
+```
+
+**Other commands:** `ccbox update`, `ccbox rebuild`, `ccbox clean`, `ccbox stacks`, `ccbox voice`, `ccbox paste`, `ccbox uninstall`, `ccbox version`
 
 ## Language Stacks
 
@@ -188,9 +201,10 @@ Docker container restrictions (not ccbox-specific):
 
 | Limitation | Workaround |
 |------------|------------|
-| No image paste (no clipboard) | Save image to project, reference by path |
 | No Docker-in-Docker | Use host Docker if needed |
 | No GUI apps | Use CLI alternatives |
+
+> **Clipboard:** Use `ccbox paste` to send clipboard images into a running container.
 
 <details>
 <summary><b>Cross-platform path translation</b></summary>
