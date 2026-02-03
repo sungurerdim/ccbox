@@ -57,8 +57,9 @@ ccbox --no-deps         # Skip installation
 1. Detects project type (package.json? Cargo.toml?)
 2. Builds or reuses a Docker image with the right language tools
 3. Installs project dependencies
-4. Mounts project directory + forwards Git config and `~/.claude`
-5. Launches Claude Code with bypass mode
+4. Auto-detects Git credentials and SSH keys from host
+5. Mounts project directory + `~/.claude`
+6. Launches Claude Code with bypass mode
 
 **What's inside the container:**
 
@@ -66,7 +67,8 @@ ccbox --no-deps         # Skip installation
 |------------|----------------|
 | Your project directory (read/write) | Everything else on your system |
 | `~/.claude` settings and credentials | Other projects |
-| Git config from host | Host shell, processes, network services |
+| Git credentials (auto-detected) | Host shell, processes |
+| SSH agent (if running on host) | Other network services |
 | Pre-installed language tools + deps | |
 
 ## Options
@@ -89,6 +91,10 @@ ccbox --no-deps         # Skip installation
 | `-v, --verbose` | off | Show detection details |
 | `-U, --unrestricted` | off | Remove CPU/priority limits |
 | `-e, --env <K=V>` | - | Pass environment variable (can override defaults) |
+| `--memory <limit>` | 4g | Container memory limit |
+| `--cpus <limit>` | 2.0 | Container CPU limit |
+| `--network <policy>` | full | Network policy (full/isolated) |
+| `--zero-residue` | off | Zero-trace mode (no cache/logs left behind) |
 | `--no-prune` | off | Skip automatic cleanup of stale Docker resources |
 | `--no-cache` | off | Disable Docker build cache |
 | `--progress <mode>` | auto | Docker build progress mode (auto/plain/tty) |
@@ -106,6 +112,29 @@ ccbox --append-system-prompt "Be brief" # --append-system-prompt
 ```
 
 **Other commands:** `ccbox update`, `ccbox rebuild`, `ccbox clean`, `ccbox stacks`, `ccbox voice`, `ccbox paste`, `ccbox uninstall`, `ccbox version`
+
+### Git & SSH (Zero-Config)
+
+ccbox auto-detects your Git credentials and SSH agent — no manual setup needed.
+
+```bash
+$ ccbox
+Git: Your Name + token      # ← Auto-detected from gh CLI or credential helper
+SSH: agent forwarded        # ← If ssh-agent is running on host
+```
+
+| Source | Token | Identity | SSH |
+|--------|-------|----------|-----|
+| `gh` CLI (authenticated) | ✅ | ✅ (from GitHub API) | - |
+| Git credential helper | ✅ | ✅ (from git config) | - |
+| SSH agent | - | - | ✅ |
+
+Inside the container, `git push`, `gh pr create`, and `ssh` commands work automatically.
+
+**Security:**
+- SSH private keys never enter the container — only the agent socket is forwarded (read-only)
+- GitHub tokens are passed as environment variables, not stored on disk
+- Credentials are only forwarded if already configured on host
 
 ## Language Stacks
 

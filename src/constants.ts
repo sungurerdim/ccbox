@@ -4,9 +4,15 @@
  * All timeout values and shared constants are defined here (SSOT).
  */
 
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 // === Version (SSOT: package.json) ===
 import pkg from "../package.json" with { type: "json" };
 export const VERSION: string = pkg.version;
+
+// === CCBOX Naming (SSOT) ===
+export const CCBOX_PREFIX = "ccbox";
 
 // === Docker Timeouts (milliseconds) ===
 export const DOCKER_COMMAND_TIMEOUT = 30_000; // Quick docker commands (info, inspect, ps)
@@ -45,3 +51,61 @@ export const PRIORITY = {
   HIGH: 5,     // Standard package managers
   LOW: 3,      // Fallback package managers
 } as const;
+
+// === CCBOX Temp Paths (SSOT) ===
+/** Get base temp directory for ccbox. */
+export function getCcboxTempDir(): string {
+  return join(tmpdir(), CCBOX_PREFIX);
+}
+
+/** Get temp directory for Docker builds. */
+export function getCcboxTempBuild(subdir?: string): string {
+  const base = join(getCcboxTempDir(), "build");
+  return subdir ? join(base, subdir) : base;
+}
+
+/** Get temp directory for clipboard operations. */
+export function getCcboxTempClipboard(): string {
+  return join(getCcboxTempDir(), "clipboard");
+}
+
+/** Get temp directory for voice operations. */
+export function getCcboxTempVoice(): string {
+  return join(getCcboxTempDir(), "voice");
+}
+
+// === CCBOX Environment Variables (SSOT for names) ===
+export const CCBOX_ENV = {
+  // Container configuration
+  UID: "CCBOX_UID",
+  GID: "CCBOX_GID",
+  DEBUG: "CCBOX_DEBUG",
+  UNRESTRICTED: "CCBOX_UNRESTRICTED",
+  MINIMAL_MOUNT: "CCBOX_MINIMAL_MOUNT",
+  PERSISTENT_PATHS: "CCBOX_PERSISTENT_PATHS",
+  ZERO_RESIDUE: "CCBOX_ZERO_RESIDUE",
+  // Path mapping
+  PATH_MAP: "CCBOX_PATH_MAP",
+  DIR_MAP: "CCBOX_DIR_MAP",
+  WIN_ORIGINAL_PATH: "CCBOX_WIN_ORIGINAL_PATH",
+  // Resource limits (user-configurable via host env)
+  PIDS_LIMIT: "CCBOX_PIDS_LIMIT",
+  TMP_SIZE: "CCBOX_TMP_SIZE",
+  SHM_SIZE: "CCBOX_SHM_SIZE",
+  // Resource limits (new)
+  MEMORY_LIMIT: "CCBOX_MEMORY_LIMIT",
+  CPU_LIMIT: "CCBOX_CPU_LIMIT",
+  // Network isolation
+  NETWORK_POLICY: "CCBOX_NETWORK_POLICY",
+} as const;
+
+// === Default Resource Limits ===
+export const DEFAULT_MEMORY_LIMIT = "4g";
+export const DEFAULT_CPU_LIMIT = "2.0";
+
+// === Filesystem Isolation ===
+// NOTE: ccbox already has secure defaults:
+//   - Only mounts: project dir + ~/.claude (required for Claude Code)
+//   - Git identity passed via GIT_AUTHOR_NAME/EMAIL env vars
+//   - ~/.ssh, ~/.aws, ~/.kube etc. are NEVER mounted
+// No explicit sensitive path list needed - secure by design.

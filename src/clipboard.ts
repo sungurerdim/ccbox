@@ -11,32 +11,48 @@
  */
 
 import { existsSync, mkdirSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { exec } from "./exec.js";
 import { log } from "./logger.js";
 import { detectHostPlatform } from "./platform.js";
 import { getDockerEnv } from "./paths.js";
-import { DOCKER_COMMAND_TIMEOUT } from "./constants.js";
+import { DOCKER_COMMAND_TIMEOUT, getCcboxTempClipboard } from "./constants.js";
+import { findRunningContainer } from "./docker-utils.js";
 
-/**
- * Find a running ccbox container.
- *
- * @returns Container name or null if none found.
- */
-async function findRunningContainer(): Promise<string | null> {
-  try {
-    const result = await exec("docker", [
-      "ps", "--format", "{{.Names}}",
-      "--filter", "name=ccbox",
-    ], { timeout: DOCKER_COMMAND_TIMEOUT, env: getDockerEnv() });
+/** Clipboard read timeout in milliseconds. */
+const CLIPBOARD_TIMEOUT = 10_000;
 
-    const containers = result.stdout.trim().split("\n").filter(Boolean);
-    return containers[0] ?? null;
-  } catch {
-    return null;
+/** Read clipboard image on Windows (native or WSL). */
+async function readClipboardWindows(tmpFile: string): Promise<{ exitCode: number } | null> {
+  const winPath = tmpFile.replace(/\//g, "\\");
+  return exec("powershell.exe", [
+    "-NoProfile", "-Command",
+    `$img = Get-Clipboard -Format Image; if ($img) { $img.Save('${winPath}', [System.Drawing.Imaging.ImageFormat]::Png) } else { exit 1 }`,
+  ], { timeout: CLIPBOARD_TIMEOUT });
+}
+
+/** Read clipboard image on macOS. */
+async function readClipboardMacOS(tmpFile: string): Promise<{ exitCode: number } | null> {
+  return exec("bash", [
+    "-c",
+    `osascript -e 'set png to (the clipboard as «class PNGf»)' -e 'set f to open for access POSIX file "${tmpFile}" with write permission' -e 'write png to f' -e 'close access f' 2>/dev/null`,
+  ], { timeout: CLIPBOARD_TIMEOUT });
+}
+
+/** Read clipboard image on Linux (X11 or Wayland). */
+async function readClipboardLinux(tmpFile: string): Promise<{ exitCode: number } | null> {
+  const { env: procEnv } = await import("node:process");
+
+  if (procEnv.WAYLAND_DISPLAY) {
+    return exec("bash", ["-c", `wl-paste --type image/png > "${tmpFile}"`], { timeout: CLIPBOARD_TIMEOUT });
   }
+  if (procEnv.DISPLAY) {
+    return exec("bash", ["-c", `xclip -selection clipboard -t image/png -o > "${tmpFile}"`], { timeout: CLIPBOARD_TIMEOUT });
+  }
+
+  log.warn("No display server detected (X11/Wayland). Cannot access clipboard.");
+  return null;
 }
 
 /**
@@ -46,41 +62,24 @@ async function findRunningContainer(): Promise<string | null> {
  */
 async function readClipboardImage(): Promise<string | null> {
   const platform = detectHostPlatform();
-  const tmpDir = join(tmpdir(), "ccbox", "clipboard");
+  const tmpDir = getCcboxTempClipboard();
   mkdirSync(tmpDir, { recursive: true });
   const tmpFile = join(tmpDir, `paste-${Date.now()}.png`);
 
   try {
-    let result;
+    let result: { exitCode: number } | null = null;
 
     switch (platform) {
       case "windows-native":
       case "windows-wsl":
-        result = await exec("powershell.exe", [
-          "-NoProfile", "-Command",
-          `$img = Get-Clipboard -Format Image; if ($img) { $img.Save('${tmpFile.replace(/\//g, "\\")}', [System.Drawing.Imaging.ImageFormat]::Png) } else { exit 1 }`,
-        ], { timeout: 10_000 });
+        result = await readClipboardWindows(tmpFile);
         break;
-
       case "macos":
-        result = await exec("bash", [
-          "-c",
-          `osascript -e 'set png to (the clipboard as «class PNGf»)' -e 'set f to open for access POSIX file "${tmpFile}" with write permission' -e 'write png to f' -e 'close access f' 2>/dev/null`,
-        ], { timeout: 10_000 });
+        result = await readClipboardMacOS(tmpFile);
         break;
-
-      case "linux": {
-        const { env: procEnv } = await import("node:process");
-        if (procEnv.WAYLAND_DISPLAY) {
-          result = await exec("bash", ["-c", `wl-paste --type image/png > "${tmpFile}"`], { timeout: 10_000 });
-        } else if (procEnv.DISPLAY) {
-          result = await exec("bash", ["-c", `xclip -selection clipboard -t image/png -o > "${tmpFile}"`], { timeout: 10_000 });
-        } else {
-          log.warn("No display server detected (X11/Wayland). Cannot access clipboard.");
-          return null;
-        }
+      case "linux":
+        result = await readClipboardLinux(tmpFile);
         break;
-      }
     }
 
     if (result && result.exitCode === 0 && existsSync(tmpFile)) {
@@ -129,17 +128,32 @@ export async function pasteToContainer(containerName?: string): Promise<boolean>
 
   // Copy image to container
   const filename = `clipboard-${Date.now()}.png`;
+  const containerPath = `/tmp/clipboard/${filename}`;
+
   try {
-    const result = await exec("docker", [
-      "cp", imagePath, `${container}:/tmp/clipboard/${filename}`,
+    const copyResult = await exec("docker", [
+      "cp", imagePath, `${container}:${containerPath}`,
     ], { timeout: DOCKER_COMMAND_TIMEOUT, env: getDockerEnv() });
 
-    if (result.exitCode === 0) {
-      log.success(`Image pasted to container: /tmp/clipboard/${filename}`);
-      return true;
+    if (copyResult.exitCode !== 0) {
+      log.error("Failed to copy image to container");
+      return false;
     }
+
+    // Inject path reference into active session
+    const injectResult = await exec("docker", [
+      "exec", container, "/usr/local/bin/ccbox-inject",
+      `Look at this image I just pasted: ${containerPath}`,
+    ], { timeout: 10_000, env: getDockerEnv() });
+
+    if (injectResult.exitCode === 0) {
+      log.success("Image pasted and sent to active session");
+    } else {
+      log.warn(`Image copied but injection failed: ${containerPath}`);
+    }
+    return true;
   } catch (e) {
-    log.error(`Failed to copy image to container: ${String(e)}`);
+    log.error(`Failed to paste to container: ${String(e)}`);
   }
 
   return false;

@@ -5,10 +5,7 @@
  */
 
 import { exec, execInherit } from "../exec.js";
-import {
-  type Config,
-  LanguageStack,
-} from "../config.js";
+import { LanguageStack } from "../config.js";
 import { DOCKER_COMMAND_TIMEOUT } from "../constants.js";
 import type { DepsInfo, DepsMode } from "../deps.js";
 import { detectDependencies } from "../deps.js";
@@ -21,7 +18,7 @@ import {
   projectImageExists,
 } from "../build.js";
 import { pruneStaleResources, cleanOrphanedBuildDirs } from "../cleanup.js";
-import { resolveStack, setupGitConfig } from "../prompts.js";
+import { resolveStack } from "../prompts.js";
 import { checkDocker, ERR_DOCKER_NOT_RUNNING } from "../utils.js";
 import { detectAndReportStack } from "./run-phases.js";
 import { ensureBaseImage, ensureStackImage, buildProjectIfNeeded } from "./build-helpers.js";
@@ -80,7 +77,6 @@ async function diagnoseContainerFailure(returncode: number, projectName: string)
  * Execute the container with Claude Code.
  */
 async function executeContainer(
-  config: Config,
   projectPath: string,
   projectName: string,
   stack: LanguageStack,
@@ -93,6 +89,11 @@ async function executeContainer(
     unrestricted?: boolean;
     envVars?: string[];
     claudeArgs?: string[];
+    // New options
+    zeroResidue?: boolean;
+    memoryLimit?: string;
+    cpuLimit?: string;
+    networkPolicy?: string;
   } = {}
 ): Promise<void> {
   const {
@@ -104,12 +105,17 @@ async function executeContainer(
     unrestricted = false,
     envVars,
     claudeArgs,
+    // New options
+    zeroResidue = false,
+    memoryLimit = "4g",
+    cpuLimit = "2.0",
+    networkPolicy = "full",
   } = options;
 
   log.dim("Starting Claude Code...");
   log.newline();
 
-  const cmd = getDockerRunCmd(config, projectPath, projectName, stack, {
+  const cmd = await getDockerRunCmd(projectPath, projectName, stack, {
     fresh,
     ephemeralLogs,
     debug,
@@ -118,6 +124,11 @@ async function executeContainer(
     unrestricted,
     envVars,
     claudeArgs,
+    // New options
+    zeroResidue,
+    memoryLimit,
+    cpuLimit,
+    networkPolicy,
   });
 
   // Debug: print docker command
@@ -178,7 +189,6 @@ async function executeContainer(
  * Try to run using existing project image. Returns true if handled.
  */
 async function tryRunExistingImage(
-  config: Config,
   projectPath: string,
   projectName: string,
   stack: LanguageStack,
@@ -191,6 +201,10 @@ async function tryRunExistingImage(
     unrestricted?: boolean;
     envVars?: string[];
     claudeArgs?: string[];
+    zeroResidue?: boolean;
+    memoryLimit?: string;
+    cpuLimit?: string;
+    networkPolicy?: string;
   } = {}
 ): Promise<boolean> {
   if (!(await projectImageExists(projectName, stack))) {
@@ -208,7 +222,7 @@ async function tryRunExistingImage(
     return true;
   }
 
-  await executeContainer(config, projectPath, projectName, stack, {
+  await executeContainer( projectPath, projectName, stack, {
     ...options,
     projectImage,
   });
@@ -219,7 +233,6 @@ async function tryRunExistingImage(
  * Build images and run container (Phase 3).
  */
 async function buildAndRun(
-  config: Config,
   projectPath: string,
   projectName: string,
   selectedStack: LanguageStack,
@@ -236,6 +249,10 @@ async function buildAndRun(
     cache?: boolean;
     envVars?: string[];
     claudeArgs?: string[];
+    zeroResidue?: boolean;
+    memoryLimit?: string;
+    cpuLimit?: string;
+    networkPolicy?: string;
   } = {}
 ): Promise<void> {
   const { progress = "auto", cache = true } = options;
@@ -256,7 +273,7 @@ async function buildAndRun(
     return;
   }
 
-  await executeContainer(config, projectPath, projectName, selectedStack, {
+  await executeContainer( projectPath, projectName, selectedStack, {
     ...options,
     projectImage: builtProjectImage,
   });
@@ -283,6 +300,11 @@ export async function run(
     cache?: boolean;
     envVars?: string[];
     claudeArgs?: string[];
+    // New options
+    zeroResidue?: boolean;
+    memoryLimit?: string;
+    cpuLimit?: string;
+    networkPolicy?: string;
   } = {}
 ): Promise<void> {
   const {
@@ -299,6 +321,11 @@ export async function run(
     cache = true,
     envVars,
     claudeArgs,
+    // New options
+    zeroResidue = false,
+    memoryLimit = "4g",
+    cpuLimit = "2.0",
+    networkPolicy = "full",
   } = options;
 
   if (!(await checkDocker())) {
@@ -314,7 +341,6 @@ export async function run(
   }
 
   // Phase 1: Detect project type and resolve initial stack
-  const config = await setupGitConfig();
   const { projectPath, projectName, stack: initialStack } = detectAndReportStack(path, {
     stackName,
     verbose,
@@ -322,7 +348,7 @@ export async function run(
 
   // Phase 1: Try existing project image (skip prompts if found)
   if (
-    await tryRunExistingImage(config, projectPath, projectName, initialStack, buildOnly, {
+    await tryRunExistingImage(projectPath, projectName, initialStack, buildOnly, {
       fresh,
       ephemeralLogs,
       debug,
@@ -330,6 +356,10 @@ export async function run(
       unrestricted,
       envVars,
       claudeArgs,
+      zeroResidue,
+      memoryLimit,
+      cpuLimit,
+      networkPolicy,
     })
   ) {
     return;
@@ -368,7 +398,7 @@ export async function run(
   }
 
   // Phase 3: Build and run
-  await buildAndRun(config, projectPath, projectName, selectedStack, depsList, resolvedDepsMode, buildOnly, {
+  await buildAndRun(projectPath, projectName, selectedStack, depsList, resolvedDepsMode, buildOnly, {
     fresh,
     ephemeralLogs,
     debug,
@@ -378,5 +408,9 @@ export async function run(
     cache,
     envVars,
     claudeArgs,
+    zeroResidue,
+    memoryLimit,
+    cpuLimit,
+    networkPolicy,
   });
 }

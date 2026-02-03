@@ -25,9 +25,9 @@ const G = "\x1b[32m", R = "\x1b[31m", Y = "\x1b[33m", B = "\x1b[1m", D = "\x1b[2
 let passed = 0, failed = 0, skipped = 0;
 const failures = [];
 
-function test(name, fn) {
+async function test(name, fn) {
   try {
-    const result = fn();
+    const result = await fn();
     if (result === "skip") {
       console.log(`${Y}○${X} ${D}${name} (skipped)${X}`);
       skipped++;
@@ -573,6 +573,12 @@ test("generateEntrypoint has valid bash shebang and claude", () => {
   return entrypoint.startsWith("#!/bin/bash") && entrypoint.includes("claude");
 });
 
+// Bug prevented: tmux session wrapper missing from entrypoint
+test("generateEntrypoint includes tmux session wrapper", () => {
+  const entrypoint = generator.generateEntrypoint();
+  return entrypoint.includes("tmux") && entrypoint.includes("ccbox-inject");
+});
+
 // Bug prevented: writeBuildFiles not creating required files
 test("writeBuildFiles creates Dockerfile and entrypoint.sh", () => {
   const buildDir = generator.writeBuildFiles(LanguageStack.BASE);
@@ -921,73 +927,73 @@ console.log(`\n${B}[17/18] Docker Runtime Tests${X}`);
 const dockerRuntime = await importModule(join(ROOT, "src/docker-runtime.ts"));
 
 // Bug prevented: Missing options causing undefined behavior
-test("getDockerRunCmd with minimal options", () => {
+test("getDockerRunCmd with minimal options", async () => {
   const cfg = createConfig();
-  const cmd = dockerRuntime.getDockerRunCmd(cfg, testDir, "test-proj", LanguageStack.BASE, {});
+  const cmd = await dockerRuntime.getDockerRunCmd(testDir, "test-proj", LanguageStack.BASE, {});
   return Array.isArray(cmd) && cmd.includes("docker") && cmd.includes("run");
 });
 
 // Bug prevented: Fresh mode not activating minimal mounts
-test("getDockerRunCmd fresh mode includes minimal mount signal", () => {
+test("getDockerRunCmd fresh mode includes minimal mount signal", async () => {
   const cfg = createConfig();
-  const cmd = dockerRuntime.getDockerRunCmd(cfg, testDir, "test-proj", LanguageStack.BASE, { fresh: true });
+  const cmd = await dockerRuntime.getDockerRunCmd(testDir, "test-proj", LanguageStack.BASE, { fresh: true });
   const cmdStr = cmd.join(" ");
   // Fresh mode should signal minimal mount
   return cmdStr.includes("CCBOX_MINIMAL_MOUNT") || cmdStr.includes("tmpfs");
 });
 
 // Bug prevented: Debug mode not setting environment
-test("getDockerRunCmd debug mode sets CCBOX_DEBUG", () => {
+test("getDockerRunCmd debug mode sets CCBOX_DEBUG", async () => {
   const cfg = createConfig();
-  const cmd = dockerRuntime.getDockerRunCmd(cfg, testDir, "test-proj", LanguageStack.WEB, { debug: 2 });
+  const cmd = await dockerRuntime.getDockerRunCmd(testDir, "test-proj", LanguageStack.WEB, { debug: 2 });
   return cmd.some(arg => arg.includes("CCBOX_DEBUG=2"));
 });
 
 // Bug prevented: Unrestricted mode not removing limits
-test("getDockerRunCmd unrestricted mode sets CCBOX_UNRESTRICTED", () => {
+test("getDockerRunCmd unrestricted mode sets CCBOX_UNRESTRICTED", async () => {
   const cfg = createConfig();
-  const cmd = dockerRuntime.getDockerRunCmd(cfg, testDir, "test-proj", LanguageStack.PYTHON, { unrestricted: true });
+  const cmd = await dockerRuntime.getDockerRunCmd(testDir, "test-proj", LanguageStack.PYTHON, { unrestricted: true });
   return cmd.some(arg => arg.includes("CCBOX_UNRESTRICTED=1"));
 });
 
 // Bug prevented: Claude args not passed through to docker command
-test("getDockerRunCmd with claudeArgs includes args", () => {
+test("getDockerRunCmd with claudeArgs includes args", async () => {
   const cfg = createConfig();
-  const cmd = dockerRuntime.getDockerRunCmd(cfg, testDir, "test-proj", LanguageStack.BASE, { claudeArgs: ["-p", "hello world"] });
+  const cmd = await dockerRuntime.getDockerRunCmd(testDir, "test-proj", LanguageStack.BASE, { claudeArgs: ["-p", "hello world"] });
   return cmd.includes("hello world");
 });
 
 // Bug prevented: Headless mode not setting --print
-test("getDockerRunCmd headless mode includes print flag", () => {
+test("getDockerRunCmd headless mode includes print flag", async () => {
   const cfg = createConfig();
-  const cmd = dockerRuntime.getDockerRunCmd(cfg, testDir, "test-proj", LanguageStack.BASE, { headless: true });
+  const cmd = await dockerRuntime.getDockerRunCmd(testDir, "test-proj", LanguageStack.BASE, { headless: true });
   return cmd.includes("--print");
 });
 
 // Bug prevented: Model via claudeArgs not passed through
-test("getDockerRunCmd model via claudeArgs passed correctly", () => {
+test("getDockerRunCmd model via claudeArgs passed correctly", async () => {
   const cfg = createConfig();
-  const cmd = dockerRuntime.getDockerRunCmd(cfg, testDir, "test-proj", LanguageStack.BASE, { claudeArgs: ["--model", "opus"] });
+  const cmd = await dockerRuntime.getDockerRunCmd(testDir, "test-proj", LanguageStack.BASE, { claudeArgs: ["--model", "opus"] });
   const modelIdx = cmd.indexOf("--model");
   return modelIdx !== -1 && cmd[modelIdx + 1] === "opus";
 });
 
 // Bug prevented: Custom env vars not passed
-test("getDockerRunCmd custom envVars included", () => {
+test("getDockerRunCmd custom envVars included", async () => {
   const cfg = createConfig();
-  const cmd = dockerRuntime.getDockerRunCmd(cfg, testDir, "test-proj", LanguageStack.BASE, { envVars: ["MY_VAR=value"] });
+  const cmd = await dockerRuntime.getDockerRunCmd(testDir, "test-proj", LanguageStack.BASE, { envVars: ["MY_VAR=value"] });
   return cmd.some(arg => arg === "MY_VAR=value");
 });
 
 // Bug prevented: appendSystemPrompt via claudeArgs included
-test("getDockerRunCmd appendSystemPrompt via claudeArgs included", () => {
+test("getDockerRunCmd appendSystemPrompt via claudeArgs included", async () => {
   const cfg = createConfig();
-  const cmd = dockerRuntime.getDockerRunCmd(cfg, testDir, "test-proj", LanguageStack.BASE, { claudeArgs: ["--append-system-prompt", "Be helpful"] });
+  const cmd = await dockerRuntime.getDockerRunCmd(testDir, "test-proj", LanguageStack.BASE, { claudeArgs: ["--append-system-prompt", "Be helpful"] });
   return cmd.some(arg => arg.includes("Be helpful"));
 });
 
 // Bug prevented: Worktree projects failing git operations inside container
-test("getDockerRunCmd mounts main .git for worktree", () => {
+test("getDockerRunCmd mounts main .git for worktree", async () => {
   // Simulate a git worktree: .git is a file pointing to main repo's .git/worktrees/<name>
   const worktreeDir = join(tmpdir(), `ccbox-worktree-test-${Date.now()}`);
   const mainRepoDir = join(tmpdir(), `ccbox-main-repo-test-${Date.now()}`);
@@ -998,7 +1004,7 @@ test("getDockerRunCmd mounts main .git for worktree", () => {
   writeFileSync(join(worktreeDir, ".git"), `gitdir: ${worktreeGitDir}\n`);
   try {
     const cfg = createConfig();
-    const cmd = dockerRuntime.getDockerRunCmd(cfg, worktreeDir, "wt-proj", LanguageStack.BASE, {});
+    const cmd = await dockerRuntime.getDockerRunCmd( worktreeDir, "wt-proj", LanguageStack.BASE, {});
     const cmdStr = cmd.join(" ");
     // Should mount the main .git directory
     const mainGitDir = join(mainRepoDir, ".git");
@@ -1009,13 +1015,13 @@ test("getDockerRunCmd mounts main .git for worktree", () => {
   }
 });
 
-test("getDockerRunCmd skips worktree mount when .git is a directory", () => {
+test("getDockerRunCmd skips worktree mount when .git is a directory", async () => {
   // Normal repo: .git is a directory, no extra mount needed
   const normalDir = join(tmpdir(), `ccbox-normal-git-test-${Date.now()}`);
   mkdirSync(join(normalDir, ".git"), { recursive: true });
   try {
     const cfg = createConfig();
-    const cmd = dockerRuntime.getDockerRunCmd(cfg, normalDir, "normal-proj", LanguageStack.BASE, {});
+    const cmd = await dockerRuntime.getDockerRunCmd( normalDir, "normal-proj", LanguageStack.BASE, {});
     // Should NOT have any worktree-related mount (no extra .git mount beyond project)
     const volArgs = cmd.filter((arg, i) => i > 0 && cmd[i - 1] === "-v" && arg.includes(".git:"));
     return volArgs.length === 0;

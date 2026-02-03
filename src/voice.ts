@@ -10,14 +10,15 @@
  */
 
 import { existsSync, mkdirSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { exec } from "./exec.js";
 import { log } from "./logger.js";
 import { detectHostPlatform, commandExists } from "./platform.js";
+import { getCcboxTempVoice } from "./constants.js";
+import { findRunningContainer } from "./docker-utils.js";
 import { getDockerEnv } from "./paths.js";
-import { DOCKER_COMMAND_TIMEOUT } from "./constants.js";
 
 /** Whisper model sizes with download URLs. */
 const WHISPER_MODELS: Record<string, { size: string; url: string }> = {
@@ -206,29 +207,9 @@ export async function transcribe(audioPath: string, model = "base"): Promise<str
 }
 
 /**
- * Find a running ccbox container.
- */
-async function findRunningContainer(): Promise<string | null> {
-  try {
-    const result = await exec("docker", [
-      "ps", "--format", "{{.Names}}",
-      "--filter", "name=ccbox",
-    ], { timeout: DOCKER_COMMAND_TIMEOUT, env: getDockerEnv() });
-
-    const containers = result.stdout.trim().split("\n").filter(Boolean);
-    return containers[0] ?? null;
-  } catch {
-    return null;
-  }
-}
-
-/**
  * Send transcribed text to a running ccbox container.
  *
- * Uses docker exec to send the text as a prompt to Claude Code.
- * Note: This creates a new non-interactive prompt, not injection into
- * an existing session. For interactive session injection, tmux integration
- * would be needed (future enhancement).
+ * Injects text into the active Claude Code session via ccbox-inject (tmux).
  *
  * @param text - Transcribed text to send.
  * @param containerName - Optional container name.
@@ -245,16 +226,14 @@ export async function sendToContainer(text: string, containerName?: string): Pro
 
   try {
     const result = await exec("docker", [
-      "exec", container,
-      "claude", "--dangerously-skip-permissions", "-p", text,
-    ], { timeout: 120_000, env: getDockerEnv() });
+      "exec", container, "/usr/local/bin/ccbox-inject", text,
+    ], { timeout: 10_000, env: getDockerEnv() });
 
     if (result.exitCode === 0) {
-      if (result.stdout.trim()) {
-        console.log(result.stdout);
-      }
+      log.success("Voice input sent to active session");
       return true;
     }
+    log.error(`Injection failed: ${result.stderr}`);
   } catch (e) {
     log.error(`Failed to send to container: ${String(e)}`);
   }
@@ -292,7 +271,7 @@ export async function voicePipeline(options: {
   }
 
   // Record audio
-  const tmpDir = join(tmpdir(), "ccbox", "voice");
+  const tmpDir = getCcboxTempVoice();
   mkdirSync(tmpDir, { recursive: true });
   const audioPath = join(tmpDir, `recording-${Date.now()}.wav`);
 
