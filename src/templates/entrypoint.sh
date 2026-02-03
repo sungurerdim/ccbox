@@ -231,16 +231,12 @@ FAKEPATH_PRELOAD=""
 # === Execute ===
 if [[ -n "$CCBOX_CMD" ]]; then
     exec $EXEC_PREFIX env $FAKEPATH_PRELOAD $CCBOX_CMD "$@"
-elif [[ -n "$CCBOX_NO_TMUX" ]]; then
-    [[ -t 1 ]] && printf '\e[?2026h' 2>/dev/null || true
-    [[ -t 1 ]] && exec $EXEC_PREFIX env $FAKEPATH_PRELOAD $PRIORITY_CMD claude "$@"
-    exec $EXEC_PREFIX env $FAKEPATH_PRELOAD stdbuf -oL -eL $PRIORITY_CMD claude "$@"
 else
-    _log "tmux session: ccbox"
+    # Direct execution (no tmux wrapper - cleaner, avoids multi-line arg issues)
     [[ -t 1 ]] && printf '\e[?2026h' 2>/dev/null || true
-    ESCAPED_ARGS=""
-    for arg in "$@"; do ESCAPED_ARGS="$ESCAPED_ARGS $(printf '%q' "$arg")"; done
-    CLAUDE_CMD="$PRIORITY_CMD claude$ESCAPED_ARGS"
-    [[ ! -t 1 ]] && CLAUDE_CMD="stdbuf -oL -eL $CLAUDE_CMD"
-    exec $EXEC_PREFIX env $FAKEPATH_PRELOAD tmux new-session -s ccbox \; set-option status off \; send-keys "$CLAUDE_CMD" Enter
+    if [[ -t 1 ]]; then
+        exec $EXEC_PREFIX env $FAKEPATH_PRELOAD $PRIORITY_CMD claude "$@"
+    else
+        exec $EXEC_PREFIX env $FAKEPATH_PRELOAD stdbuf -oL -eL $PRIORITY_CMD claude "$@"
+    fi
 fi
