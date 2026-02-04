@@ -10,7 +10,7 @@
  *   It should NOT import from: cli, generator, docker-runtime
  */
 
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { exec } from "./exec.js";
@@ -19,6 +19,12 @@ import { detectHostPlatform } from "./platform.js";
 import { getDockerEnv } from "./paths.js";
 import { DOCKER_COMMAND_TIMEOUT, getCcboxTempClipboard } from "./constants.js";
 import { findRunningContainer } from "./docker-utils.js";
+
+/** Clipboard content for bridge mode. */
+export interface ClipboardContent {
+  type: "image" | "text";
+  content: Buffer | string;
+}
 
 /** Clipboard read timeout in milliseconds. */
 const CLIPBOARD_TIMEOUT = 10_000;
@@ -157,4 +163,75 @@ export async function pasteToContainer(containerName?: string): Promise<boolean>
   }
 
   return false;
+}
+
+/**
+ * Read clipboard content for bridge mode.
+ *
+ * Returns the clipboard content (image or text) for writing to .claude/input/.
+ * Does NOT use docker cp - bridge writes directly via bind mount.
+ *
+ * @returns Clipboard content or null if empty/unsupported.
+ */
+export async function readClipboardForBridge(): Promise<ClipboardContent | null> {
+  // Try image first
+  const imagePath = await readClipboardImage();
+  if (imagePath && existsSync(imagePath)) {
+    try {
+      const content = readFileSync(imagePath);
+      return { type: "image", content };
+    } catch {
+      // Fall through to text
+    }
+  }
+
+  // Try text
+  const text = await readClipboardText();
+  if (text && text.trim()) {
+    return { type: "text", content: text };
+  }
+
+  return null;
+}
+
+/**
+ * Read text from clipboard.
+ */
+async function readClipboardText(): Promise<string | null> {
+  const platform = detectHostPlatform();
+
+  try {
+    let result: { exitCode: number; stdout: string } | null = null;
+
+    switch (platform) {
+      case "windows-native":
+      case "windows-wsl":
+        result = await exec("powershell.exe", [
+          "-NoProfile", "-Command", "Get-Clipboard",
+        ], { timeout: CLIPBOARD_TIMEOUT });
+        break;
+
+      case "macos":
+        result = await exec("pbpaste", [], { timeout: CLIPBOARD_TIMEOUT });
+        break;
+
+      case "linux": {
+        const { env: procEnv } = await import("node:process");
+        if (procEnv.WAYLAND_DISPLAY) {
+          result = await exec("wl-paste", [], { timeout: CLIPBOARD_TIMEOUT });
+        } else if (procEnv.DISPLAY) {
+          result = await exec("xclip", ["-selection", "clipboard", "-o"], { timeout: CLIPBOARD_TIMEOUT });
+        }
+        break;
+      }
+    }
+
+    if (result && result.exitCode === 0) {
+      return result.stdout;
+    }
+  } catch (e) {
+    log.debug(`Clipboard text read failed: ${String(e)}`);
+  }
+
+  return null;
 }

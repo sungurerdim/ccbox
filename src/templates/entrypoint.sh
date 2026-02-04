@@ -2,8 +2,8 @@
 # ccbox entrypoint - container initialization and Claude Code launcher
 
 # === Logging ===
-_log() { [[ -n "$CCBOX_DEBUG" ]] && echo "[ccbox] $*"; }
-_log_verbose() { [[ "$CCBOX_DEBUG" == "2" ]] && echo "[ccbox:debug] $*"; }
+_log() { [[ -n "$CCBOX_DEBUG" ]] && echo "[ccbox] $*" || true; }
+_log_verbose() { [[ "$CCBOX_DEBUG" == "2" ]] && echo "[ccbox:debug] $*" || true; }
 _die() { echo "[ccbox:ERROR] $*" >&2; exit 1; }
 
 trap 'echo "[ccbox:ERROR] Command failed at line $LINENO: $BASH_COMMAND" >&2' ERR
@@ -37,7 +37,7 @@ set -e
 [[ -n "$TZ" && -f "/usr/share/zoneinfo/$TZ" ]] && {
     ln -sf "/usr/share/zoneinfo/$TZ" /etc/localtime 2>/dev/null || true
     echo "$TZ" > /etc/timezone 2>/dev/null || true
-}
+} || true
 
 _log "Entrypoint started (UID: $(id -u), GID: $(id -g))"
 
@@ -65,12 +65,12 @@ if [[ "$(id -u)" == "0" && -n "$CCBOX_UID" && -n "$CCBOX_GID" ]]; then
     [[ "$CCBOX_GID" != "1000" ]] && {
         getent group "$CCBOX_GID" >/dev/null 2>&1 && groupdel "$(getent group "$CCBOX_GID" | cut -d: -f1)" 2>/dev/null || true
         groupmod -g "$CCBOX_GID" ccbox 2>/dev/null || true
-    }
+    } || true
     # Update UID if needed
     [[ "$CCBOX_UID" != "1000" ]] && {
         getent passwd "$CCBOX_UID" >/dev/null 2>&1 && userdel "$(getent passwd "$CCBOX_UID" | cut -d: -f1)" 2>/dev/null || true
         usermod -u "$CCBOX_UID" ccbox 2>/dev/null || true
-    }
+    } || true
     # Fix ownership
     for dir in /ccbox /ccbox/.cache /ccbox/.npm /ccbox/.local /ccbox/.config; do
         [[ -d "$dir" ]] && chown "$CCBOX_UID:$CCBOX_GID" "$dir" 2>/dev/null || true

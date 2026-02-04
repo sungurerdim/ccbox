@@ -294,3 +294,117 @@ export async function voicePipeline(options: {
   // Send to container
   return sendToContainer(text, containerName);
 }
+
+/**
+ * Voice pipeline for bridge mode (push-to-talk with Enter to stop).
+ *
+ * Records until Enter is pressed, transcribes, returns text.
+ * Does NOT send to container - bridge handles file writing.
+ *
+ * @param model - Whisper model to use.
+ * @returns Transcribed text or null on failure.
+ */
+export async function voicePipelineBridge(model = "base"): Promise<string | null> {
+  // Check prerequisites
+  if (!isWhisperAvailable()) {
+    log.error("whisper.cpp not found in PATH.");
+    log.dim("Install: https://github.com/ggerganov/whisper.cpp");
+    return null;
+  }
+
+  // Ensure model
+  if (!(await ensureModel(model))) {
+    return null;
+  }
+
+  // Record with push-to-talk (Enter to stop)
+  const tmpDir = getCcboxTempVoice();
+  mkdirSync(tmpDir, { recursive: true });
+  const audioPath = join(tmpDir, `recording-${Date.now()}.wav`);
+
+  const recorded = await recordUntilEnter(audioPath);
+  if (!recorded) {
+    return null;
+  }
+
+  // Transcribe
+  log.dim("Transcribing...");
+  const text = await transcribe(audioPath, model);
+  return text;
+}
+
+/**
+ * Record audio until Enter is pressed (push-to-talk).
+ *
+ * @param outputPath - Path to save WAV file.
+ * @returns True if recording succeeded.
+ */
+async function recordUntilEnter(outputPath: string): Promise<boolean> {
+  const platform = detectHostPlatform();
+
+  // Start recording in background
+  let recordProcess: ReturnType<typeof exec> | null = null;
+
+  try {
+    switch (platform) {
+      case "macos":
+        if (commandExists("rec")) {
+          // sox rec - record indefinitely until killed
+          recordProcess = exec("rec", [outputPath, "trim", "0", "60"], { timeout: 65000 });
+        }
+        break;
+
+      case "linux":
+        if (commandExists("arecord")) {
+          recordProcess = exec("arecord", [
+            "-f", "S16_LE", "-r", "16000", "-c", "1",
+            "-d", "60", outputPath,
+          ], { timeout: 65000 });
+        } else if (commandExists("rec")) {
+          recordProcess = exec("rec", [outputPath, "trim", "0", "60"], { timeout: 65000 });
+        }
+        break;
+
+      case "windows-native":
+      case "windows-wsl":
+        // Windows - use PowerShell voice recording (simplified)
+        recordProcess = exec("powershell.exe", [
+          "-NoProfile", "-Command",
+          `Add-Type -AssemblyName System.Speech; Start-Sleep -Seconds 10`,
+        ], { timeout: 15000 });
+        break;
+    }
+
+    if (!recordProcess) {
+      log.warn("No audio recorder available for this platform");
+      return false;
+    }
+
+    // Wait for Enter key
+    await waitForEnter();
+
+    // Recording continues until we return
+    return existsSync(outputPath);
+  } catch (e) {
+    log.debug(`Push-to-talk recording failed: ${String(e)}`);
+    return false;
+  }
+}
+
+/**
+ * Wait for Enter key press.
+ */
+function waitForEnter(): Promise<void> {
+  return new Promise((resolve) => {
+    const readline = require("readline");
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+
+    rl.question("", () => {
+      rl.close();
+      resolve();
+    });
+  });
+}

@@ -12,7 +12,7 @@ import { log, style, enableQuietMode } from "./logger.js";
 import { VERSION } from "./constants.js";
 import { LanguageStack, STACK_INFO, filterStacks } from "./config.js";
 import { parseEnvVarStrict } from "./validation.js";
-import { loadCcboxConfig, configEnvToArray } from "./config-file.js";
+import { loadCcboxConfig, configEnvToArray, type CcboxConfig } from "./config-file.js";
 import { checkDocker, ERR_DOCKER_NOT_RUNNING } from "./utils.js";
 import { run } from "./commands/run.js";
 import { buildImage, getInstalledCcboxImages } from "./build.js";
@@ -63,6 +63,8 @@ program
   .option("-v, --verbose", "Show detection details (which files triggered stack selection)")
   .option("--progress <mode>", "Docker build progress mode (auto|plain|tty)", "auto")
   .option("--no-cache", "Disable Docker build cache (default: cache enabled)")
+  .option("--attach-mode", "Container-only mode: skip bridge UI, run container directly")
+  .option("--no-bridge", "Disable bridge mode (same as --attach-mode)")
   .option("-e, --env <KEY=VALUE...>", "Pass environment variables to container (can override defaults)", (value: string, prev: string[]) => {
     // Validate format and key (throws ValidationError on invalid input)
     parseEnvVarStrict(value);
@@ -84,6 +86,21 @@ program
     // Collect all unknown/passthrough args for Claude CLI
     const claudeArgs = command.args;
 
+    // Determine if bridge mode should be used
+    // Bridge is default unless --attach-mode or --no-bridge or -b (build only)
+    const useBridgeMode = !options.attachMode && options.bridge !== false && !options.build && !options.headless;
+
+    if (useBridgeMode) {
+      // Bridge mode: open container in separate terminal, show control UI
+      const { runBridgeMode } = await import("./bridge.js");
+      await runBridgeMode({
+        path: projectPath,
+        ccboxArgs: buildCcboxArgsForBridge(options, fileConfig, claudeArgs),
+      });
+      return;
+    }
+
+    // Attach mode (container-only): run container directly in this terminal
     // Determine deps mode from flags (CLI > config file)
     let depsMode: string | undefined = undefined;
     if (options.deps === true) {
@@ -121,6 +138,62 @@ program
       networkPolicy: options.network ?? fileConfig.networkPolicy,
     });
   });
+
+/**
+ * Build ccbox args for bridge mode to pass to container terminal.
+ */
+function buildCcboxArgsForBridge(
+  options: Record<string, unknown>,
+  fileConfig: CcboxConfig,
+  claudeArgs: string[]
+): string[] {
+  const args: string[] = [];
+
+  // Stack
+  const stack = options.stack ?? fileConfig.stack;
+  if (stack) {
+    args.push(`--stack=${stack}`);
+  }
+
+  // Fresh mode
+  if (options.fresh ?? fileConfig.fresh) {
+    args.push("--fresh");
+  }
+
+  // Debug
+  const debug = options.debug ?? fileConfig.debug;
+  if (typeof debug === "number" && debug > 0) {
+    args.push(...Array(debug).fill("-d"));
+  }
+
+  // Unrestricted
+  if (options.unrestricted ?? fileConfig.unrestricted) {
+    args.push("--unrestricted");
+  }
+
+  // Memory/CPU
+  if (options.memory && options.memory !== "4g") {
+    args.push(`--memory=${options.memory}`);
+  }
+  if (options.cpus && options.cpus !== "2.0") {
+    args.push(`--cpus=${options.cpus}`);
+  }
+
+  // Env vars
+  const envVars = options.env as string[] | undefined;
+  if (envVars && envVars.length > 0) {
+    for (const e of envVars) {
+      args.push(`-e`, e);
+    }
+  }
+
+  // Pass through Claude args
+  if (claudeArgs.length > 0) {
+    args.push(...claudeArgs);
+  }
+
+  return args;
+}
 
 // Voice command (voice-to-text with whisper.cpp)
 program
@@ -198,14 +271,15 @@ program
   .command("clean")
   .description("Remove ccbox containers, images, and temp files")
   .option("--deep", "Deep clean: also remove temp build files")
-  .action(async (options, command: Command) => {
+  .option("-y, --yes", "Skip confirmation prompts")
+  .action(async (options) => {
     if (!(await checkDocker())) {
       log.error(ERR_DOCKER_NOT_RUNNING);
       process.exit(1);
     }
 
     const isDeep = !!options.deep;
-    const skipConfirm = command.parent?.opts().yes ?? false;
+    const skipConfirm = !!options.yes;
 
     if (!skipConfirm) {
       const { confirm } = await import("./prompt-io.js");
@@ -289,18 +363,18 @@ program
   .command("update")
   .description("Update ccbox to the latest version")
   .option("--force", "Force re-download even if already up-to-date")
-  .action(async (options, command: Command) => {
-    const skipConfirm = command.parent?.opts().yes ?? false;
-    await selfUpdate({ skipConfirm, forceReinstall: !!options.force });
+  .option("-y, --yes", "Skip confirmation prompts")
+  .action(async (options) => {
+    await selfUpdate({ skipConfirm: !!options.yes, forceReinstall: !!options.force });
   });
 
 // Uninstall command
 program
   .command("uninstall")
   .description("Remove ccbox from this system")
-  .action(async (_options, command: Command) => {
-    const skipConfirm = command.parent?.opts().yes ?? false;
-    await selfUninstall(skipConfirm);
+  .option("-y, --yes", "Skip confirmation prompts")
+  .action(async (options) => {
+    await selfUninstall(!!options.yes);
   });
 
 // Version command

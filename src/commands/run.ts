@@ -38,7 +38,7 @@ async function diagnoseContainerFailure(returncode: number, projectName: string)
     return;
   }
   if (returncode === 143) {
-    log.dim("Container terminated by signal");
+    // SIGTERM - normal shutdown via quit/stop, no message needed
     return;
   }
 

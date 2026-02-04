@@ -59,6 +59,12 @@ CONSTRAINTS:
   • Process limit: ${pidsLimit}
   • /tmp is noexec — use $TMPDIR for executables
 
+INPUT MONITORING:
+  • Check .claude/input/ at each turn for new files
+  • Read and process any paste-*.png, paste-*.txt, or voice-*.txt files
+  • After processing, move files to .claude/input/.processed/
+  • Files are sent by ccbox bridge from host clipboard/microphone
+
 TOOLS: git, gh, curl, wget, ssh, jq, yq, rg, fd, python3, pip3, gcc, make + stack tools
 `.trim();
 }
