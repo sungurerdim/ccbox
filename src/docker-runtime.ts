@@ -465,6 +465,8 @@ function addClaudeEnv(cmd: string[]): void {
     "-e",
     "CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL=1",
     "-e",
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1",
+    "-e",
     "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=85",
     "-e",
     "CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR=1",

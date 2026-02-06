@@ -85,7 +85,7 @@ export async function buildImage(
   stack: LanguageStack,
   options: BuildOptions = {}
 ): Promise<boolean> {
-  const { progress = "auto", cache = true } = options;
+  const { progress = "auto", cache = false } = options;
 
   // Check if this stack depends on base image (async to avoid blocking)
   const dependency = STACK_DEPENDENCIES[stack];
@@ -210,7 +210,7 @@ export async function buildProjectImage(
   depsMode: DepsMode,
   options: BuildOptions = {}
 ): Promise<string> {
-  const { progress = "auto", cache = true } = options;
+  const { progress = "auto", cache = false } = options;
   const imageName = getProjectImageName(projectName, stack);
   const baseImage = getImageName(stack);
 

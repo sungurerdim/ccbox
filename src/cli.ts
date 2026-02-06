@@ -62,7 +62,7 @@ program
   .option("--network <policy>", "Network policy: full (default), isolated, or path to policy.json", "full")
   .option("-v, --verbose", "Show detection details (which files triggered stack selection)")
   .option("--progress <mode>", "Docker build progress mode (auto|plain|tty)", "auto")
-  .option("--no-cache", "Disable Docker build cache (default: cache enabled)")
+  .option("--cache", "Enable Docker build cache (default: no-cache for fresh installs)")
   .option("--attach-mode", "Container-only mode: skip bridge UI, run container directly")
   .option("--no-bridge", "Disable bridge mode (same as --attach-mode)")
   .option("-e, --env <KEY=VALUE...>", "Pass environment variables to container (can override defaults)", (value: string, prev: string[]) => {

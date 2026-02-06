@@ -43,6 +43,8 @@ export interface BridgeState {
   currentSessionIndex: number;
   isRunning: boolean;
   isSelectingSession: boolean;
+  /** True when readline prompt is active (quit confirm etc.) - suppresses keypress handler. */
+  isPrompting: boolean;
 }
 
 /** Bridge options. */
@@ -73,6 +75,7 @@ function createBridgeState(projectPath: string): BridgeState {
     currentSessionIndex: 0,
     isRunning: false,
     isSelectingSession: false,
+    isPrompting: false,
   };
 }
 
@@ -673,27 +676,37 @@ function setupKeyboard(state: BridgeState, handlers: {
       return;
     }
 
-    // Ctrl+C - force quit
+    // Ctrl+C - force quit (always allowed)
     if (key.ctrl && key.name === "c") {
       state.isRunning = false;
       process.exit(0);
     }
 
-    // Arrow keys
-    if (key.name === "up") {
-      handlers.onUp();
-    } else if (key.name === "down") {
-      handlers.onDown();
-    } else if (key.name === "return") {
-      handlers.onEnter();
-    } else if (key.name === "escape") {
-      handlers.onEscape();
-    } else if (key.name === "v") {
-      handlers.onV();
-    } else if (key.name === "p") {
-      handlers.onP();
-    } else if (key.name === "q") {
-      handlers.onQ();
+    // Suppress all keypresses while readline prompt is active (quit confirm etc.)
+    if (state.isPrompting || key.ctrl || !key.name) {
+      return;
+    }
+
+    // Session picker mode: only ↑↓ enter escape accepted, rest silently ignored
+    if (state.isSelectingSession) {
+      switch (key.name) {
+        case "up": handlers.onUp(); break;
+        case "down": handlers.onDown(); break;
+        case "return": handlers.onEnter(); break;
+        case "escape": handlers.onEscape(); break;
+        // Unrecognized keys silently rejected - menu loop continues
+      }
+      return;
+    }
+
+    // Main menu: only v p q ↑↓ accepted, rest silently ignored
+    switch (key.name) {
+      case "v": handlers.onV(); break;
+      case "p": handlers.onP(); break;
+      case "q": handlers.onQ(); break;
+      case "up": handlers.onUp(); break;
+      case "down": handlers.onDown(); break;
+      // Unrecognized keys silently rejected - menu loop continues
     }
   });
 
@@ -874,6 +887,9 @@ async function handlePaste(
 
 /** Handle quit command. */
 async function handleQuit(state: BridgeState): Promise<void> {
+  // Suppress keypress handler while readline prompt is active
+  state.isPrompting = true;
+
   // Exit raw mode temporarily for prompt
   if (process.stdin.isTTY) {
     process.stdin.setRawMode(false);

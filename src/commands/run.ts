@@ -255,7 +255,7 @@ async function buildAndRun(
     networkPolicy?: string;
   } = {}
 ): Promise<void> {
-  const { progress = "auto", cache = true } = options;
+  const { progress = "auto", cache = false } = options;
 
   log.newline();
   log.blue(`[${projectName}] -> ccbox/${selectedStack}`);
@@ -318,7 +318,7 @@ export async function run(
     unrestricted = false,
     verbose = false,
     progress = "auto",
-    cache = true,
+    cache = false,
     envVars,
     claudeArgs,
     // New options
