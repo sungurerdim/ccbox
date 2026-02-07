@@ -92,7 +92,7 @@ program
 
     if (useBridgeMode) {
       // Bridge mode: open container in separate terminal, show control UI
-      const { runBridgeMode } = await import("./bridge.js");
+      const { runBridgeMode } = await import("./bridge/index.js");
       await runBridgeMode({
         path: projectPath,
         ccboxArgs: buildCcboxArgsForBridge(options, fileConfig, claudeArgs),
