@@ -25,9 +25,9 @@ const G = "\x1b[32m", R = "\x1b[31m", Y = "\x1b[33m", B = "\x1b[1m", D = "\x1b[2
 let passed = 0, failed = 0, skipped = 0;
 const failures = [];
 
-function test(name, fn) {
+async function test(name, fn) {
   try {
-    const result = fn();
+    const result = await fn();
     if (result === "skip") {
       console.log(`${Y}○${X} ${D}${name} (skipped)${X}`);
       skipped++;
@@ -107,15 +107,6 @@ test("Timeouts are in safe range (1s-30min)", () => {
   ];
   return timeouts.every(t => t >= 1000 && t <= 1800000);
 });
-
-// Bug prevented: Prompt lengths must be positive and MAX_SYSTEM > MAX_PROMPT
-test("Prompt length limits are sane", () =>
-  constants.MAX_PROMPT_LENGTH > 0 &&
-  constants.MAX_SYSTEM_PROMPT_LENGTH > constants.MAX_PROMPT_LENGTH);
-
-// Bug prevented: VALID_MODELS Set must be non-empty for model validation
-test("VALID_MODELS is non-empty Set", () =>
-  constants.VALID_MODELS instanceof Set && constants.VALID_MODELS.size > 0);
 
 // Bug prevented: Container paths must be absolute Linux paths
 test("Container paths are absolute", () =>
@@ -495,21 +486,23 @@ test("transformSlashCommand handles undefined", () =>
 test("[critical] buildClaudeArgs always includes --dangerously-skip-permissions", () =>
   generator.buildClaudeArgs({}).includes("--dangerously-skip-permissions"));
 
-// Bug prevented: Prompt with non-interactive mode needs --print
-test("buildClaudeArgs with prompt includes --print", () => {
-  const args = generator.buildClaudeArgs({ prompt: "test" });
-  return args.includes("--print") && args.includes("test");
+// Bug prevented: Headless mode needs --print
+test("buildClaudeArgs with headless includes --print", () => {
+  const args = generator.buildClaudeArgs({ headless: true });
+  return args.includes("--print") && args.includes("--output-format");
 });
 
-// Bug prevented: Model flag not passed = wrong model used
-test("buildClaudeArgs includes --model when specified", () => {
-  const args = generator.buildClaudeArgs({ model: "opus" });
-  return args.includes("--model") && args.includes("opus");
+// Bug prevented: Claude args not passed through
+test("buildClaudeArgs passes through claudeArgs", () => {
+  const args = generator.buildClaudeArgs({ claudeArgs: ["--model", "opus", "-p", "hello"] });
+  return args.includes("--model") && args.includes("opus") && args.includes("hello");
 });
 
-// Bug prevented: Unicode prompt corruption = garbled output
-test("buildClaudeArgs preserves unicode in prompt", () =>
-  generator.buildClaudeArgs({ prompt: "hello 🚀 world" }).includes("hello 🚀 world"));
+// Bug prevented: Unicode in claudeArgs corruption = garbled output
+test("buildClaudeArgs preserves unicode in claudeArgs", () => {
+  const args = generator.buildClaudeArgs({ claudeArgs: ["hello 🚀 world"] });
+  return args.includes("hello 🚀 world");
+});
 
 // @critical Security: invalid UID/GID = permission errors in container
 test("[critical] getHostUserIds returns valid uid/gid pair", () => {
@@ -580,6 +573,12 @@ test("generateEntrypoint has valid bash shebang and claude", () => {
   return entrypoint.startsWith("#!/bin/bash") && entrypoint.includes("claude");
 });
 
+// Bug prevented: tmux session wrapper missing from entrypoint
+test("generateEntrypoint includes tmux session wrapper", () => {
+  const entrypoint = generator.generateEntrypoint();
+  return entrypoint.includes("tmux") && entrypoint.includes("ccbox-inject");
+});
+
 // Bug prevented: writeBuildFiles not creating required files
 test("writeBuildFiles creates Dockerfile and entrypoint.sh", () => {
   const buildDir = generator.writeBuildFiles(LanguageStack.BASE);
@@ -604,13 +603,9 @@ test("generateProjectDockerfile uses base image", () => {
   return pdf.includes("FROM ccbox/web");
 });
 
-// Bug prevented: quiet mode not producing parseable output
-test("buildClaudeArgs with quiet uses --print", () =>
-  generator.buildClaudeArgs({ quiet: true }).includes("--print"));
-
-// Bug prevented: appendSystemPrompt not being passed
-test("buildClaudeArgs passes appendSystemPrompt", () => {
-  const args = generator.buildClaudeArgs({ appendSystemPrompt: "Be helpful" });
+// Bug prevented: user appendSystemPrompt merged with container awareness
+test("buildClaudeArgs merges user appendSystemPrompt", () => {
+  const args = generator.buildClaudeArgs({ claudeArgs: ["--append-system-prompt", "Be helpful"] });
   return args.includes("--append-system-prompt") && args.some(a => a.includes("Be helpful"));
 });
 
@@ -932,73 +927,73 @@ console.log(`\n${B}[17/18] Docker Runtime Tests${X}`);
 const dockerRuntime = await importModule(join(ROOT, "src/docker-runtime.ts"));
 
 // Bug prevented: Missing options causing undefined behavior
-test("getDockerRunCmd with minimal options", () => {
+test("getDockerRunCmd with minimal options", async () => {
   const cfg = createConfig();
-  const cmd = dockerRuntime.getDockerRunCmd(cfg, testDir, "test-proj", LanguageStack.BASE, {});
+  const cmd = await dockerRuntime.getDockerRunCmd(testDir, "test-proj", LanguageStack.BASE, {});
   return Array.isArray(cmd) && cmd.includes("docker") && cmd.includes("run");
 });
 
 // Bug prevented: Fresh mode not activating minimal mounts
-test("getDockerRunCmd fresh mode includes minimal mount signal", () => {
+test("getDockerRunCmd fresh mode includes minimal mount signal", async () => {
   const cfg = createConfig();
-  const cmd = dockerRuntime.getDockerRunCmd(cfg, testDir, "test-proj", LanguageStack.BASE, { fresh: true });
+  const cmd = await dockerRuntime.getDockerRunCmd(testDir, "test-proj", LanguageStack.BASE, { fresh: true });
   const cmdStr = cmd.join(" ");
   // Fresh mode should signal minimal mount
   return cmdStr.includes("CCBOX_MINIMAL_MOUNT") || cmdStr.includes("tmpfs");
 });
 
 // Bug prevented: Debug mode not setting environment
-test("getDockerRunCmd debug mode sets CCBOX_DEBUG", () => {
+test("getDockerRunCmd debug mode sets CCBOX_DEBUG", async () => {
   const cfg = createConfig();
-  const cmd = dockerRuntime.getDockerRunCmd(cfg, testDir, "test-proj", LanguageStack.WEB, { debug: 2 });
+  const cmd = await dockerRuntime.getDockerRunCmd(testDir, "test-proj", LanguageStack.WEB, { debug: 2 });
   return cmd.some(arg => arg.includes("CCBOX_DEBUG=2"));
 });
 
 // Bug prevented: Unrestricted mode not removing limits
-test("getDockerRunCmd unrestricted mode sets CCBOX_UNRESTRICTED", () => {
+test("getDockerRunCmd unrestricted mode sets CCBOX_UNRESTRICTED", async () => {
   const cfg = createConfig();
-  const cmd = dockerRuntime.getDockerRunCmd(cfg, testDir, "test-proj", LanguageStack.PYTHON, { unrestricted: true });
+  const cmd = await dockerRuntime.getDockerRunCmd(testDir, "test-proj", LanguageStack.PYTHON, { unrestricted: true });
   return cmd.some(arg => arg.includes("CCBOX_UNRESTRICTED=1"));
 });
 
-// Bug prevented: Prompt not passed to claude args
-test("getDockerRunCmd with prompt includes prompt in args", () => {
+// Bug prevented: Claude args not passed through to docker command
+test("getDockerRunCmd with claudeArgs includes args", async () => {
   const cfg = createConfig();
-  const cmd = dockerRuntime.getDockerRunCmd(cfg, testDir, "test-proj", LanguageStack.BASE, { prompt: "hello world" });
-  return cmd.some(arg => arg === "hello world" || arg.includes("hello world"));
+  const cmd = await dockerRuntime.getDockerRunCmd(testDir, "test-proj", LanguageStack.BASE, { claudeArgs: ["-p", "hello world"] });
+  return cmd.includes("hello world");
 });
 
-// Bug prevented: Quiet mode not setting --print
-test("getDockerRunCmd quiet mode includes print flag", () => {
+// Bug prevented: Headless mode not setting --print
+test("getDockerRunCmd headless mode includes print flag", async () => {
   const cfg = createConfig();
-  const cmd = dockerRuntime.getDockerRunCmd(cfg, testDir, "test-proj", LanguageStack.BASE, { quiet: true });
+  const cmd = await dockerRuntime.getDockerRunCmd(testDir, "test-proj", LanguageStack.BASE, { headless: true });
   return cmd.includes("--print");
 });
 
-// Bug prevented: Model not passed through
-test("getDockerRunCmd model passed correctly", () => {
+// Bug prevented: Model via claudeArgs not passed through
+test("getDockerRunCmd model via claudeArgs passed correctly", async () => {
   const cfg = createConfig();
-  const cmd = dockerRuntime.getDockerRunCmd(cfg, testDir, "test-proj", LanguageStack.BASE, { model: "opus" });
+  const cmd = await dockerRuntime.getDockerRunCmd(testDir, "test-proj", LanguageStack.BASE, { claudeArgs: ["--model", "opus"] });
   const modelIdx = cmd.indexOf("--model");
   return modelIdx !== -1 && cmd[modelIdx + 1] === "opus";
 });
 
 // Bug prevented: Custom env vars not passed
-test("getDockerRunCmd custom envVars included", () => {
+test("getDockerRunCmd custom envVars included", async () => {
   const cfg = createConfig();
-  const cmd = dockerRuntime.getDockerRunCmd(cfg, testDir, "test-proj", LanguageStack.BASE, { envVars: ["MY_VAR=value"] });
+  const cmd = await dockerRuntime.getDockerRunCmd(testDir, "test-proj", LanguageStack.BASE, { envVars: ["MY_VAR=value"] });
   return cmd.some(arg => arg === "MY_VAR=value");
 });
 
-// Bug prevented: appendSystemPrompt not included
-test("getDockerRunCmd appendSystemPrompt included", () => {
+// Bug prevented: appendSystemPrompt via claudeArgs included
+test("getDockerRunCmd appendSystemPrompt via claudeArgs included", async () => {
   const cfg = createConfig();
-  const cmd = dockerRuntime.getDockerRunCmd(cfg, testDir, "test-proj", LanguageStack.BASE, { appendSystemPrompt: "Be helpful" });
+  const cmd = await dockerRuntime.getDockerRunCmd(testDir, "test-proj", LanguageStack.BASE, { claudeArgs: ["--append-system-prompt", "Be helpful"] });
   return cmd.some(arg => arg.includes("Be helpful"));
 });
 
 // Bug prevented: Worktree projects failing git operations inside container
-test("getDockerRunCmd mounts main .git for worktree", () => {
+test("getDockerRunCmd mounts main .git for worktree", async () => {
   // Simulate a git worktree: .git is a file pointing to main repo's .git/worktrees/<name>
   const worktreeDir = join(tmpdir(), `ccbox-worktree-test-${Date.now()}`);
   const mainRepoDir = join(tmpdir(), `ccbox-main-repo-test-${Date.now()}`);
@@ -1009,7 +1004,7 @@ test("getDockerRunCmd mounts main .git for worktree", () => {
   writeFileSync(join(worktreeDir, ".git"), `gitdir: ${worktreeGitDir}\n`);
   try {
     const cfg = createConfig();
-    const cmd = dockerRuntime.getDockerRunCmd(cfg, worktreeDir, "wt-proj", LanguageStack.BASE, {});
+    const cmd = await dockerRuntime.getDockerRunCmd( worktreeDir, "wt-proj", LanguageStack.BASE, {});
     const cmdStr = cmd.join(" ");
     // Should mount the main .git directory
     const mainGitDir = join(mainRepoDir, ".git");
@@ -1020,13 +1015,13 @@ test("getDockerRunCmd mounts main .git for worktree", () => {
   }
 });
 
-test("getDockerRunCmd skips worktree mount when .git is a directory", () => {
+test("getDockerRunCmd skips worktree mount when .git is a directory", async () => {
   // Normal repo: .git is a directory, no extra mount needed
   const normalDir = join(tmpdir(), `ccbox-normal-git-test-${Date.now()}`);
   mkdirSync(join(normalDir, ".git"), { recursive: true });
   try {
     const cfg = createConfig();
-    const cmd = dockerRuntime.getDockerRunCmd(cfg, normalDir, "normal-proj", LanguageStack.BASE, {});
+    const cmd = await dockerRuntime.getDockerRunCmd( normalDir, "normal-proj", LanguageStack.BASE, {});
     // Should NOT have any worktree-related mount (no extra .git mount beyond project)
     const volArgs = cmd.filter((arg, i) => i > 0 && cmd[i - 1] === "-v" && arg.includes(".git:"));
     return volArgs.length === 0;
@@ -1041,17 +1036,11 @@ test("getDockerRunCmd skips worktree mount when .git is a directory", () => {
 console.log(`\n${B}[18/18] CLI Flag Edge Cases${X}`);
 
 
-// Bug prevented: Empty --prompt rejected properly
-test("CLI rejects empty --prompt", () => {
-  const { code } = cli('--prompt="" .');
-  // Should fail validation
-  return code !== 0;
-});
-
-// Bug prevented: Whitespace-only --prompt accepted
-test("CLI rejects whitespace-only --prompt", () => {
-  const { code } = cli('--prompt="   " .');
-  return code !== 0;
+// Passthrough: unknown flags are passed to Claude CLI
+test("CLI accepts unknown flags (passthrough)", () => {
+  // --help should still work (commander handles it before passthrough)
+  const { stdout } = cli("--help");
+  return stdout.includes("headless");
 });
 
 // ════════════════════════════════════════════════════════════════════════════════

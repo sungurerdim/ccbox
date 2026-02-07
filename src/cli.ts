@@ -7,11 +7,12 @@
 
 import { Command } from "commander";
 
-import { style } from "./logger.js";
+import { log, style, enableQuietMode } from "./logger.js";
 
-import { VERSION, MAX_PROMPT_LENGTH, MAX_SYSTEM_PROMPT_LENGTH, VALID_MODELS } from "./constants.js";
+import { VERSION } from "./constants.js";
 import { LanguageStack, STACK_INFO, filterStacks } from "./config.js";
-import { ValidationError } from "./errors.js";
+import { parseEnvVarStrict } from "./validation.js";
+import { loadCcboxConfig, configEnvToArray, type CcboxConfig } from "./config-file.js";
 import { checkDocker, ERR_DOCKER_NOT_RUNNING } from "./utils.js";
 import { run } from "./commands/run.js";
 import { buildImage, getInstalledCcboxImages } from "./build.js";
@@ -22,55 +23,6 @@ import {
 } from "./cleanup.js";
 import { selfUpdate, selfUninstall, showVersion } from "./upgrade.js";
 
-/**
- * Validate and normalize prompt parameter.
- */
-function validatePrompt(prompt: string | undefined): string | undefined {
-  if (!prompt) {return undefined;}
-  const trimmed = prompt.trim();
-  if (!trimmed) {
-    throw new ValidationError("--prompt cannot be empty or whitespace-only");
-  }
-  if (trimmed.length > MAX_PROMPT_LENGTH) {
-    throw new ValidationError(`--prompt must be ${MAX_PROMPT_LENGTH} characters or less`);
-  }
-  return trimmed;
-}
-
-/**
- * Validate and normalize append-system-prompt parameter.
- */
-function validateSystemPrompt(prompt: string | undefined): string | undefined {
-  if (!prompt) {return undefined;}
-  const trimmed = prompt.trim();
-  if (!trimmed) {
-    throw new ValidationError("--append-system-prompt cannot be empty or whitespace-only");
-  }
-  if (trimmed.length > MAX_SYSTEM_PROMPT_LENGTH) {
-    throw new ValidationError(
-      `--append-system-prompt must be ${MAX_SYSTEM_PROMPT_LENGTH} characters or less`
-    );
-  }
-  return trimmed;
-}
-
-/**
- * Validate model parameter (warns on unknown, doesn't block).
- */
-function validateModel(model: string | undefined): string | undefined {
-  if (model) {
-    const modelLower = model.toLowerCase();
-    if (!VALID_MODELS.has(modelLower)) {
-      console.log(
-        style.yellow(
-          `Warning: Unknown model '${model}'. Known models: ${[...VALID_MODELS].sort().join(", ")}`
-        )
-      );
-    }
-  }
-  return model;
-}
-
 // Build the CLI program
 const program = new Command();
 
@@ -79,6 +31,14 @@ program
   .description("Run Claude Code in isolated Docker containers")
   .version(VERSION)
   .option("-y, --yes", "Unattended mode: auto-confirm all prompts")
+  .option("-q, --quiet", "Suppress all output (exit code only)")
+  .hook("preAction", (thisCommand) => {
+    // Apply quiet mode before any command runs
+    const opts = thisCommand.opts();
+    if (opts.quiet) {
+      enableQuietMode();
+    }
+  })
   .option(
     "-s, --stack <stack>",
     "Language stack (auto=detect from project)",
@@ -93,52 +53,55 @@ program
   .option("--deps-prod", "Install production dependencies only")
   .option("--no-deps", "Skip dependency installation")
   .option("-d, --debug", "Debug mode (-d entrypoint logs, -dd + stream output)", (_, prev) => prev + 1, 0)
-  .option("-p, --prompt <prompt>", "Initial prompt (enables --print + --verbose)")
-  .option("-m, --model <model>", "Model name (passed directly to Claude Code)")
-  .option("-q, --quiet", "Quiet mode (enables --print, shows only responses)")
-  .option("--append-system-prompt <prompt>", "Append custom instructions to Claude's system prompt")
+  .option("--headless", "Non-interactive/unattended mode (adds --print --output-format stream-json)")
   .option("--no-prune", "Skip automatic cleanup of stale Docker resources")
   .option("-U, --unrestricted", "Remove CPU/priority limits (use full system resources)")
+  .option("--zero-residue", "Zero-trace mode: no cache, logs, or artifacts left behind")
+  .option("--memory <limit>", "Container memory limit (e.g., 4g, 2048m)", "4g")
+  .option("--cpus <limit>", "Container CPU limit (e.g., 2.0)", "2.0")
+  .option("--network <policy>", "Network policy: full (default), isolated, or path to policy.json", "full")
   .option("-v, --verbose", "Show detection details (which files triggered stack selection)")
   .option("--progress <mode>", "Docker build progress mode (auto|plain|tty)", "auto")
-  .option("--no-cache", "Disable Docker build cache (default: cache enabled)")
+  .option("--cache", "Enable Docker build cache (default: no-cache for fresh installs)")
+  .option("--attach-mode", "Container-only mode: skip bridge UI, run container directly")
+  .option("--no-bridge", "Disable bridge mode (same as --attach-mode)")
   .option("-e, --env <KEY=VALUE...>", "Pass environment variables to container (can override defaults)", (value: string, prev: string[]) => {
-    if (!value.includes('=') || value.startsWith('=')) {
-      throw new ValidationError(`Invalid env format '${value}'. Expected KEY=VALUE`);
-    }
-    // Validate key: alphanumeric + underscore only (POSIX env var standard)
-    const key = value.split('=')[0]!;
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
-      throw new ValidationError(`Invalid env var key '${key}'. Must be alphanumeric/underscore, starting with letter or underscore.`);
-    }
+    // Validate format and key (throws ValidationError on invalid input)
+    parseEnvVarStrict(value);
     return [...(prev || []), value];
   })
-  .action(async (options) => {
+  .allowUnknownOption()
+  .passThroughOptions()
+  .action(async (options, command: Command) => {
     // Change directory if --chdir/-C specified (like git -C)
     if (options.chdir) {
       process.chdir(options.chdir);
     }
 
-    // Validate parameters
-    try {
-      options.prompt = validatePrompt(options.prompt);
-      options.appendSystemPrompt = validateSystemPrompt(options.appendSystemPrompt);
-      options.model = validateModel(options.model);
-    } catch (e: unknown) {
-      if (e instanceof ValidationError) {
-        console.log(style.red(`Error: ${e.message}`));
-        process.exit(1);
-      }
-      throw e;
+    const projectPath = options.path ?? ".";
+
+    // Load config file (ccbox.yaml or .ccboxrc)
+    const fileConfig = loadCcboxConfig(projectPath);
+
+    // Collect all unknown/passthrough args for Claude CLI
+    const claudeArgs = command.args;
+
+    // Determine if bridge mode should be used
+    // Bridge is default unless --attach-mode or --no-bridge or -b (build only)
+    const useBridgeMode = !options.attachMode && options.bridge !== false && !options.build && !options.headless;
+
+    if (useBridgeMode) {
+      // Bridge mode: open container in separate terminal, show control UI
+      const { runBridgeMode } = await import("./bridge/index.js");
+      await runBridgeMode({
+        path: projectPath,
+        ccboxArgs: buildCcboxArgsForBridge(options, fileConfig, claudeArgs),
+      });
+      return;
     }
 
-    // -dd requires -p (Claude Code needs input in non-interactive mode)
-    if (options.debug >= 2 && !options.prompt) {
-      console.log(style.red("Error: -dd requires -p <prompt>. Example: ccbox -dd -p \"fix the tests\""));
-      process.exit(1);
-    }
-
-    // Determine deps mode from flags
+    // Attach mode (container-only): run container directly in this terminal
+    // Determine deps mode from flags (CLI > config file)
     let depsMode: string | undefined = undefined;
     if (options.deps === true) {
       depsMode = "all";
@@ -146,25 +109,122 @@ program
       depsMode = "prod";
     } else if (options.deps === false) {
       depsMode = "skip";
+    } else if (fileConfig.deps) {
+      depsMode = fileConfig.deps;
     }
 
-    await run(options.stack ?? null, !!options.build, options.path ?? ".", {
-      fresh: options.fresh,
+    // Merge env vars: config file + CLI (CLI overrides)
+    const configEnvVars = configEnvToArray(fileConfig);
+    const mergedEnvVars = [...configEnvVars, ...(options.env || [])];
+
+    await run(options.stack ?? fileConfig.stack ?? null, !!options.build, projectPath, {
+      fresh: options.fresh ?? fileConfig.fresh,
       ephemeralLogs: !options.debugLogs,
       depsMode,
-      debug: options.debug,
-      prompt: options.prompt,
-      model: options.model,
-      quiet: options.quiet,
-      appendSystemPrompt: options.appendSystemPrompt,
+      debug: options.debug ?? fileConfig.debug,
+      headless: options.headless ?? fileConfig.headless,
       unattended: options.yes,
-      prune: options.prune !== false,
-      unrestricted: options.unrestricted,
+      prune: options.prune !== false && fileConfig.prune !== false,
+      unrestricted: options.unrestricted ?? fileConfig.unrestricted,
       verbose: options.verbose,
-      progress: options.progress,
-      cache: options.cache,
-      envVars: options.env,
+      progress: options.progress ?? fileConfig.progress,
+      cache: options.cache ?? fileConfig.cache,
+      envVars: mergedEnvVars.length > 0 ? mergedEnvVars : undefined,
+      claudeArgs,
+      // New options (CLI > config file)
+      zeroResidue: options.zeroResidue ?? fileConfig.zeroResidue,
+      memoryLimit: options.memory ?? fileConfig.memory,
+      cpuLimit: options.cpus ?? fileConfig.cpus,
+      networkPolicy: options.network ?? fileConfig.networkPolicy,
     });
+  });
+
+/**
+ * Build ccbox args for bridge mode to pass to container terminal.
+ */
+function buildCcboxArgsForBridge(
+  options: Record<string, unknown>,
+  fileConfig: CcboxConfig,
+  claudeArgs: string[]
+): string[] {
+  const args: string[] = [];
+
+  // Stack
+  const stack = options.stack ?? fileConfig.stack;
+  if (stack) {
+    args.push(`--stack=${stack}`);
+  }
+
+  // Fresh mode
+  if (options.fresh ?? fileConfig.fresh) {
+    args.push("--fresh");
+  }
+
+  // Debug
+  const debug = options.debug ?? fileConfig.debug;
+  if (typeof debug === "number" && debug > 0) {
+    args.push(...Array(debug).fill("-d"));
+  }
+
+  // Unrestricted
+  if (options.unrestricted ?? fileConfig.unrestricted) {
+    args.push("--unrestricted");
+  }
+
+  // Memory/CPU
+  if (options.memory && options.memory !== "4g") {
+    args.push(`--memory=${options.memory}`);
+  }
+  if (options.cpus && options.cpus !== "2.0") {
+    args.push(`--cpus=${options.cpus}`);
+  }
+
+  // Env vars
+  const envVars = options.env as string[] | undefined;
+  if (envVars && envVars.length > 0) {
+    for (const e of envVars) {
+      args.push(`-e`, e);
+    }
+  }
+
+  // Pass through Claude args
+  if (claudeArgs.length > 0) {
+    args.push(...claudeArgs);
+  }
+
+  return args;
+}
+
+// Voice command (voice-to-text with whisper.cpp)
+program
+  .command("voice")
+  .description("Voice-to-text: record, transcribe with whisper.cpp, send to container")
+  .option("--model <model>", "Whisper model (tiny, base, small)", "base")
+  .option("--duration <seconds>", "Max recording duration in seconds", "10")
+  .option("-n, --name <container>", "Target container name (auto-detects if not specified)")
+  .action(async (options) => {
+    const { voicePipeline } = await import("./voice.js");
+    const success = await voicePipeline({
+      model: options.model,
+      duration: parseInt(options.duration, 10),
+      containerName: options.name,
+    });
+    if (!success) {
+      process.exit(1);
+    }
+  });
+
+// Paste command (clipboard image transfer to running container)
+program
+  .command("paste")
+  .description("Paste clipboard image into running ccbox container")
+  .option("-n, --name <container>", "Target container name (auto-detects if not specified)")
+  .action(async (options) => {
+    const { pasteToContainer } = await import("./clipboard.js");
+    const success = await pasteToContainer(options.name);
+    if (!success) {
+      process.exit(1);
+    }
   });
 
 // Rebuild command (rebuild Docker images with latest Claude Code)
@@ -175,7 +235,7 @@ program
   .option("-a, --all", "Rebuild all installed images")
   .action(async (options) => {
     if (!(await checkDocker())) {
-      console.log(ERR_DOCKER_NOT_RUNNING);
+      log.error(ERR_DOCKER_NOT_RUNNING);
       process.exit(1);
     }
 
@@ -197,7 +257,7 @@ program
     }
 
     if (stacksToBuild.length === 0) {
-      console.log(style.yellow("No images to rebuild."));
+      log.yellow("No images to rebuild.");
       return;
     }
 
@@ -210,60 +270,61 @@ program
 program
   .command("clean")
   .description("Remove ccbox containers, images, and temp files")
-  .option("-f, --force", "Skip confirmation")
   .option("--deep", "Deep clean: also remove temp build files")
+  .option("-y, --yes", "Skip confirmation prompts")
   .action(async (options) => {
     if (!(await checkDocker())) {
-      console.log(ERR_DOCKER_NOT_RUNNING);
+      log.error(ERR_DOCKER_NOT_RUNNING);
       process.exit(1);
     }
 
     const isDeep = !!options.deep;
+    const skipConfirm = !!options.yes;
 
-    if (!options.force) {
+    if (!skipConfirm) {
       const { confirm } = await import("./prompt-io.js");
       if (isDeep) {
-        console.log(style.yellow("This will remove ALL ccbox resources:"));
-        console.log("  - All ccbox containers (running + stopped)");
-        console.log("  - All ccbox images (stacks + project images)");
-        console.log("  - Temporary build files (/tmp/ccbox)");
+        log.yellow("This will remove ALL ccbox resources:");
+        log.info("  - All ccbox containers (running + stopped)");
+        log.info("  - All ccbox images (stacks + project images)");
+        log.info("  - Temporary build files (/tmp/ccbox)");
       } else {
-        console.log(style.yellow("This will remove ccbox containers and images."));
+        log.yellow("This will remove ccbox containers and images.");
       }
-      console.log();
+      log.newline();
       const confirmed = await confirm({
         message: isDeep ? "Continue with deep clean?" : "Remove all ccbox containers and images?",
         default: false,
       });
       if (!confirmed) {
-        console.log(style.dim("Cancelled."));
+        log.dim("Cancelled.");
         return;
       }
     }
 
-    console.log(style.dim("Removing containers..."));
+    log.dim("Removing containers...");
     const containersRemoved = await removeCcboxContainers();
 
-    console.log(style.dim("Removing images..."));
+    log.dim("Removing images...");
     const imagesRemoved = await removeCcboxImages();
 
     let tmpdirRemoved = 0;
     if (isDeep) {
-      console.log(style.dim("Removing temp files..."));
+      log.dim("Removing temp files...");
       tmpdirRemoved = cleanTempFiles();
     }
 
     // Summary
-    console.log();
-    console.log(style.green(isDeep ? "Deep clean complete" : "Cleanup complete"));
+    log.newline();
+    log.success(isDeep ? "Deep clean complete" : "Cleanup complete");
     const parts: string[] = [];
     if (containersRemoved) {parts.push(`${containersRemoved} container(s)`);}
     if (imagesRemoved) {parts.push(`${imagesRemoved} image(s)`);}
     if (tmpdirRemoved) {parts.push("temp files");}
     if (parts.length > 0) {
-      console.log(style.dim(`Removed: ${parts.join(", ")}`));
+      log.dim(`Removed: ${parts.join(", ")}`);
     } else {
-      console.log(style.dim("Nothing to remove - already clean"));
+      log.dim("Nothing to remove - already clean");
     }
   });
 
@@ -278,41 +339,42 @@ program
       : Object.values(LanguageStack);
 
     if (stacks.length === 0) {
-      console.log(style.yellow(`No stacks found matching '${options.filter}'`));
-      console.log(style.dim("Try: --filter=core, --filter=python, --filter=web"));
+      log.yellow(`No stacks found matching '${options.filter}'`);
+      log.dim("Try: --filter=core, --filter=python, --filter=web");
       return;
     }
 
-    console.log(style.bold(options.filter ? `Stacks matching '${options.filter}'` : "Available Stacks"));
-    console.log("----------------------------");
+    log.bold(options.filter ? `Stacks matching '${options.filter}'` : "Available Stacks");
+    log.info("----------------------------");
 
     for (const stack of stacks) {
       const { description, sizeMB } = STACK_INFO[stack];
-      console.log(`  ${style.cyan(stack)}`);
-      console.log(`    ${description} (~${sizeMB}MB)`);
+      log.raw(`  ${style.cyan(stack)}`);
+      log.info(`    ${description} (~${sizeMB}MB)`);
     }
 
-    console.log();
-    console.log(style.dim("Usage: ccbox --stack=go"));
-    console.log(style.dim("Filter categories: core, combined, usecase"));
+    log.newline();
+    log.dim("Usage: ccbox --stack=go");
+    log.dim("Filter categories: core, combined, usecase");
   });
 
 // Update command (self-update binary)
 program
   .command("update")
   .description("Update ccbox to the latest version")
-  .option("-f, --force", "Force re-download (skip version check and confirmation)")
+  .option("--force", "Force re-download even if already up-to-date")
+  .option("-y, --yes", "Skip confirmation prompts")
   .action(async (options) => {
-    await selfUpdate(!!options.force);
+    await selfUpdate({ skipConfirm: !!options.yes, forceReinstall: !!options.force });
   });
 
 // Uninstall command
 program
   .command("uninstall")
   .description("Remove ccbox from this system")
-  .option("-f, --force", "Skip confirmation")
+  .option("-y, --yes", "Skip confirmation prompts")
   .action(async (options) => {
-    await selfUninstall(!!options.force);
+    await selfUninstall(!!options.yes);
   });
 
 // Version command

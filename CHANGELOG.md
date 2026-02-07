@@ -12,8 +12,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * **ci:** add categorized changelog to release workflow ([288c835](https://github.com/sungurerdim/ccbox/commit/288c835193a70eb34b7fee3fdbb27ccfba78cb0a))
 
-## [Unreleased]
-
 ### Added
 
 - **Git worktree support**: Automatically detects and mounts main `.git` directory when running inside a git worktree, enabling full git operations in container
@@ -140,5 +138,4 @@ Initial public release of ccbox - secure Docker sandbox for Claude Code.
 - Test suite: 194 tests covering all modules
 - Modular architecture: dockerfile-gen, docker-runtime, error-handler, logger
 
-[Unreleased]: https://github.com/sungurerdim/ccbox/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/sungurerdim/ccbox/releases/tag/v0.1.0

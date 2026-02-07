@@ -11,10 +11,10 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { LanguageStack } from "./config.js";
+import { getCcboxTempBuild } from "./constants.js";
 import type { DepsInfo, DepsMode } from "./deps.js";
 import { getInstallCommands } from "./deps.js";
 
@@ -88,7 +88,7 @@ export function generateEntrypoint(): string {
  */
 export function writeBuildFiles(stack: LanguageStack): string {
   // Use OS-agnostic temp directory
-  const buildDir = join(tmpdir(), "ccbox", "build", stack);
+  const buildDir = getCcboxTempBuild(stack);
   mkdirSync(buildDir, { recursive: true });
 
   // Write with explicit newline handling (Unix line endings for Dockerfile)

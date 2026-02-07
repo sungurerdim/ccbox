@@ -5,10 +5,10 @@
  */
 
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { exec, execInherit } from "./exec.js";
+import { getCcboxTempBuild } from "./constants.js";
 
 import {
   getImageName,
@@ -19,7 +19,7 @@ import {
 import { DOCKER_BUILD_TIMEOUT, DOCKER_COMMAND_TIMEOUT } from "./constants.js";
 import type { DepsInfo, DepsMode } from "./deps.js";
 import { computeDepsHash } from "./deps.js";
-import { ImageBuildError } from "./errors.js";
+import { ImageBuildError, extractErrorDetails, isTimeoutError } from "./errors.js";
 import { generateProjectDockerfile, writeBuildFiles } from "./generator.js";
 import { log } from "./logger.js";
 import { getDockerEnv, getClaudeConfigDir, resolveForDocker } from "./paths.js";
@@ -85,7 +85,7 @@ export async function buildImage(
   stack: LanguageStack,
   options: BuildOptions = {}
 ): Promise<boolean> {
-  const { progress = "auto", cache = true } = options;
+  const { progress = "auto", cache = false } = options;
 
   // Check if this stack depends on base image (async to avoid blocking)
   const dependency = STACK_DEPENDENCIES[stack];
@@ -161,19 +161,7 @@ export async function buildImage(
 
     return true;
   } catch (error: unknown) {
-    // Extract error details for the exception message
-    let errorDetails = "Unknown error";
-    if (error instanceof Error) {
-      const execaError = error as { stderr?: string; shortMessage?: string };
-      if (execaError.stderr) {
-        errorDetails = execaError.stderr.slice(0, 1000);
-      } else if (execaError.shortMessage) {
-        errorDetails = execaError.shortMessage;
-      } else {
-        errorDetails = error.message;
-      }
-    }
-    throw new ImageBuildError(`Failed to build ${imageName}: ${errorDetails}`);
+    throw new ImageBuildError(`Failed to build ${imageName}: ${extractErrorDetails(error)}`);
   }
 }
 
@@ -222,7 +210,7 @@ export async function buildProjectImage(
   depsMode: DepsMode,
   options: BuildOptions = {}
 ): Promise<string> {
-  const { progress = "auto", cache = true } = options;
+  const { progress = "auto", cache = false } = options;
   const imageName = getProjectImageName(projectName, stack);
   const baseImage = getImageName(stack);
 
@@ -236,7 +224,7 @@ export async function buildProjectImage(
   const dockerfileContent = generateProjectDockerfile(baseImage, depsList, depsMode, projectPath);
 
   // Write to temp build directory
-  const buildDir = join(tmpdir(), "ccbox", "build", "project", projectName);
+  const buildDir = getCcboxTempBuild(join("project", projectName));
   mkdirSync(buildDir, { recursive: true });
 
   const dockerfilePath = join(buildDir, "Dockerfile");
@@ -270,25 +258,17 @@ export async function buildProjectImage(
 
     return imageName;
   } catch (error: unknown) {
-    // Extract error details
-    let errorDetails = "Unknown error";
-    let isTimeout = false;
+    const errorDetails = extractErrorDetails(error);
+    // Log full stderr for debugging if available
     if (error instanceof Error) {
-      const execaError = error as { stderr?: string; shortMessage?: string; timedOut?: boolean };
-      isTimeout = !!execaError.timedOut;
+      const execaError = error as { stderr?: string };
       if (execaError.stderr) {
-        // Log full stderr for debugging, show truncated version to user
         log.debug(`Full stderr: ${execaError.stderr}`);
-        errorDetails = execaError.stderr.slice(0, 1000);
-      } else if (execaError.shortMessage) {
-        errorDetails = execaError.shortMessage;
-      } else {
-        errorDetails = error.message;
       }
     }
 
     log.error(`Failed to build ${imageName}: ${errorDetails}`);
-    if (isTimeout) {
+    if (isTimeoutError(error)) {
       log.error("Build timed out. Try increasing --build-timeout or simplifying dependencies.");
     }
 

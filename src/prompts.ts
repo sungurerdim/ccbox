@@ -4,7 +4,7 @@
  * Handles interactive prompts for stack selection, dependency installation, etc.
  */
 
-import { style } from "./logger.js";
+import { log, style } from "./logger.js";
 import { input, confirm } from "./prompt-io.js";
 
 import {
@@ -37,8 +37,8 @@ function validateDepsChoice(choice: string, maxOption: number): number | null {
  * Prompt user for dependency installation preference.
  */
 export async function promptDeps(depsList: DepsInfo[]): Promise<DepsMode> {
-  console.log(style.cyanBold("Dependencies Detected"));
-  console.log();
+  log.raw(style.cyanBold("Dependencies Detected"));
+  log.newline();
 
   // Show detected package managers
   for (const deps of depsList) {
@@ -46,20 +46,20 @@ export async function promptDeps(depsList: DepsInfo[]): Promise<DepsMode> {
       deps.files.length > 3
         ? `${deps.files.slice(0, 3).join(", ")} (+${deps.files.length - 3} more)`
         : deps.files.join(", ");
-    console.log(`  ${style.cyan(deps.name)}: ${filesStr}`);
+    log.raw(`  ${style.cyan(deps.name)}: ${filesStr}`);
   }
 
-  console.log();
+  log.newline();
 
   // Check if any have dev dependencies
   const hasDev = depsList.some((d) => d.hasDev);
 
   if (hasDev) {
-    console.log(style.bold("Install dependencies?"));
-    console.log(`  ${style.cyan("1")}. All (including dev/test)`);
-    console.log(`  ${style.cyan("2")}. Production only`);
-    console.log(`  ${style.cyan("3")}. Skip`);
-    console.log();
+    log.bold("Install dependencies?");
+    log.raw(`  ${style.cyan("1")}. All (including dev/test)`);
+    log.raw(`  ${style.cyan("2")}. Production only`);
+    log.raw(`  ${style.cyan("3")}. Skip`);
+    log.newline();
 
     while (true) {
       const choice = await input({ message: "Select [1-3]", default: "1" });
@@ -67,7 +67,7 @@ export async function promptDeps(depsList: DepsInfo[]): Promise<DepsMode> {
       if (validated === 1) {return "all";}
       if (validated === 2) {return "prod";}
       if (validated === 3) {return "skip";}
-      console.log(style.red("Invalid choice. Try again."));
+      log.red("Invalid choice. Try again.");
     }
   } else {
     // No dev distinction - just ask yes/no
@@ -83,15 +83,15 @@ export async function selectStack(
   detectedStack: LanguageStack,
   detectedLanguages: LanguageDetection[]
 ): Promise<LanguageStack | null> {
-  console.log(style.blueBold("Stack Selection"));
-  console.log();
+  log.raw(style.blueBold("Stack Selection"));
+  log.newline();
 
   if (detectedLanguages.length > 0) {
     const summary = detectedLanguages
       .map((d) => `${d.language} (${d.confidence})`)
       .join(", ");
-    console.log(style.dim(`Detected: ${summary}`));
-    console.log();
+    log.dim(`Detected: ${summary}`);
+    log.newline();
   }
 
   // Build options list
@@ -105,7 +105,7 @@ export async function selectStack(
   const installedImages = await getInstalledCcboxImages();
 
   // Display options
-  console.log(style.bold("Available stacks:"));
+  log.bold("Available stacks:");
   for (let idx = 0; idx < options.length; idx++) {
     const { name, isDetected } = options[idx]!;
     const { description, sizeMB } = STACK_INFO[name];
@@ -114,13 +114,13 @@ export async function selectStack(
     const installed = installedImages.has(getImageName(name))
       ? style.dim(" [installed]")
       : "";
-    console.log(`  ${marker}${style.cyan(String(idx + 1))}. ${name}${detectedLabel}${installed}`);
-    console.log(`      ${style.dim(`${description} (~${sizeMB}MB)`)}`);
+    log.raw(`  ${marker}${style.cyan(String(idx + 1))}. ${name}${detectedLabel}${installed}`);
+    log.raw(`      ${style.dim(`${description} (~${sizeMB}MB)`)}`);
   }
 
-  console.log();
-  console.log(`  ${style.dim("0")}. Cancel`);
-  console.log();
+  log.newline();
+  log.raw(`  ${style.dim("0")}. Cancel`);
+  log.newline();
 
   // Get user choice
   const defaultIdx = options.findIndex((o) => o.name === detectedStack) + 1;
@@ -138,7 +138,7 @@ export async function selectStack(
     if (choiceInt >= 1 && choiceInt <= options.length) {
       return options[choiceInt - 1]!.name;
     }
-    console.log(style.red("Invalid choice. Try again."));
+    log.red("Invalid choice. Try again.");
   }
 }
 
@@ -157,7 +157,7 @@ export async function setupGitConfig(): Promise<Config> {
   }
 
   if (name || email) {
-    console.log(style.dim(`Git config: ${name || "(none)"} <${email || "(none)"}>`));
+    log.dim(`Git config: ${name || "(none)"} <${email || "(none)"}>`);
   }
 
   return config;
@@ -187,13 +187,13 @@ export async function resolveStack(
   if (stackName && stackName !== "auto") {
     const validStack = parseStack(stackName);
     if (!validStack) {
-      console.log(style.red(`Invalid stack: "${stackName}"`));
-      console.log(style.dim(`Valid stacks: ${getStackValues().join(", ")}`));
+      log.error(`Invalid stack: "${stackName}"`);
+      log.dim(`Valid stacks: ${getStackValues().join(", ")}`);
       return null;
     }
     // Double-check stack is in LanguageStack enum (defensive validation)
     if (!Object.values(LanguageStack).includes(validStack)) {
-      console.log(style.red(`Stack "${validStack}" not in LanguageStack enum`));
+      log.error(`Stack "${validStack}" not in LanguageStack enum`);
       return null;
     }
     return validStack;
@@ -211,4 +211,3 @@ export async function resolveStack(
 
   return selectStack(detection.recommendedStack, detection.detectedLanguages);
 }
-
