@@ -3,6 +3,9 @@
  *
  * Centralizes all console output with consistent styling and log levels.
  * Uses picocolors for terminal styling.
+ *
+ * IMPORTANT: All ccbox output MUST go through this module.
+ * Never use console.log/console.error directly in other modules.
  */
 
 import pc from "picocolors";
@@ -21,13 +24,61 @@ interface LoggerConfig {
   level: LogLevel;
   /** If true, prefix messages with [ccbox] */
   prefix: boolean;
+  /** If true, suppress ALL output including errors */
+  quiet: boolean;
 }
 
 /** Global logger configuration. */
 const config: LoggerConfig = {
   level: LogLevel.INFO,
   prefix: false,
+  quiet: false,
 };
+
+/** Original console references (saved before quiet mode). */
+const originalConsole = {
+  log: console.log.bind(console),
+  error: console.error.bind(console),
+  warn: console.warn.bind(console),
+};
+
+/**
+ * Check if output is allowed at current level.
+ */
+function canOutput(level: LogLevel): boolean {
+  return !config.quiet && config.level <= level;
+}
+
+/**
+ * Enable quiet mode: suppress ALL output (stdout and stderr).
+ * Only exit codes communicate success/failure.
+ */
+export function enableQuietMode(): void {
+  config.quiet = true;
+  config.level = LogLevel.SILENT;
+  // Override all console methods
+  console.log = () => {};
+  console.error = () => {};
+  console.warn = () => {};
+}
+
+/**
+ * Disable quiet mode: restore normal output.
+ */
+export function disableQuietMode(): void {
+  config.quiet = false;
+  config.level = LogLevel.INFO;
+  console.log = originalConsole.log;
+  console.error = originalConsole.error;
+  console.warn = originalConsole.warn;
+}
+
+/**
+ * Check if quiet mode is enabled.
+ */
+export function isQuiet(): boolean {
+  return config.quiet;
+}
 
 /**
  * Set the minimum log level. Messages below this level are suppressed.
@@ -75,8 +126,8 @@ export const log = {
    * Styled: dim gray
    */
   debug(message: string): void {
-    if (config.level <= LogLevel.DEBUG) {
-      console.log(pc.dim(formatMessage(message)));
+    if (canOutput(LogLevel.DEBUG)) {
+      originalConsole.log(pc.dim(formatMessage(message)));
     }
   },
 
@@ -85,28 +136,28 @@ export const log = {
    * Styled: normal (no color)
    */
   info(message: string): void {
-    if (config.level <= LogLevel.INFO) {
-      console.log(formatMessage(message));
+    if (canOutput(LogLevel.INFO)) {
+      originalConsole.log(formatMessage(message));
     }
   },
 
   /**
    * Warning-level message.
-   * Styled: yellow
+   * Styled: yellow, outputs to stderr
    */
   warn(message: string): void {
-    if (config.level <= LogLevel.WARN) {
-      console.log(pc.yellow(formatMessage(message)));
+    if (canOutput(LogLevel.WARN)) {
+      originalConsole.warn(pc.yellow(formatMessage(message)));
     }
   },
 
   /**
    * Error-level message.
-   * Styled: red
+   * Styled: red, outputs to stderr
    */
   error(message: string): void {
-    if (config.level <= LogLevel.ERROR) {
-      console.log(pc.red(formatMessage(message)));
+    if (canOutput(LogLevel.ERROR)) {
+      originalConsole.error(pc.red(formatMessage(message)));
     }
   },
 
@@ -115,8 +166,8 @@ export const log = {
    * Styled: green
    */
   success(message: string): void {
-    if (config.level <= LogLevel.INFO) {
-      console.log(pc.green(formatMessage(message)));
+    if (canOutput(LogLevel.INFO)) {
+      originalConsole.log(pc.green(formatMessage(message)));
     }
   },
 
@@ -125,8 +176,8 @@ export const log = {
    * Styled: dim gray
    */
   dim(message: string): void {
-    if (config.level <= LogLevel.INFO) {
-      console.log(pc.dim(formatMessage(message)));
+    if (canOutput(LogLevel.INFO)) {
+      originalConsole.log(pc.dim(formatMessage(message)));
     }
   },
 
@@ -135,8 +186,8 @@ export const log = {
    * Styled: bold
    */
   bold(message: string): void {
-    if (config.level <= LogLevel.INFO) {
-      console.log(pc.bold(formatMessage(message)));
+    if (canOutput(LogLevel.INFO)) {
+      originalConsole.log(pc.bold(formatMessage(message)));
     }
   },
 
@@ -145,8 +196,8 @@ export const log = {
    * Styled: cyan
    */
   cyan(message: string): void {
-    if (config.level <= LogLevel.INFO) {
-      console.log(pc.cyan(formatMessage(message)));
+    if (canOutput(LogLevel.INFO)) {
+      originalConsole.log(pc.cyan(formatMessage(message)));
     }
   },
 
@@ -155,8 +206,38 @@ export const log = {
    * Styled: blue
    */
   blue(message: string): void {
-    if (config.level <= LogLevel.INFO) {
-      console.log(pc.blue(formatMessage(message)));
+    if (canOutput(LogLevel.INFO)) {
+      originalConsole.log(pc.blue(formatMessage(message)));
+    }
+  },
+
+  /**
+   * Yellow highlighted message (info level).
+   * Styled: yellow
+   */
+  yellow(message: string): void {
+    if (canOutput(LogLevel.INFO)) {
+      originalConsole.log(pc.yellow(formatMessage(message)));
+    }
+  },
+
+  /**
+   * Green highlighted message (info level).
+   * Styled: green
+   */
+  green(message: string): void {
+    if (canOutput(LogLevel.INFO)) {
+      originalConsole.log(pc.green(formatMessage(message)));
+    }
+  },
+
+  /**
+   * Red highlighted message (info level, not error).
+   * Styled: red
+   */
+  red(message: string): void {
+    if (canOutput(LogLevel.INFO)) {
+      originalConsole.log(pc.red(formatMessage(message)));
     }
   },
 
@@ -165,8 +246,8 @@ export const log = {
    * Respects log level (info).
    */
   raw(message: string): void {
-    if (config.level <= LogLevel.INFO) {
-      console.log(message);
+    if (canOutput(LogLevel.INFO)) {
+      originalConsole.log(message);
     }
   },
 
@@ -174,8 +255,17 @@ export const log = {
    * Empty line (respects log level).
    */
   newline(): void {
-    if (config.level <= LogLevel.INFO) {
-      console.log();
+    if (canOutput(LogLevel.INFO)) {
+      originalConsole.log();
+    }
+  },
+
+  /**
+   * Write without newline (for progress indicators).
+   */
+  write(message: string): void {
+    if (canOutput(LogLevel.INFO)) {
+      process.stdout.write(message);
     }
   },
 };

@@ -6,39 +6,41 @@
  */
 
 import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
-import { platform } from "node:os";
 import { join, resolve } from "node:path";
 import { env } from "node:process";
 
-import type { Config } from "./config.js";
 import { getContainerName, getImageName, LanguageStack } from "./config.js";
-import { DEFAULT_PIDS_LIMIT } from "./constants.js";
+import { CCBOX_ENV, DEFAULT_PIDS_LIMIT } from "./constants.js";
 import { log } from "./logger.js";
+import { detectHostPlatform, needsFuse, needsPrivilegedForFuse, getHostOSName } from "./platform.js";
 
 import { getClaudeConfigDir, resolveForDocker } from "./paths.js";
+import { getGitCredentials } from "./utils.js";
+import { parseEnvVar } from "./validation.js";
 
 /**
  * Container constraints (SSOT - used for both docker run and prompt generation).
  * Override via environment variables: CCBOX_PIDS_LIMIT, CCBOX_TMP_SIZE, etc.
  */
 export const CONTAINER_CONSTRAINTS = {
-  pidsLimit: parseInt(env.CCBOX_PIDS_LIMIT ?? "", 10) || DEFAULT_PIDS_LIMIT,
+  pidsLimit: parseInt(env[CCBOX_ENV.PIDS_LIMIT] ?? "", 10) || DEFAULT_PIDS_LIMIT,
   capDrop: "ALL",
   ephemeralPaths: ["/tmp", "/var/tmp", "~/.cache"],
   tmpfs: {
-    tmp: env.CCBOX_TMP_SIZE ?? "512m",
+    tmp: env[CCBOX_ENV.TMP_SIZE] ?? "512m",
     varTmp: "256m",
     run: "64m",
-    shm: env.CCBOX_SHM_SIZE ?? "256m",
+    shm: env[CCBOX_ENV.SHM_SIZE] ?? "256m",
   },
 };
 
 /** Generate container awareness prompt with current constraints. */
 export function buildContainerAwarenessPrompt(persistentPaths: string): string {
   const { pidsLimit } = CONTAINER_CONSTRAINTS;
-  const hostOS = platform() === "win32" ? "Windows" : platform() === "darwin" ? "macOS" : "Linux";
+  const hostOS = getHostOSName();
 
-  const windowsNote = hostOS === "Windows"
+  const hostPlatform = detectHostPlatform();
+  const windowsNote = (hostPlatform === "windows-native" || hostPlatform === "windows-wsl")
     ? `\nPath format: D:\\GitHub\\x → /d/GitHub/x (auto-translated)\n`
     : "";
 
@@ -56,6 +58,12 @@ CONSTRAINTS:
   • Local installs only: npm install (not -g), pip install -t .
   • Process limit: ${pidsLimit}
   • /tmp is noexec — use $TMPDIR for executables
+
+INPUT MONITORING:
+  • Check .claude/input/ at each turn for new files
+  • Read and process any paste-*.png, paste-*.txt, or voice-*.txt files
+  • After processing, move files to .claude/input/.processed/
+  • Files are sent by ccbox bridge from host clipboard/microphone
 
 TOOLS: git, gh, curl, wget, ssh, jq, yq, rg, fd, python3, pip3, gcc, make + stack tools
 `.trim();
@@ -102,13 +110,14 @@ export function transformSlashCommand(prompt: string | undefined): string | unde
  * @returns Tuple of [uid, gid] to use for container processes.
  */
 export function getHostUserIds(): [number, number] {
-  if (platform() === "win32") {
+  const hostPlatform = detectHostPlatform();
+  if (hostPlatform === "windows-native") {
     // Windows: No native UID/GID. Docker Desktop maps to container's default user.
     // Use 1000:1000 (ccbox user created in Dockerfile)
     return [1000, 1000];
   }
 
-  // Linux/macOS: Use actual host UID/GID for proper file ownership
+  // Linux/macOS/WSL: Use actual host UID/GID for proper file ownership
   // Fallback to 1000 if process.getuid() is unavailable (shouldn't happen on Unix)
   return [process.getuid?.() ?? 1000, process.getgid?.() ?? 1000];
 }
@@ -134,7 +143,7 @@ export function getHostTimezone(): string {
   }
 
   // 3. Try /etc/timezone (Debian/Ubuntu) - Linux only
-  if (platform() !== "win32") {
+  if (detectHostPlatform() !== "windows-native") {
     try {
       const tzFile = "/etc/timezone";
       if (existsSync(tzFile)) {
@@ -178,43 +187,44 @@ export function getTerminalSize(): { columns: number; lines: number } {
 
 /** Build Claude CLI arguments list. */
 export function buildClaudeArgs(options: {
-  model?: string;
   debug?: number;
-  prompt?: string;
-  quiet?: boolean;
-  appendSystemPrompt?: string;
+  headless?: boolean;
   persistentPaths?: string;
+  claudeArgs?: string[];
 }): string[] {
   const args: string[] = ["--dangerously-skip-permissions"];
 
-  if (options.model) {
-    args.push("--model", options.model);
-  }
-
-  const stream = (options.debug ?? 0) >= 2;
-  const verbose = stream || (Boolean(options.prompt) && !options.quiet);
-
-  if (verbose) {
+  if ((options.debug ?? 0) >= 2) {
     args.push("--verbose");
   }
 
-  // Build system prompt: always include container awareness, optionally append user's prompt
+  // Container awareness prompt (always added)
   const containerPrompt = buildContainerAwarenessPrompt(
     options.persistentPaths ?? "/ccbox/project, /ccbox/.claude"
   );
-  const systemPrompt = options.appendSystemPrompt
-    ? `${containerPrompt}\n\n${options.appendSystemPrompt}`
-    : containerPrompt;
-  args.push("--append-system-prompt", systemPrompt);
 
-  if (options.quiet || options.prompt) {
-    args.push("--print");
-    // stream-json avoids stdout buffering issues on Windows
-    args.push("--output-format", "stream-json");
+  // Check if user passed --append-system-prompt in claudeArgs
+  // If so, merge with container prompt; otherwise add standalone
+  const userArgs = options.claudeArgs ?? [];
+  const aspIdx = userArgs.indexOf("--append-system-prompt");
+  if (aspIdx !== -1 && aspIdx + 1 < userArgs.length) {
+    // Merge user's system prompt with container awareness
+    const userSystemPrompt = userArgs[aspIdx + 1]!;
+    args.push("--append-system-prompt", `${containerPrompt}\n\n${userSystemPrompt}`);
+    // Remove --append-system-prompt and its value from claudeArgs to avoid duplication
+    userArgs.splice(aspIdx, 2);
+  } else {
+    args.push("--append-system-prompt", containerPrompt);
   }
 
-  if (options.prompt) {
-    args.push(options.prompt);
+  // Headless mode: non-interactive output
+  if (options.headless || (options.debug ?? 0) >= 2) {
+    args.push("--print", "--output-format", "stream-json");
+  }
+
+  // Append all remaining user claude args
+  if (userArgs.length > 0) {
+    args.push(...userArgs);
   }
 
   return args;
@@ -269,18 +279,62 @@ function addMinimalMounts(cmd: string[], claudeConfig: string): void {
   cmd.push("-v", `${resolveForDocker(claudeJsonConfig)}:/ccbox/.claude/.claude.json:rw`);
 
   // Signal minimal mount mode
-  cmd.push("-e", "CCBOX_MINIMAL_MOUNT=1");
+  cmd.push("-e", `${CCBOX_ENV.MINIMAL_MOUNT}=1`);
 }
 
-function addGitEnv(cmd: string[], config: Config): void {
-  if (config.gitName) {
-    cmd.push("-e", `GIT_AUTHOR_NAME=${config.gitName}`);
-    cmd.push("-e", `GIT_COMMITTER_NAME=${config.gitName}`);
+async function addGitEnv(cmd: string[]): Promise<void> {
+  // Single call gets everything: token + identity
+  const creds = await getGitCredentials();
+
+  // Git identity (for commits)
+  if (creds.name) {
+    cmd.push("-e", `GIT_AUTHOR_NAME=${creds.name}`);
+    cmd.push("-e", `GIT_COMMITTER_NAME=${creds.name}`);
   }
-  if (config.gitEmail) {
-    cmd.push("-e", `GIT_AUTHOR_EMAIL=${config.gitEmail}`);
-    cmd.push("-e", `GIT_COMMITTER_EMAIL=${config.gitEmail}`);
+  if (creds.email) {
+    cmd.push("-e", `GIT_AUTHOR_EMAIL=${creds.email}`);
+    cmd.push("-e", `GIT_COMMITTER_EMAIL=${creds.email}`);
   }
+
+  // GitHub token (for push/pull auth)
+  if (creds.token) {
+    cmd.push("-e", `GITHUB_TOKEN=${creds.token}`);
+  }
+
+  // Log summary
+  if (creds.token || creds.name) {
+    const parts: string[] = [];
+    if (creds.name) {parts.push(creds.name);}
+    if (creds.token) {parts.push("token");}
+    log.dim(`Git: ${parts.join(" + ")}`);
+  }
+}
+
+/**
+ * Add SSH agent forwarding if available on host.
+ * Mounts SSH_AUTH_SOCK socket into container for key-based auth.
+ * Private keys stay on host - only the agent socket is shared.
+ */
+function addSshAgent(cmd: string[]): void {
+  const sshAuthSock = env.SSH_AUTH_SOCK;
+
+  // No agent socket = silently skip (HTTPS fallback works via GITHUB_TOKEN)
+  if (!sshAuthSock) {
+    return;
+  }
+
+  // Verify socket exists (avoid mount errors)
+  if (!existsSync(sshAuthSock)) {
+    log.debug(`SSH_AUTH_SOCK set but socket not found: ${sshAuthSock}`);
+    return;
+  }
+
+  // Mount the socket and set env var in container
+  // Use same path in container for simplicity
+  cmd.push("-v", `${sshAuthSock}:${sshAuthSock}:ro`);
+  cmd.push("-e", `SSH_AUTH_SOCK=${sshAuthSock}`);
+
+  log.dim("SSH: agent forwarded");
 }
 
 function addTerminalEnv(cmd: string[]): void {
@@ -329,8 +383,8 @@ function addUserMapping(cmd: string[]): void {
   const [uid, gid] = getHostUserIds();
   // Pass UID/GID as environment variables instead of --user flag
   // Container starts as root for setup, then drops to non-root user via gosu
-  cmd.push("-e", `CCBOX_UID=${uid}`);
-  cmd.push("-e", `CCBOX_GID=${gid}`);
+  cmd.push("-e", `${CCBOX_ENV.UID}=${uid}`);
+  cmd.push("-e", `${CCBOX_ENV.GID}=${gid}`);
 }
 
 /**
@@ -411,6 +465,8 @@ function addClaudeEnv(cmd: string[]): void {
     "-e",
     "CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL=1",
     "-e",
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1",
+    "-e",
     "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=85",
     "-e",
     "CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR=1",
@@ -435,8 +491,7 @@ function addClaudeEnv(cmd: string[]): void {
  * - Normal: full ~/.claude mount
  * - Fresh (--fresh): only credentials, clean slate for customizations
  */
-export function getDockerRunCmd(
-  config: Config,
+export async function getDockerRunCmd(
   projectPath: string,
   projectName: string,
   stack: LanguageStack,
@@ -444,25 +499,28 @@ export function getDockerRunCmd(
     fresh?: boolean;
     ephemeralLogs?: boolean;
     debug?: number;
-    prompt?: string;
-    model?: string;
-    quiet?: boolean;
-    appendSystemPrompt?: string;
+    headless?: boolean;
     projectImage?: string;
     unrestricted?: boolean;
     envVars?: string[];
+    claudeArgs?: string[];
+    // New security/resource options
+    zeroResidue?: boolean;
+    memoryLimit?: string;
+    cpuLimit?: string;
+    networkPolicy?: string;
   } = {}
-): string[] {
+): Promise<string[]> {
   const imageName = options.projectImage ?? getImageName(stack);
   const claudeConfig = getClaudeConfigDir();
-  const prompt = transformSlashCommand(options.prompt);
   const containerName = getContainerName(projectName);
   const dockerProjectPath = resolveForDocker(resolve(projectPath));
 
   const cmd = ["docker", "run", "--rm"];
 
-  // TTY allocation: interactive sessions need -it, unattended needs -i only
-  const isInteractive = !prompt && !options.quiet && (options.debug ?? 0) < 2;
+  // TTY allocation: interactive sessions need -it, headless/debug needs -i only
+  const isHeadless = options.headless || (options.debug ?? 0) >= 2;
+  const isInteractive = !isHeadless;
   cmd.push(isInteractive ? "-it" : "-i");
 
   cmd.push("--name", containerName);
@@ -527,12 +585,16 @@ export function getDockerRunCmd(
     cmd.push("-v", `${dockerClaudeConfig}:/ccbox/.claude:rw`);
 
     // FUSE device access for kernel-level path transformation
-    // Windows Docker Desktop requires --privileged for /dev/fuse
-    // Linux/macOS use --device /dev/fuse (capability added in addCapabilityRestrictions)
-    if (platform() === "win32") {
-      cmd.push("--privileged");
-    } else {
-      cmd.push("--device", "/dev/fuse");
+    // Only needed on Windows/WSL where host paths differ from container POSIX paths
+    // macOS and Linux use native POSIX paths — no FUSE needed
+    if (needsFuse()) {
+      if (needsPrivilegedForFuse()) {
+        // Windows Docker Desktop requires --privileged for /dev/fuse
+        cmd.push("--privileged");
+      } else {
+        // WSL/Linux: --device /dev/fuse (capability added in addCapabilityRestrictions)
+        cmd.push("--device", "/dev/fuse");
+      }
     }
   }
 
@@ -562,8 +624,8 @@ export function getDockerRunCmd(
   addContainerEssentials(cmd);
 
   // Capability restrictions — only when not using --privileged
-  // Windows + FUSE uses --privileged which already grants all capabilities
-  const usesPrivileged = platform() === "win32" && !useMinimalMount;
+  // Windows native + FUSE uses --privileged which already grants all capabilities
+  const usesPrivileged = needsPrivilegedForFuse() && needsFuse() && !useMinimalMount;
   if (!usesPrivileged) {
     addCapabilityRestrictions(cmd);
   }
@@ -573,12 +635,33 @@ export function getDockerRunCmd(
 
   // Debug, restricted/unrestricted mode flags
   if ((options.debug ?? 0) > 0) {
-    cmd.push("-e", `CCBOX_DEBUG=${options.debug}`);
+    cmd.push("-e", `${CCBOX_ENV.DEBUG}=${options.debug}`);
   }
   if (options.unrestricted) {
-    cmd.push("-e", "CCBOX_UNRESTRICTED=1");
+    cmd.push("-e", `${CCBOX_ENV.UNRESTRICTED}=1`);
   } else {
+    // Resource limits (can be overridden via --memory, --cpus flags)
+    const memLimit = options.memoryLimit ?? "4g";
+    const cpuLimit = options.cpuLimit ?? "2.0";
+    cmd.push(`--memory=${memLimit}`);
+    cmd.push(`--cpus=${cpuLimit}`);
     cmd.push("--cpu-shares=512");
+  }
+
+  // Zero-residue mode: disable all trace/cache/log artifacts
+  if (options.zeroResidue) {
+    cmd.push("-e", `${CCBOX_ENV.ZERO_RESIDUE}=1`);
+  }
+
+  // Network isolation policy
+  if (options.networkPolicy && options.networkPolicy !== "full") {
+    cmd.push("-e", `${CCBOX_ENV.NETWORK_POLICY}=${options.networkPolicy}`);
+    if (options.networkPolicy === "isolated") {
+      // Block all outbound except DNS and essential services
+      cmd.push("--network=bridge");
+      // Note: Full network isolation would require iptables rules in entrypoint
+      // For now, we signal the policy via env var for entrypoint to handle
+    }
   }
 
   // Environment variables
@@ -592,7 +675,7 @@ export function getDockerRunCmd(
   // fakepath.so: original Windows path for LD_PRELOAD-based getcwd translation
   // Makes git, npm, and other glibc-based tools see the original host path
   if (dockerProjectPath !== hostProjectPath) {
-    cmd.push("-e", `CCBOX_WIN_ORIGINAL_PATH=${dockerProjectPath}`);
+    cmd.push("-e", `${CCBOX_ENV.WIN_ORIGINAL_PATH}=${dockerProjectPath}`);
   }
 
   // Debug logs: ephemeral if requested, otherwise normal (persisted to host)
@@ -607,11 +690,12 @@ export function getDockerRunCmd(
   const persistentPaths = options.fresh
     ? hostProjectPath
     : `${hostProjectPath}, /ccbox/.claude`;
-  cmd.push("-e", `CCBOX_PERSISTENT_PATHS=${persistentPaths}`);
+  cmd.push("-e", `${CCBOX_ENV.PERSISTENT_PATHS}=${persistentPaths}`);
 
   // FUSE path mapping: host paths -> container paths (for JSON config transformation)
   // Maps Windows paths (D:/...) to POSIX paths (/d/...) in session files
-  // This ensures sessions created in container are visible on host and vice versa
+  // Only relevant on Windows/WSL where path formats differ
+  // macOS/Linux: paths are already POSIX, no mapping needed
   const pathMappings: string[] = [];
 
   // Map project directory (Windows D:/... -> POSIX /d/...)
@@ -633,7 +717,7 @@ export function getDockerRunCmd(
   }
 
   if (pathMappings.length > 0) {
-    cmd.push("-e", `CCBOX_PATH_MAP=${pathMappings.join(";")}`);
+    cmd.push("-e", `${CCBOX_ENV.PATH_MAP}=${pathMappings.join(";")}`);
   }
 
   // Directory name mapping for session bridge (FUSE dirmap)
@@ -646,27 +730,21 @@ export function getDockerRunCmd(
     const containerEncoded = encodePath(hostProjectPath);
     const nativeEncoded = encodePath(resolve(projectPath));
     if (containerEncoded !== nativeEncoded) {
-      cmd.push("-e", `CCBOX_DIR_MAP=${containerEncoded}:${nativeEncoded}`);
+      cmd.push("-e", `${CCBOX_ENV.DIR_MAP}=${containerEncoded}:${nativeEncoded}`);
     }
   }
 
-  addGitEnv(cmd, config);
+  await addGitEnv(cmd);
+
+  // SSH Agent forwarding (if available on host)
+  addSshAgent(cmd);
 
   // User-provided environment variables (added last to allow overrides)
   if (options.envVars && options.envVars.length > 0) {
     for (const envVar of options.envVars) {
-      const eqIdx = envVar.indexOf("=");
-      if (eqIdx > 0) {
-        const key = envVar.slice(0, eqIdx);
-        const value = envVar.slice(eqIdx + 1);
-        // Validate key: only alphanumeric + underscore (POSIX env var names)
-        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
-          continue; // Skip invalid env var names
-        }
-        // Sanitize value: remove newlines and null bytes to prevent injection
-        // eslint-disable-next-line no-control-regex
-        const safeValue = value.replace(/[\r\n\x00]/g, "");
-        cmd.push("-e", `${key}=${safeValue}`);
+      const parsed = parseEnvVar(envVar);
+      if (parsed) {
+        cmd.push("-e", `${parsed.key}=${parsed.value}`);
       }
     }
   }
@@ -675,12 +753,10 @@ export function getDockerRunCmd(
 
   // Claude CLI arguments
   const claudeArgs = buildClaudeArgs({
-    model: options.model,
     debug: options.debug,
-    prompt,
-    quiet: options.quiet,
-    appendSystemPrompt: options.appendSystemPrompt,
+    headless: options.headless,
     persistentPaths,
+    claudeArgs: options.claudeArgs ? [...options.claudeArgs] : undefined,
   });
   cmd.push(...claudeArgs);
 

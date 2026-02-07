@@ -136,3 +136,43 @@ export class ValidationError extends CCBoxError {
     this.name = "ValidationError";
   }
 }
+
+/**
+ * Extract error details from an unknown error for user-friendly messages.
+ *
+ * Handles execa-style errors with stderr/shortMessage, plus standard Error objects.
+ * Truncates output to maxLength to avoid overwhelming log output.
+ *
+ * @param error - Unknown error to extract details from.
+ * @param maxLength - Maximum length of returned string (default: 1000).
+ * @returns Human-readable error details.
+ */
+export function extractErrorDetails(error: unknown, maxLength = 1000): string {
+  if (!(error instanceof Error)) {
+    return String(error).slice(0, maxLength);
+  }
+
+  const execaError = error as { stderr?: string; shortMessage?: string };
+
+  if (execaError.stderr) {
+    return execaError.stderr.slice(0, maxLength);
+  }
+  if (execaError.shortMessage) {
+    return execaError.shortMessage.slice(0, maxLength);
+  }
+  return error.message.slice(0, maxLength);
+}
+
+/**
+ * Check if an error is a timeout error (execa-style).
+ *
+ * @param error - Unknown error to check.
+ * @returns True if the error indicates a timeout.
+ */
+export function isTimeoutError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const execaError = error as { timedOut?: boolean };
+  return !!execaError.timedOut;
+}

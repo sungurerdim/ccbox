@@ -5,10 +5,7 @@
  */
 
 import { exec, execInherit } from "../exec.js";
-import {
-  type Config,
-  LanguageStack,
-} from "../config.js";
+import { LanguageStack } from "../config.js";
 import { DOCKER_COMMAND_TIMEOUT } from "../constants.js";
 import type { DepsInfo, DepsMode } from "../deps.js";
 import { detectDependencies } from "../deps.js";
@@ -20,8 +17,8 @@ import {
   getProjectImageName,
   projectImageExists,
 } from "../build.js";
-import { pruneStaleResources } from "../cleanup.js";
-import { resolveStack, setupGitConfig } from "../prompts.js";
+import { pruneStaleResources, cleanOrphanedBuildDirs } from "../cleanup.js";
+import { resolveStack } from "../prompts.js";
 import { checkDocker, ERR_DOCKER_NOT_RUNNING } from "../utils.js";
 import { detectAndReportStack } from "./run-phases.js";
 import { ensureBaseImage, ensureStackImage, buildProjectIfNeeded } from "./build-helpers.js";
@@ -41,7 +38,7 @@ async function diagnoseContainerFailure(returncode: number, projectName: string)
     return;
   }
   if (returncode === 143) {
-    log.dim("Container terminated by signal");
+    // SIGTERM - normal shutdown via quit/stop, no message needed
     return;
   }
 
@@ -80,7 +77,6 @@ async function diagnoseContainerFailure(returncode: number, projectName: string)
  * Execute the container with Claude Code.
  */
 async function executeContainer(
-  config: Config,
   projectPath: string,
   projectName: string,
   stack: LanguageStack,
@@ -88,42 +84,51 @@ async function executeContainer(
     fresh?: boolean;
     ephemeralLogs?: boolean;
     debug?: number;
-    prompt?: string;
-    model?: string;
-    quiet?: boolean;
-    appendSystemPrompt?: string;
+    headless?: boolean;
     projectImage?: string;
     unrestricted?: boolean;
     envVars?: string[];
+    claudeArgs?: string[];
+    // New options
+    zeroResidue?: boolean;
+    memoryLimit?: string;
+    cpuLimit?: string;
+    networkPolicy?: string;
   } = {}
 ): Promise<void> {
   const {
     fresh = false,
     ephemeralLogs = false,
     debug = 0,
-    prompt,
-    model,
-    quiet = false,
-    appendSystemPrompt,
+    headless = false,
     projectImage,
     unrestricted = false,
     envVars,
+    claudeArgs,
+    // New options
+    zeroResidue = false,
+    memoryLimit = "4g",
+    cpuLimit = "2.0",
+    networkPolicy = "full",
   } = options;
 
   log.dim("Starting Claude Code...");
   log.newline();
 
-  const cmd = getDockerRunCmd(config, projectPath, projectName, stack, {
+  const cmd = await getDockerRunCmd(projectPath, projectName, stack, {
     fresh,
     ephemeralLogs,
     debug,
-    prompt,
-    model,
-    quiet,
-    appendSystemPrompt,
+    headless,
     projectImage,
     unrestricted,
     envVars,
+    claudeArgs,
+    // New options
+    zeroResidue,
+    memoryLimit,
+    cpuLimit,
+    networkPolicy,
   });
 
   // Debug: print docker command
@@ -131,8 +136,8 @@ async function executeContainer(
     log.dim("Docker command: " + cmd.join(" "));
   }
 
-  // stdin: inherit for interactive, ignore for watch-only (-dd)
-  const stdin = debug >= 2 ? "ignore" : "inherit";
+  // stdin: inherit for interactive, ignore for headless/watch-only (-dd)
+  const stdin = (headless || debug >= 2) ? "ignore" : "inherit";
 
   let returncode = 0;
   try {
@@ -184,7 +189,6 @@ async function executeContainer(
  * Try to run using existing project image. Returns true if handled.
  */
 async function tryRunExistingImage(
-  config: Config,
   projectPath: string,
   projectName: string,
   stack: LanguageStack,
@@ -193,12 +197,14 @@ async function tryRunExistingImage(
     fresh?: boolean;
     ephemeralLogs?: boolean;
     debug?: number;
-    prompt?: string;
-    model?: string;
-    quiet?: boolean;
-    appendSystemPrompt?: string;
+    headless?: boolean;
     unrestricted?: boolean;
     envVars?: string[];
+    claudeArgs?: string[];
+    zeroResidue?: boolean;
+    memoryLimit?: string;
+    cpuLimit?: string;
+    networkPolicy?: string;
   } = {}
 ): Promise<boolean> {
   if (!(await projectImageExists(projectName, stack))) {
@@ -216,7 +222,7 @@ async function tryRunExistingImage(
     return true;
   }
 
-  await executeContainer(config, projectPath, projectName, stack, {
+  await executeContainer( projectPath, projectName, stack, {
     ...options,
     projectImage,
   });
@@ -227,7 +233,6 @@ async function tryRunExistingImage(
  * Build images and run container (Phase 3).
  */
 async function buildAndRun(
-  config: Config,
   projectPath: string,
   projectName: string,
   selectedStack: LanguageStack,
@@ -238,17 +243,19 @@ async function buildAndRun(
     fresh?: boolean;
     ephemeralLogs?: boolean;
     debug?: number;
-    prompt?: string;
-    model?: string;
-    quiet?: boolean;
-    appendSystemPrompt?: string;
+    headless?: boolean;
     unrestricted?: boolean;
     progress?: string;
     cache?: boolean;
     envVars?: string[];
+    claudeArgs?: string[];
+    zeroResidue?: boolean;
+    memoryLimit?: string;
+    cpuLimit?: string;
+    networkPolicy?: string;
   } = {}
 ): Promise<void> {
-  const { progress = "auto", cache = true } = options;
+  const { progress = "auto", cache = false } = options;
 
   log.newline();
   log.blue(`[${projectName}] -> ccbox/${selectedStack}`);
@@ -266,7 +273,7 @@ async function buildAndRun(
     return;
   }
 
-  await executeContainer(config, projectPath, projectName, selectedStack, {
+  await executeContainer( projectPath, projectName, selectedStack, {
     ...options,
     projectImage: builtProjectImage,
   });
@@ -284,10 +291,7 @@ export async function run(
     ephemeralLogs?: boolean;
     depsMode?: string;
     debug?: number;
-    prompt?: string;
-    model?: string;
-    quiet?: boolean;
-    appendSystemPrompt?: string;
+    headless?: boolean;
     unattended?: boolean;
     prune?: boolean;
     unrestricted?: boolean;
@@ -295,6 +299,12 @@ export async function run(
     progress?: string;
     cache?: boolean;
     envVars?: string[];
+    claudeArgs?: string[];
+    // New options
+    zeroResidue?: boolean;
+    memoryLimit?: string;
+    cpuLimit?: string;
+    networkPolicy?: string;
   } = {}
 ): Promise<void> {
   const {
@@ -302,17 +312,20 @@ export async function run(
     ephemeralLogs = false,
     depsMode,
     debug = 0,
-    prompt,
-    model,
-    quiet = false,
-    appendSystemPrompt,
+    headless = false,
     unattended = false,
     prune = true,
     unrestricted = false,
     verbose = false,
     progress = "auto",
-    cache = true,
+    cache = false,
     envVars,
+    claudeArgs,
+    // New options
+    zeroResidue = false,
+    memoryLimit = "4g",
+    cpuLimit = "2.0",
+    networkPolicy = "full",
   } = options;
 
   if (!(await checkDocker())) {
@@ -321,13 +334,13 @@ export async function run(
     process.exit(1);
   }
 
-  // Pre-run cleanup: remove stale resources
+  // Pre-run cleanup: remove stale resources and orphaned build dirs
+  cleanOrphanedBuildDirs();
   if (prune) {
     await pruneStaleResources(debug > 0);
   }
 
   // Phase 1: Detect project type and resolve initial stack
-  const config = await setupGitConfig();
   const { projectPath, projectName, stack: initialStack } = detectAndReportStack(path, {
     stackName,
     verbose,
@@ -335,16 +348,18 @@ export async function run(
 
   // Phase 1: Try existing project image (skip prompts if found)
   if (
-    await tryRunExistingImage(config, projectPath, projectName, initialStack, buildOnly, {
+    await tryRunExistingImage(projectPath, projectName, initialStack, buildOnly, {
       fresh,
       ephemeralLogs,
       debug,
-      prompt,
-      model,
-      quiet,
-      appendSystemPrompt,
+      headless,
       unrestricted,
       envVars,
+      claudeArgs,
+      zeroResidue,
+      memoryLimit,
+      cpuLimit,
+      networkPolicy,
     })
   ) {
     return;
@@ -383,17 +398,19 @@ export async function run(
   }
 
   // Phase 3: Build and run
-  await buildAndRun(config, projectPath, projectName, selectedStack, depsList, resolvedDepsMode, buildOnly, {
+  await buildAndRun(projectPath, projectName, selectedStack, depsList, resolvedDepsMode, buildOnly, {
     fresh,
     ephemeralLogs,
     debug,
-    prompt,
-    model,
-    quiet,
-    appendSystemPrompt,
+    headless,
     unrestricted,
     progress,
     cache,
     envVars,
+    claudeArgs,
+    zeroResidue,
+    memoryLimit,
+    cpuLimit,
+    networkPolicy,
   });
 }

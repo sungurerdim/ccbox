@@ -706,13 +706,27 @@ static int ccbox_readdir(const char *path, void *buf, fuse_fill_dir_t filler, of
         st.st_mode = de->d_type << 12;
         /* Reverse translate: native_name -> container_name for readdir */
         const char *name = de->d_name;
+        int skip = 0;
         for (int m = 0; m < dir_mapping_count; m++) {
             if (strcmp(de->d_name, dir_mappings[m].native_name) == 0) {
                 name = dir_mappings[m].container_name;
                 TRACE("readdir dirmap: %s -> %s", de->d_name, name);
                 break;
             }
+            /* Skip literal container_name entries that would duplicate a translated native entry */
+            if (strcmp(de->d_name, dir_mappings[m].container_name) == 0) {
+                /* Check if the native_name dir also exists on disk */
+                char native_path[MAX_PATH_LEN];
+                snprintf(native_path, sizeof(native_path), "%s/%s", fpath, dir_mappings[m].native_name);
+                struct stat ns;
+                if (lstat(native_path, &ns) == 0 && S_ISDIR(ns.st_mode)) {
+                    TRACE("readdir dedup: skipping literal %s (native %s exists)", de->d_name, dir_mappings[m].native_name);
+                    skip = 1;
+                }
+                break;
+            }
         }
+        if (skip) continue;
         if (filler(buf, name, &st, 0, 0)) break;
     }
     closedir(dp);
@@ -912,7 +926,53 @@ static int ccbox_truncate(const char *path, off_t size, struct fuse_file_info *f
 static int ccbox_utimens(const char *path, const struct timespec ts[2], struct fuse_file_info *fi) { (void)fi; char fpath[MAX_PATH_LEN]; int rc = get_source_path(fpath, path, sizeof(fpath)); if (rc) return rc; return utimensat(AT_FDCWD, fpath, ts, AT_SYMLINK_NOFOLLOW) == -1 ? -errno : 0; }
 static int ccbox_chmod(const char *path, mode_t mode, struct fuse_file_info *fi) { (void)fi; char fpath[MAX_PATH_LEN]; int rc = get_source_path(fpath, path, sizeof(fpath)); if (rc) return rc; return chmod(fpath, mode) == -1 ? -errno : 0; }
 static int ccbox_chown(const char *path, uid_t uid, gid_t gid, struct fuse_file_info *fi) { (void)fi; char fpath[MAX_PATH_LEN]; int rc = get_source_path(fpath, path, sizeof(fpath)); if (rc) return rc; return lchown(fpath, uid, gid) == -1 ? -errno : 0; }
-static int ccbox_rename(const char *from, const char *to, unsigned int flags) { if (flags) return -EINVAL; char ff[MAX_PATH_LEN], ft[MAX_PATH_LEN]; int rc = get_source_path(ff, from, sizeof(ff)); if (rc) return rc; rc = get_source_path(ft, to, sizeof(ft)); if (rc) return rc; neg_cache_invalidate(ft); rcache_invalidate(ff); rcache_invalidate(ft); int r = rename(ff, ft); return r == -1 ? -errno : 0; }
+static int ccbox_rename(const char *from, const char *to, unsigned int flags) {
+    if (flags) return -EINVAL;
+    char ff[MAX_PATH_LEN], ft[MAX_PATH_LEN];
+    int rc = get_source_path(ff, from, sizeof(ff));
+    if (rc) return rc;
+    rc = get_source_path(ft, to, sizeof(ft));
+    if (rc) return rc;
+    neg_cache_invalidate(ft);
+    rcache_invalidate(ff);
+    rcache_invalidate(ft);
+    scache_invalidate(ff);
+    scache_invalidate(ft);
+    int r = rename(ff, ft);
+    if (r == -1) return -errno;
+
+    /* Post-rename content transform: if the target has a transformable extension
+     * but the source did not, the file was written without FUSE write transform
+     * (e.g. atomic rename: write to tmp file, rename to .json). Apply to_host
+     * transform now so the on-disk content has host paths. */
+    if (mapping_count > 0 && needs_transform(to) && !needs_transform(from)) {
+        struct stat st;
+        if (stat(ft, &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0 &&
+            (size_t)st.st_size <= RCACHE_MAX_SIZE) {
+            int fd = open(ft, O_RDWR);
+            if (fd >= 0) {
+                char *buf = malloc(st.st_size + 1);
+                if (buf) {
+                    ssize_t n = pread(fd, buf, st.st_size, 0);
+                    if (n > 0) {
+                        buf[n] = '\0';
+                        size_t newlen;
+                        char *transformed = transform_to_host_alloc(buf, n, &newlen);
+                        if (transformed) {
+                            pwrite(fd, transformed, newlen, 0);
+                            ftruncate(fd, newlen);
+                            TRACE_TX("rename transform: %s -> %s (%zd -> %zu bytes)", from, to, n, newlen);
+                            free(transformed);
+                        }
+                    }
+                    free(buf);
+                }
+                close(fd);
+            }
+        }
+    }
+    return 0;
+}
 static int ccbox_symlink(const char *target, const char *linkpath) {
     struct fuse_context *ctx = fuse_get_context();
     char fpath[MAX_PATH_LEN];

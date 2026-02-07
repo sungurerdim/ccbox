@@ -210,3 +210,21 @@ export function cleanTempFiles(): number {
   }
   return 0;
 }
+
+/**
+ * Clean orphaned build directories left by crashed builds.
+ *
+ * Runs at startup to prevent disk space accumulation from incomplete builds.
+ * Only cleans the build subdirectory, not other ccbox temp files.
+ */
+export function cleanOrphanedBuildDirs(): void {
+  const buildDir = join(tmpdir(), "ccbox", "build");
+  if (existsSync(buildDir)) {
+    try {
+      rmSync(buildDir, { recursive: true, force: true });
+      log.debug("Cleaned orphaned build directory");
+    } catch (e) {
+      log.debug(`Failed to clean orphaned build dir: ${String(e)}`);
+    }
+  }
+}

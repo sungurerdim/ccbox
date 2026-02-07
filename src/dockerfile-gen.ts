@@ -29,6 +29,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \\
     fuse3 \\
     # GitHub CLI
     gh \\
+    # Session wrapper (enables voice/clipboard injection into running sessions)
+    tmux \\
     # Core utilities (grep/sed/findutils come with base image)
     procps unzip make tree zip file patch wget vim-tiny \\
     && rm -rf /var/lib/apt/lists/* \\

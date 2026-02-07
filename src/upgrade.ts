@@ -6,7 +6,6 @@
  * - Linux/macOS: overwrite directly (OS allows replacing running binary)
  */
 
-import { style } from "./logger.js";
 import { log } from "./logger.js";
 import { createHash } from "crypto";
 import { writeFileSync, renameSync, unlinkSync, chmodSync, existsSync } from "fs";
@@ -213,45 +212,52 @@ function cleanupOldBinary(): void {
   }
 }
 
+interface UpdateOptions {
+  skipConfirm?: boolean;
+  forceReinstall?: boolean;
+}
+
 /**
  * Self-update: download new binary and replace current executable.
  */
-export async function selfUpdate(force: boolean): Promise<void> {
+export async function selfUpdate(options: UpdateOptions = {}): Promise<void> {
+  const { skipConfirm = false, forceReinstall = false } = options;
+
   // Clean up leftover from previous update
   cleanupOldBinary();
 
   const currentVersion = `v${VERSION}`;
 
-  console.log(style.dim("  Checking for updates..."));
-  console.log();
+  log.dim("  Checking for updates...");
+  log.newline();
 
   const release = await fetchLatestRelease();
   if (!release) {
-    console.log(style.red("  Failed to check (network error or rate limited)"));
+    log.error("  Failed to check (network error or rate limited)");
     process.exit(1);
   }
 
   const latestVersion = release.tag_name;
 
-  console.log(`  ${style.dim("Current")}  ${currentVersion}`);
-  console.log(`  ${style.dim("Latest")}   ${latestVersion}`);
+  log.raw(`  Current  ${currentVersion}`);
+  log.raw(`  Latest   ${latestVersion}`);
 
-  if (!force && compareVersions(currentVersion, latestVersion) >= 0) {
-    console.log();
-    console.log(style.green("  Already up to date"));
+  if (!forceReinstall && compareVersions(currentVersion, latestVersion) >= 0) {
+    log.newline();
+    log.success("  Already up to date");
     return;
   }
 
-  // Confirm (force skips both version check and confirmation)
-  if (!force) {
-    console.log();
+  // Confirm unless -y flag was passed
+  if (!skipConfirm) {
+    log.newline();
     const { confirm } = await import("./prompt-io.js");
     const confirmed = await confirm({
       message: `Update to ${latestVersion}?`,
       default: true,
     });
     if (!confirmed) {
-      console.log(style.dim("  Cancelled."));
+      log.dim("  Cancelled.");
       return;
     }
   }
@@ -262,7 +268,7 @@ export async function selfUpdate(force: boolean): Promise<void> {
   const binaryName = `ccbox-${latestVersion}-${platform}${ext}`;
   const downloadUrl = `https://github.com/${REPO}/releases/download/${latestVersion}/${binaryName}`;
 
-  process.stdout.write("  Downloading ...");
+  log.write("  Downloading ...");
 
   // Download binary and fetch checksums in parallel
   const [dataResult, checksums] = await Promise.all([
@@ -271,27 +277,27 @@ export async function selfUpdate(force: boolean): Promise<void> {
   ]);
 
   if (dataResult instanceof Error || !(dataResult instanceof Buffer)) {
-    console.log(style.red(" failed"));
+    log.red(" failed");
     const msg = dataResult instanceof Error ? dataResult.message : String(dataResult);
-    console.log(style.red(`  ${msg}`));
+    log.error(`  ${msg}`);
     process.exit(1);
   }
 
   const data: Buffer = dataResult;
-  console.log(style.green(" done"));
+  log.green(" done");
   if (checksums) {
     const expectedHash = checksums.get(binaryName);
     if (expectedHash) {
       if (!verifyChecksum(data, expectedHash)) {
-        console.log(style.red("  Checksum verification failed — aborting update"));
+        log.error("  Checksum verification failed — aborting update");
         process.exit(1);
       }
-      console.log(style.green("  Checksum verified ✓"));
+      log.success("  Checksum verified");
     } else {
-      console.log(style.yellow("  Warning: no checksum entry for this binary, skipping verification"));
+      log.warn("  Warning: no checksum entry for this binary, skipping verification");
     }
   } else {
-    console.log(style.yellow("  Warning: checksums.txt unavailable, skipping verification"));
+    log.warn("  Warning: checksums.txt unavailable, skipping verification");
   }
 
   // Replace binary
@@ -335,33 +341,33 @@ export async function selfUpdate(force: boolean): Promise<void> {
     } catch (rollbackErr: unknown) {
       log.debug(`Rollback failed: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}`);
     }
-    console.log(style.red(`  Update failed: ${e instanceof Error ? e.message : String(e)}`));
+    log.error(`  Update failed: ${e instanceof Error ? e.message : String(e)}`);
     process.exit(1);
   }
 
-  console.log();
-  console.log(style.green(`  Updated to ${latestVersion}`));
+  log.newline();
+  log.success(`  Updated to ${latestVersion}`);
 }
 
 /**
  * Uninstall: remove the current binary.
  */
-export async function selfUninstall(force: boolean): Promise<void> {
+export async function selfUninstall(skipConfirm = false): Promise<void> {
   const exePath = getExePath();
 
-  console.log();
-  console.log(style.yellow("  This will remove:"));
-  console.log(`    ${exePath}`);
-  console.log();
+  log.newline();
+  log.yellow("  This will remove:");
+  log.info(`    ${exePath}`);
+  log.newline();
 
-  if (!force) {
+  if (!skipConfirm) {
     const { confirm } = await import("./prompt-io.js");
     const confirmed = await confirm({
       message: "Continue?",
       default: false,
     });
     if (!confirmed) {
-      console.log(style.dim("  Cancelled."));
+      log.dim("  Cancelled.");
       return;
     }
   }
@@ -386,10 +392,10 @@ export async function selfUninstall(force: boolean): Promise<void> {
     const message = e instanceof Error ? e.message : String(e);
     // Permission/access errors are critical and actionable
     if (code === "EPERM" || code === "EACCES") {
-      console.log(style.red(`  Uninstall failed (permission denied): ${message}`));
-      console.log(style.dim("  Try running with elevated permissions (sudo/admin)"));
+      log.error(`  Uninstall failed (permission denied): ${message}`);
+      log.dim("  Try running with elevated permissions (sudo/admin)");
     } else {
-      console.log(style.red(`  Uninstall failed: ${message}`));
+      log.error(`  Uninstall failed: ${message}`);
     }
     log.debug(`selfUninstall error code=${code}: ${message}`);
     process.exit(1);
@@ -398,23 +404,23 @@ export async function selfUninstall(force: boolean): Promise<void> {
   // Clean up .old if exists
   cleanupOldBinary();
 
-  console.log();
-  console.log(style.green("  ccbox has been uninstalled"));
+  log.newline();
+  log.success("  ccbox has been uninstalled");
 }
 
 /**
  * Show version info, optionally check for updates.
  */
 export async function showVersion(check: boolean): Promise<void> {
-  console.log(`  ccbox v${VERSION}`);
+  log.info(`  ccbox v${VERSION}`);
 
   if (check) {
-    console.log();
-    console.log(style.dim("  Checking for updates..."));
+    log.newline();
+    log.dim("  Checking for updates...");
 
     const release = await fetchLatestRelease();
     if (!release) {
-      console.log(style.yellow("  Could not check (network error)"));
+      log.warn("  Could not check (network error)");
       return;
     }
 
@@ -422,10 +428,10 @@ export async function showVersion(check: boolean): Promise<void> {
     const latestVersion = release.tag_name;
 
     if (compareVersions(currentVersion, latestVersion) >= 0) {
-      console.log(style.green("  Up to date"));
+      log.success("  Up to date");
     } else {
-      console.log(style.yellow(`  Update available: ${currentVersion} -> ${latestVersion}`));
-      console.log(style.dim("  Run 'ccbox update' to update"));
+      log.yellow(`  Update available: ${currentVersion} -> ${latestVersion}`);
+      log.dim("  Run 'ccbox update' to update");
     }
   }
 }
