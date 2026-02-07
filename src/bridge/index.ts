@@ -134,7 +134,7 @@ function ensureInputDir(state: BridgeState): void {
  * Uses batched stat for efficiency (single docker exec call).
  */
 async function discoverSessions(containerName: string, projectPath: string): Promise<SessionInfo[]> {
-  if (!containerName) return [];
+  if (!containerName) {return [];}
 
   try {
     const dockerPath = resolveForDocker(resolve(projectPath));
@@ -148,10 +148,10 @@ async function discoverSessions(containerName: string, projectPath: string): Pro
       `ls -t /ccbox/.claude/projects/${encodedPath}/*.jsonl 2>/dev/null | head -5`,
     ], { timeout: DOCKER_COMMAND_TIMEOUT, env: getDockerEnv() });
 
-    if (result.exitCode !== 0 || !result.stdout.trim()) return [];
+    if (result.exitCode !== 0 || !result.stdout.trim()) {return [];}
 
     const files = result.stdout.trim().split("\n").filter(Boolean);
-    if (files.length === 0) return [];
+    if (files.length === 0) {return [];}
 
     // Batch stat call - single docker exec for all files
     const statCmd = files.map(f => `stat -c '%Y' '${f}' 2>/dev/null || echo 0`).join("; ");
@@ -244,7 +244,7 @@ function renderUI(state: BridgeState): void {
   const output = lines.join("\n");
 
   // Differential rendering: skip if unchanged
-  if (output === state.lastRender) return;
+  if (output === state.lastRender) {return;}
   state.lastRender = output;
 
   // Cursor home + write + clear rest (no full-screen clear)
@@ -280,7 +280,7 @@ async function refreshData(state: BridgeState): Promise<boolean> {
     sessions: c.sessions.map(s => s.id),
   })));
 
-  if (newJson === oldJson) return false;
+  if (newJson === oldJson) {return false;}
 
   state.containers = containers;
   state.flatItems = buildFlatItems(containers);
@@ -297,13 +297,13 @@ async function refreshData(state: BridgeState): Promise<boolean> {
 
 /** Start periodic refresh timer. */
 function startRefreshTimer(state: BridgeState): void {
-  if (state.refreshTimer) return;
+  if (state.refreshTimer) {return;}
 
   state.refreshTimer = setInterval(async () => {
-    if (state.isPrompting || !state.isRunning) return;
+    if (state.isPrompting || !state.isRunning) {return;}
 
     const changed = await refreshData(state);
-    if (changed) renderUI(state);
+    if (changed) {renderUI(state);}
   }, REFRESH_INTERVAL_MS);
 }
 
@@ -320,14 +320,14 @@ function stopRefreshTimer(state: BridgeState): void {
 /** Get the container that owns the currently selected flat item. */
 function getSelectedContainer(state: BridgeState): ContainerInfo | null {
   const item = state.flatItems[state.currentIndex];
-  if (!item) return null;
+  if (!item) {return null;}
   return item.type === "container" ? item.container : item.container;
 }
 
 /** Get the session for the currently selected flat item. Falls back to first session of container. */
 function getSelectedSession(state: BridgeState): { session: SessionInfo; container: ContainerInfo } | null {
   const item = state.flatItems[state.currentIndex];
-  if (!item) return null;
+  if (!item) {return null;}
 
   if (item.type === "session") {
     return { session: item.session, container: item.container };
@@ -510,7 +510,7 @@ function setupKeyboard(state: BridgeState, onKey: (key: string) => void): void {
   process.on("SIGTERM", () => { restoreTerminal(); process.exit(0); });
 
   process.stdin.on("keypress", (_str: string, key: { name?: string; ctrl?: boolean }) => {
-    if (!state.isRunning) return;
+    if (!state.isRunning) {return;}
 
     // Ctrl+C - force quit (always allowed)
     if (key.ctrl && key.name === "c") {
@@ -521,7 +521,7 @@ function setupKeyboard(state: BridgeState, onKey: (key: string) => void): void {
     }
 
     // Suppress while prompting or for ctrl/unknown keys
-    if (state.isPrompting || key.ctrl || !key.name) return;
+    if (state.isPrompting || key.ctrl || !key.name) {return;}
 
     onKey(key.name);
   });
