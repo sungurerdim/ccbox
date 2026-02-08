@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0](https://github.com/sungurerdim/ccbox/compare/v0.3.0...v0.4.0) (2026-02-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* rewrite codebase from TypeScript/Bun to Go ([#6](https://github.com/sungurerdim/ccbox/issues/6))
+* Complete rewrite of ccbox from TypeScript/Bun to Go.
+
+### Features
+
+* bridge voice/paste, container labels, Docker SDK migration ([#11](https://github.com/sungurerdim/ccbox/issues/11)) ([130cb51](https://github.com/sungurerdim/ccbox/commit/130cb5165572436d1307d098f7bea2d685ba5bea))
+* **cli:** add uninstall command ([#8](https://github.com/sungurerdim/ccbox/issues/8)) ([2f08dbb](https://github.com/sungurerdim/ccbox/commit/2f08dbbe353cfd1e8c3855c6e856e8cbb37cfa1a))
+* rewrite codebase from TypeScript/Bun to Go ([b55b287](https://github.com/sungurerdim/ccbox/commit/b55b28739c7d61287bc5733b2b4a463a9ea749fa))
+* rewrite codebase from TypeScript/Bun to Go ([#6](https://github.com/sungurerdim/ccbox/issues/6)) ([719a705](https://github.com/sungurerdim/ccbox/commit/719a7052a04f80e0e343998402e7386e2511b906))
+
+
+### Bug Fixes
+
+* **ci:** add actions:write permission for workflow_dispatch trigger ([29b2f1c](https://github.com/sungurerdim/ccbox/commit/29b2f1ccf2991830f6ec8c7b57a50eec72e1bef4))
+* **ci:** direct merge for release PRs, add version consistency check ([05ae78c](https://github.com/sungurerdim/ccbox/commit/05ae78cbba4bc7077809b1b1cefff3a09ad29989))
+* **ci:** trigger CI on release-please branches and auto-merge release PRs ([0922ff3](https://github.com/sungurerdim/ccbox/commit/0922ff3b132e1367729aa7f970ca15a42d4e6a26))
+* **ci:** use --admin flag for release PR merge ([1ec4aed](https://github.com/sungurerdim/ccbox/commit/1ec4aedb0c33218d7d30766fdd4fa035bb898a40))
+* **ci:** use workflow_dispatch to trigger CI on release-please PRs ([71d7372](https://github.com/sungurerdim/ccbox/commit/71d737253ed206c3c457ad11c07317fd2b7d8a8f))
+* resolve golangci-lint errors in fuse package ([b478503](https://github.com/sungurerdim/ccbox/commit/b4785030b2a5654926ab586337de18f4b6befbfa))
+* resolve golangci-lint errors in fuse package ([#7](https://github.com/sungurerdim/ccbox/issues/7)) ([32c329e](https://github.com/sungurerdim/ccbox/commit/32c329eb03a53e08c9dbfec4db00088051e1e8d7))
+* sync release-please manifest and version.txt to v0.3.0 ([a85321f](https://github.com/sungurerdim/ccbox/commit/a85321f00294ac97dbacc2f1b01d22c01b8a9798))
+
 ## [0.3.0](https://github.com/sungurerdim/ccbox/compare/v0.2.0...v0.3.0) (2026-02-07)
 
 
