@@ -5,32 +5,29 @@
  * to container-format paths. Complements FUSE (which handles file contents)
  * and drive symlinks (which handle Bun's direct syscalls).
  *
- * Translation (input only, Windows → container):
- *   open("D:/GitHub/myapp/file") → open("/d/GitHub/myapp/file")
- *   stat("D:/GitHub/myapp")      → stat("/d/GitHub/myapp")
+ * Translation:
+ *   open("D:/GitHub/myapp/file")  → open("/d/GitHub/myapp/file")
+ *   stat("C:\\Users\\Foo")        → stat("/c/Users/Foo")
+ *   stat("/mnt/d/GitHub/myapp")   → stat("/d/GitHub/myapp")  (WSL paths)
  *
- * Output translation (getcwd → Windows) is DISABLED because Bun caches
- * getcwd() at startup and then calls lstat() via direct syscalls. If getcwd()
- * returned "D:/GitHub/x", Bun's lstat would fail (relative path on Linux,
- * and direct syscalls bypass this library).
+ * Multi-mapping support via CCBOX_PATH_MAP (same format as FUSE):
+ *   CCBOX_PATH_MAP="C:/Users/Sungur/.claude:/ccbox/.claude;D:/GitHub/myapp:/d/GitHub/myapp"
  *
- * Environment:
- *   CCBOX_WIN_ORIGINAL_PATH: Original Windows path (e.g., D:/GitHub/myapp)
- *   Container path derived from real getcwd() at init time.
+ * Legacy single-mapping via CCBOX_WIN_ORIGINAL_PATH (backwards compatible).
  *
- * Intercepted: open, openat, fopen, stat, lstat, access, chdir, mkdir, rmdir,
- *   unlink, rename, renameat2, symlink, link, chmod, chown, readlink, opendir,
- *   scandir, execve, truncate, utimensat, creat, realpath, statx, and more.
+ * Features:
+ *   - Thread-safe: pthread_once init, immutable state after init
+ *   - TLS path cache: 32-slot FNV-1a hash per thread, zero contention
+ *   - Stack-first allocation: 4KB stack buffer, heap fallback
+ *   - Fast rejection: single byte check for non-translatable paths
+ *   - Macro-based code gen: ~65 interceptors in ~500 lines
  *
- * See docs/PATH-TRANSLATION.md for full architecture documentation.
- *
- * Build: gcc -shared -fPIC -Wall -Werror -o fakepath.so fakepath.c -ldl -D_GNU_SOURCE
+ * Build: gcc -shared -fPIC -Wall -Werror -O2 -s -o fakepath.so fakepath.c -ldl -lpthread -D_GNU_SOURCE
  *
  * Copyright (c) 2024 ccbox contributors
  * SPDX-License-Identifier: MIT
  */
 
-/* _GNU_SOURCE is defined via -D flag in gcc command */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -44,880 +41,689 @@
 #include <errno.h>
 #include <limits.h>
 #include <time.h>
+#include <ctype.h>
+#include <pthread.h>
+#include <stdint.h>
+#include <sys/xattr.h>
+#include <ftw.h>
 
 /* ═══════════════════════════════════════════════════════════════════════════
- * Path Mapping Configuration
+ * Configuration
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-static char *g_windows_path = NULL;   // e.g., "D:/GitHub/Workflow Manager"
-static char *g_container_path = NULL; // e.g., "/d/GitHub/Workflow Manager"
-static size_t g_windows_len = 0;
-static size_t g_container_len = 0;
+#define MAX_MAPPINGS    32
+#define STACK_BUF_SIZE  4096
+#define TLS_CACHE_SLOTS 32
+
+typedef struct {
+    char *from;          /* Windows path prefix (normalized, forward slashes) */
+    char *to;            /* Container path prefix */
+    size_t from_len, to_len;
+    char drive;          /* lowercase drive letter, or 0 */
+    int is_unc;          /* //server/share */
+    int is_wsl;          /* /mnt/d/... */
+} PathMapping;
+
+static PathMapping g_mappings[MAX_MAPPINGS];
+static int g_mapping_count = 0;
 static int g_initialized = 0;
+static int g_has_wsl = 0;  /* optimization: skip /mnt/ check if no WSL mappings */
 
 /* ═══════════════════════════════════════════════════════════════════════════
- * Original Function Pointers
+ * TLS Path Cache (zero-contention, per-thread)
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-static char *(*real_getcwd)(char *, size_t) = NULL;
-static int (*real_open)(const char *, int, ...) = NULL;
-static int (*real_open64)(const char *, int, ...) = NULL;
-static int (*real_openat)(int, const char *, int, ...) = NULL;
-static int (*real_openat64)(int, const char *, int, ...) = NULL;
-static FILE *(*real_fopen)(const char *, const char *) = NULL;
-static FILE *(*real_fopen64)(const char *, const char *) = NULL;
-static FILE *(*real_freopen)(const char *, const char *, FILE *) = NULL;
-static FILE *(*real_freopen64)(const char *, const char *, FILE *) = NULL;
-static int (*real_stat)(const char *, struct stat *) = NULL;
-static int (*real_lstat)(const char *, struct stat *) = NULL;
-static int (*real_access)(const char *, int) = NULL;
-static int (*real_faccessat)(int, const char *, int, int) = NULL;
-static int (*real_chdir)(const char *) = NULL;
-static ssize_t (*real_readlink)(const char *, char *, size_t) = NULL;
-static ssize_t (*real_readlinkat)(int, const char *, char *, size_t) = NULL;
-static int (*real_mkdir)(const char *, mode_t) = NULL;
-static int (*real_mkdirat)(int, const char *, mode_t) = NULL;
-static int (*real_rmdir)(const char *) = NULL;
-static int (*real_unlink)(const char *) = NULL;
-static int (*real_unlinkat)(int, const char *, int) = NULL;
-static int (*real_rename)(const char *, const char *) = NULL;
-static int (*real_renameat)(int, const char *, int, const char *) = NULL;
-static int (*real_symlink)(const char *, const char *) = NULL;
-static int (*real_symlinkat)(const char *, int, const char *) = NULL;
-static int (*real_link)(const char *, const char *) = NULL;
-static int (*real_linkat)(int, const char *, int, const char *, int) = NULL;
-static int (*real_chmod)(const char *, mode_t) = NULL;
-static int (*real_fchmodat)(int, const char *, mode_t, int) = NULL;
-static int (*real_chown)(const char *, uid_t, gid_t) = NULL;
-static int (*real_lchown)(const char *, uid_t, gid_t) = NULL;
-static int (*real_fchownat)(int, const char *, uid_t, gid_t, int) = NULL;
-static DIR *(*real_opendir)(const char *) = NULL;
-static int (*real_scandir)(const char *, struct dirent ***, int (*)(const struct dirent *), int (*)(const struct dirent **, const struct dirent **)) = NULL;
-static int (*real_execve)(const char *, char *const[], char *const[]) = NULL;
-static int (*real_execvp)(const char *, char *const[]) = NULL;
-static int (*real_execvpe)(const char *, char *const[], char *const[]) = NULL;
-static int (*real_truncate)(const char *, off_t) = NULL;
-static int (*real_utimensat)(int, const char *, const struct timespec[2], int) = NULL;
-static int (*real___xstat)(int, const char *, struct stat *) = NULL;
-static int (*real___lxstat)(int, const char *, struct stat *) = NULL;
-static int (*real_creat)(const char *, mode_t) = NULL;
-static int (*real_creat64)(const char *, mode_t) = NULL;
-static char *(*real_realpath)(const char *, char *) = NULL;
-static int (*real_renameat2)(int, const char *, int, const char *, unsigned int) = NULL;
-/* statx is a syscall wrapper, dlsym may return NULL on older glibc */
+typedef struct {
+    uint32_t hash;
+    char *input;      /* owned copy */
+    char *output;     /* owned copy */
+} TLSCacheEntry;
+
+static __thread TLSCacheEntry t_cache[TLS_CACHE_SLOTS];
+
+static uint32_t fnv1a(const char *s) {
+    uint32_t h = 2166136261u;
+    for (; *s; s++)
+        h = (h ^ (uint8_t)*s) * 16777619u;
+    return h;
+}
+
+static const char *tls_cache_lookup(const char *path, uint32_t h) {
+    int slot = h % TLS_CACHE_SLOTS;
+    TLSCacheEntry *e = &t_cache[slot];
+    if (e->hash == h && e->input && strcmp(e->input, path) == 0)
+        return e->output;
+    return NULL;
+}
+
+static void tls_cache_insert(const char *input, const char *output, uint32_t h) {
+    int slot = h % TLS_CACHE_SLOTS;
+    TLSCacheEntry *e = &t_cache[slot];
+    free(e->input);
+    free(e->output);
+    e->hash = h;
+    e->input = strdup(input);
+    e->output = strdup(output);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Original Function Pointers (resolved via dlsym)
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+#define DECL_REAL(ret, name, ...) static ret (*real_##name)(__VA_ARGS__) = NULL
+
+DECL_REAL(char*,    getcwd,      char*, size_t);
+DECL_REAL(int,      open,        const char*, int, ...);
+DECL_REAL(int,      open64,      const char*, int, ...);
+DECL_REAL(int,      openat,      int, const char*, int, ...);
+DECL_REAL(int,      openat64,    int, const char*, int, ...);
+DECL_REAL(FILE*,    fopen,       const char*, const char*);
+DECL_REAL(FILE*,    fopen64,     const char*, const char*);
+DECL_REAL(FILE*,    freopen,     const char*, const char*, FILE*);
+DECL_REAL(FILE*,    freopen64,   const char*, const char*, FILE*);
+DECL_REAL(int,      stat,        const char*, struct stat*);
+DECL_REAL(int,      lstat,       const char*, struct stat*);
+DECL_REAL(int,      access,      const char*, int);
+DECL_REAL(int,      faccessat,   int, const char*, int, int);
+DECL_REAL(int,      eaccess,     const char*, int);
+DECL_REAL(int,      chdir,       const char*);
+DECL_REAL(ssize_t,  readlink,    const char*, char*, size_t);
+DECL_REAL(ssize_t,  readlinkat,  int, const char*, char*, size_t);
+DECL_REAL(int,      mkdir,       const char*, mode_t);
+DECL_REAL(int,      mkdirat,     int, const char*, mode_t);
+DECL_REAL(int,      rmdir,       const char*);
+DECL_REAL(int,      unlink,      const char*);
+DECL_REAL(int,      unlinkat,    int, const char*, int);
+DECL_REAL(int,      rename,      const char*, const char*);
+DECL_REAL(int,      renameat,    int, const char*, int, const char*);
+DECL_REAL(int,      renameat2,   int, const char*, int, const char*, unsigned int);
+DECL_REAL(int,      symlink,     const char*, const char*);
+DECL_REAL(int,      symlinkat,   const char*, int, const char*);
+DECL_REAL(int,      link,        const char*, const char*);
+DECL_REAL(int,      linkat,      int, const char*, int, const char*, int);
+DECL_REAL(int,      chmod,       const char*, mode_t);
+DECL_REAL(int,      fchmodat,    int, const char*, mode_t, int);
+DECL_REAL(int,      chown,       const char*, uid_t, gid_t);
+DECL_REAL(int,      lchown,      const char*, uid_t, gid_t);
+DECL_REAL(int,      fchownat,    int, const char*, uid_t, gid_t, int);
+DECL_REAL(DIR*,     opendir,     const char*);
+DECL_REAL(int,      scandir,     const char*, struct dirent***, int(*)(const struct dirent*), int(*)(const struct dirent**, const struct dirent**));
+DECL_REAL(int,      execve,      const char*, char*const[], char*const[]);
+DECL_REAL(int,      execvp,      const char*, char*const[]);
+DECL_REAL(int,      execvpe,     const char*, char*const[], char*const[]);
+DECL_REAL(int,      truncate,    const char*, off_t);
+DECL_REAL(int,      utimensat,   int, const char*, const struct timespec[2], int);
+DECL_REAL(int,      creat,       const char*, mode_t);
+DECL_REAL(int,      creat64,     const char*, mode_t);
+DECL_REAL(char*,    realpath,    const char*, char*);
+DECL_REAL(char*,    canonicalize_file_name, const char*);
+DECL_REAL(int,      __xstat,     int, const char*, struct stat*);
+DECL_REAL(int,      __lxstat,    int, const char*, struct stat*);
+DECL_REAL(int,      __fxstatat,  int, int, const char*, struct stat*, int);
+DECL_REAL(void*,    dlopen,      const char*, int);
+DECL_REAL(long,     pathconf,    const char*, int);
+DECL_REAL(int,      mknod,       const char*, mode_t, dev_t);
+DECL_REAL(int,      mknodat,     int, const char*, mode_t, dev_t);
+
+/* statx - may not exist on older glibc */
 struct statx;
-static int (*real_statx)(int, const char *, int, unsigned int, struct statx *) = NULL;
+DECL_REAL(int,      statx,       int, const char*, int, unsigned int, struct statx*);
+DECL_REAL(int,      fstatat,     int, const char*, struct stat*, int);
+DECL_REAL(int,      nftw,        const char*, int(*)(const char*, const struct stat*, int, struct FTW*), int, int);
+DECL_REAL(int,      ftw,         const char*, int(*)(const char*, const struct stat*, int), int);
 
-/* Initialize function pointers */
-static void init_real_functions(void) {
-    if (real_getcwd) return;  // Already initialized
-
-    real_getcwd = dlsym(RTLD_NEXT, "getcwd");
-    real_open = dlsym(RTLD_NEXT, "open");
-    real_open64 = dlsym(RTLD_NEXT, "open64");
-    real_openat = dlsym(RTLD_NEXT, "openat");
-    real_openat64 = dlsym(RTLD_NEXT, "openat64");
-    real_fopen = dlsym(RTLD_NEXT, "fopen");
-    real_fopen64 = dlsym(RTLD_NEXT, "fopen64");
-    real_freopen = dlsym(RTLD_NEXT, "freopen");
-    real_freopen64 = dlsym(RTLD_NEXT, "freopen64");
-    real_stat = dlsym(RTLD_NEXT, "stat");
-    real_lstat = dlsym(RTLD_NEXT, "lstat");
-    real_access = dlsym(RTLD_NEXT, "access");
-    real_faccessat = dlsym(RTLD_NEXT, "faccessat");
-    real_chdir = dlsym(RTLD_NEXT, "chdir");
-    real_readlink = dlsym(RTLD_NEXT, "readlink");
-    real_readlinkat = dlsym(RTLD_NEXT, "readlinkat");
-    real_mkdir = dlsym(RTLD_NEXT, "mkdir");
-    real_mkdirat = dlsym(RTLD_NEXT, "mkdirat");
-    real_rmdir = dlsym(RTLD_NEXT, "rmdir");
-    real_unlink = dlsym(RTLD_NEXT, "unlink");
-    real_unlinkat = dlsym(RTLD_NEXT, "unlinkat");
-    real_rename = dlsym(RTLD_NEXT, "rename");
-    real_renameat = dlsym(RTLD_NEXT, "renameat");
-    real_symlink = dlsym(RTLD_NEXT, "symlink");
-    real_symlinkat = dlsym(RTLD_NEXT, "symlinkat");
-    real_link = dlsym(RTLD_NEXT, "link");
-    real_linkat = dlsym(RTLD_NEXT, "linkat");
-    real_chmod = dlsym(RTLD_NEXT, "chmod");
-    real_fchmodat = dlsym(RTLD_NEXT, "fchmodat");
-    real_chown = dlsym(RTLD_NEXT, "chown");
-    real_lchown = dlsym(RTLD_NEXT, "lchown");
-    real_fchownat = dlsym(RTLD_NEXT, "fchownat");
-    real_opendir = dlsym(RTLD_NEXT, "opendir");
-    real_scandir = dlsym(RTLD_NEXT, "scandir");
-    real_execve = dlsym(RTLD_NEXT, "execve");
-    real_execvp = dlsym(RTLD_NEXT, "execvp");
-    real_execvpe = dlsym(RTLD_NEXT, "execvpe");
-    real_truncate = dlsym(RTLD_NEXT, "truncate");
-    real_utimensat = dlsym(RTLD_NEXT, "utimensat");
-    real___xstat = dlsym(RTLD_NEXT, "__xstat");
-    real___lxstat = dlsym(RTLD_NEXT, "__lxstat");
-    real_creat = dlsym(RTLD_NEXT, "creat");
-    real_creat64 = dlsym(RTLD_NEXT, "creat64");
-    real_realpath = dlsym(RTLD_NEXT, "realpath");
-    real_renameat2 = dlsym(RTLD_NEXT, "renameat2");
-    real_statx = dlsym(RTLD_NEXT, "statx");
-}
+/* xattr family */
+DECL_REAL(int,      setxattr,    const char*, const char*, const void*, size_t, int);
+DECL_REAL(ssize_t,  getxattr,    const char*, const char*, void*, size_t);
+DECL_REAL(int,      lsetxattr,   const char*, const char*, const void*, size_t, int);
+DECL_REAL(ssize_t,  lgetxattr,   const char*, const char*, void*, size_t);
+DECL_REAL(ssize_t,  listxattr,   const char*, char*, size_t);
+DECL_REAL(ssize_t,  llistxattr,  const char*, char*, size_t);
+DECL_REAL(int,      removexattr, const char*, const char*);
+DECL_REAL(int,      lremovexattr,const char*, const char*);
 
 /* ═══════════════════════════════════════════════════════════════════════════
- * Path Mapping Initialization
+ * Initialization (thread-safe via pthread_once)
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-/**
- * Initialize path mapping from environment variables.
- * Called once on first use.
- */
-static void init_path_mapping(void) {
-    if (g_initialized) return;
+static pthread_once_t g_init_once = PTHREAD_ONCE_INIT;
+
+#define RESOLVE(name) real_##name = dlsym(RTLD_NEXT, #name)
+
+static char *normalize_strdup(const char *path) {
+    if (!path) return NULL;
+    char *norm = strdup(path);
+    if (!norm) return NULL;
+    for (char *p = norm; *p; p++) if (*p == '\\') *p = '/';
+    size_t len = strlen(norm);
+    while (len > 1 && norm[len-1] == '/') norm[--len] = '\0';
+    return norm;
+}
+
+static void add_mapping(const char *from, const char *to) {
+    if (g_mapping_count >= MAX_MAPPINGS) return;
+    PathMapping *m = &g_mappings[g_mapping_count];
+    m->from = normalize_strdup(from);
+    m->to = normalize_strdup(to);
+    if (!m->from || !m->to) { free(m->from); free(m->to); return; }
+    m->from_len = strlen(m->from);
+    m->to_len = strlen(m->to);
+    m->drive = (m->from_len > 1 && m->from[1] == ':') ? tolower(m->from[0]) : 0;
+    m->is_unc = (m->from[0] == '/' && m->from[1] == '/');
+    m->is_wsl = (strncmp(m->from, "/mnt/", 5) == 0 && isalpha(m->from[5]));
+    if (m->is_wsl) { m->drive = tolower(m->from[5]); g_has_wsl = 1; }
+    g_mapping_count++;
+}
+
+static void parse_pathmap(const char *env) {
+    if (!env || !*env) return;
+    char *copy = strdup(env);
+    if (!copy) return;
+    char *saveptr = NULL, *entry = strtok_r(copy, ";", &saveptr);
+    while (entry) {
+        char *sep = entry;
+        if (sep[0] && sep[1] == ':') sep += 2;
+        sep = strchr(sep, ':');
+        if (sep) { *sep = '\0'; add_mapping(entry, sep + 1); }
+        entry = strtok_r(NULL, ";", &saveptr);
+    }
+    free(copy);
+}
+
+static void do_init(void) {
+    /* Resolve all real function pointers */
+    RESOLVE(getcwd); RESOLVE(open); RESOLVE(open64);
+    RESOLVE(openat); RESOLVE(openat64);
+    RESOLVE(fopen); RESOLVE(fopen64); RESOLVE(freopen); RESOLVE(freopen64);
+    RESOLVE(stat); RESOLVE(lstat); RESOLVE(access); RESOLVE(faccessat);
+    RESOLVE(eaccess);
+    RESOLVE(chdir); RESOLVE(readlink); RESOLVE(readlinkat);
+    RESOLVE(mkdir); RESOLVE(mkdirat); RESOLVE(rmdir);
+    RESOLVE(unlink); RESOLVE(unlinkat);
+    RESOLVE(rename); RESOLVE(renameat); RESOLVE(renameat2);
+    RESOLVE(symlink); RESOLVE(symlinkat);
+    RESOLVE(link); RESOLVE(linkat);
+    RESOLVE(chmod); RESOLVE(fchmodat);
+    RESOLVE(chown); RESOLVE(lchown); RESOLVE(fchownat);
+    RESOLVE(opendir); RESOLVE(scandir);
+    RESOLVE(execve); RESOLVE(execvp); RESOLVE(execvpe);
+    RESOLVE(truncate); RESOLVE(utimensat);
+    RESOLVE(creat); RESOLVE(creat64);
+    RESOLVE(realpath); RESOLVE(canonicalize_file_name);
+    RESOLVE(__xstat); RESOLVE(__lxstat); RESOLVE(__fxstatat);
+    RESOLVE(statx); RESOLVE(fstatat);
+    RESOLVE(dlopen); RESOLVE(pathconf);
+    RESOLVE(mknod); RESOLVE(mknodat);
+    RESOLVE(nftw); RESOLVE(ftw);
+    RESOLVE(setxattr); RESOLVE(getxattr);
+    RESOLVE(lsetxattr); RESOLVE(lgetxattr);
+    RESOLVE(listxattr); RESOLVE(llistxattr);
+    RESOLVE(removexattr); RESOLVE(lremovexattr);
+
+    /* Parse multi-mapping from CCBOX_PATH_MAP */
+    const char *pathmap = getenv("CCBOX_PATH_MAP");
+    if (pathmap && *pathmap) {
+        parse_pathmap(pathmap);
+    }
+
+    /* Legacy: CCBOX_WIN_ORIGINAL_PATH (single mapping, cwd-based) */
+    if (g_mapping_count == 0) {
+        const char *win_path = getenv("CCBOX_WIN_ORIGINAL_PATH");
+        if (win_path && *win_path && real_getcwd) {
+            char cwd[PATH_MAX];
+            if (real_getcwd(cwd, sizeof(cwd))) {
+                add_mapping(win_path, cwd);
+            }
+        }
+    }
+
     g_initialized = 1;
-
-    // Ensure real functions are initialized first
-    init_real_functions();
-
-    const char *win_path = getenv("CCBOX_WIN_ORIGINAL_PATH");
-    if (!win_path || !win_path[0]) {
-        return;  // No mapping configured
-    }
-
-    // Get container path using real getcwd (not our intercepted version)
-    // This avoids potential recursion issues
-    char cwd[PATH_MAX];
-    if (!real_getcwd || real_getcwd(cwd, sizeof(cwd)) == NULL) {
-        return;
-    }
-
-    // Store Windows path
-    g_windows_path = strdup(win_path);
-    if (!g_windows_path) return;
-    g_windows_len = strlen(g_windows_path);
-
-    // Remove trailing slash from Windows path if present
-    if (g_windows_len > 0 && (g_windows_path[g_windows_len-1] == '/' ||
-                               g_windows_path[g_windows_len-1] == '\\')) {
-        g_windows_path[--g_windows_len] = '\0';
-    }
-
-    // Store container path (current working directory)
-    g_container_path = strdup(cwd);
-    if (!g_container_path) {
-        free(g_windows_path);
-        g_windows_path = NULL;
-        return;
-    }
-    g_container_len = strlen(g_container_path);
-
-    // Remove trailing slash from container path if present
-    if (g_container_len > 0 && g_container_path[g_container_len-1] == '/') {
-        g_container_path[--g_container_len] = '\0';
-    }
-
-    // NOTE: Do NOT setenv("PWD", ...) here.
-    // Bun reads process.env.PWD and calls lstat() on it via direct syscalls
-    // (bypassing glibc/fakepath). "D:/GitHub/x" is a relative path on Linux
-    // and would fail. Tools using getcwd() already get the Windows path via
-    // our intercepted getcwd(). Shell scripts get PWD from the shell itself.
 }
 
+#define ENSURE_INIT() do { pthread_once(&g_init_once, do_init); } while(0)
+
 /* ═══════════════════════════════════════════════════════════════════════════
- * Path Translation Functions
+ * Path Translation (with stack alloc + TLS cache)
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 /**
- * Convert Windows path to container path.
- * D:/GitHub/Workflow Manager/file.ts → /d/GitHub/Workflow Manager/file.ts
- *
- * Uses exact prefix matching from environment variables.
- * Returns: newly allocated string (caller must free) or NULL if no match.
+ * Translate a path if it matches a mapping prefix.
+ * Uses stack buffer first, heap fallback for long paths.
+ * Returns original path if no translation needed.
+ * *alloc is set to heap pointer if allocated (caller must free).
  */
-static char *windows_to_container(const char *path) {
-    if (!g_container_path || !g_windows_path || !path) {
-        return NULL;
-    }
+static const char *translate_path(const char *path, char *buf, char **alloc) {
+    *alloc = NULL;
+    if (!path || !g_initialized || !g_mapping_count) return path;
 
-    // Check if path starts with Windows path prefix (case-insensitive for drive letter)
-    if (strncasecmp(path, g_windows_path, g_windows_len) != 0) {
-        return NULL;
-    }
+    /* Fast rejection: first byte check */
+    unsigned char c0 = (unsigned char)path[0];
+    if (!isalpha(c0) && c0 != '/' && c0 != '\\') return path;
+    if (c0 == '/' && !g_has_wsl) return path;  /* no WSL mappings → skip / paths */
 
-    // Ensure it's a prefix match
-    char next_char = path[g_windows_len];
-    if (next_char != '\0' && next_char != '/' && next_char != '\\') {
-        return NULL;
-    }
+    /* TLS cache lookup */
+    uint32_t h = fnv1a(path);
+    const char *cached = tls_cache_lookup(path, h);
+    if (cached) return cached;
 
-    // Calculate result length
-    size_t suffix_len = strlen(path) - g_windows_len;
-    size_t result_len = g_container_len + suffix_len;
+    for (int m = 0; m < g_mapping_count; m++) {
+        PathMapping *pm = &g_mappings[m];
+        const char *match_start = NULL;
+        size_t match_len = 0;
 
-    char *result = malloc(result_len + 1);
-    if (!result) return NULL;
+        /* Drive letter: case-insensitive first char + ':' */
+        if (pm->drive && !pm->is_unc && !pm->is_wsl &&
+            tolower(path[0]) == pm->drive && path[1] == ':') {
+            /* Normalize and check */
+            size_t plen = strlen(path);
+            /* Build normalized version in stack buf */
+            char norm[STACK_BUF_SIZE];
+            size_t ni = 0;
+            for (size_t i = 0; i < plen && ni < STACK_BUF_SIZE - 1; i++) {
+                norm[ni++] = (path[i] == '\\') ? '/' : path[i];
+            }
+            norm[ni] = '\0';
+            /* Lowercase first char for matching */
+            norm[0] = tolower(norm[0]);
 
-    // Copy container prefix
-    memcpy(result, g_container_path, g_container_len);
+            if (strncmp(norm, pm->from, pm->from_len) == 0) {
+                char next = norm[pm->from_len];
+                if (next == '\0' || next == '/' || next == '\\') {
+                    match_start = norm + pm->from_len;
+                    match_len = ni - pm->from_len;
+                    /* Build result */
+                    size_t rlen = pm->to_len + match_len;
+                    char *dst = (rlen < STACK_BUF_SIZE) ? buf : malloc(rlen + 1);
+                    if (!dst) return path;
+                    memcpy(dst, pm->to, pm->to_len);
+                    memcpy(dst + pm->to_len, match_start, match_len);
+                    dst[rlen] = '\0';
+                    if (dst != buf) *alloc = dst;
+                    tls_cache_insert(path, dst, h);
+                    return dst;
+                }
+            }
+            continue;
+        }
 
-    // Copy remaining path, converting backslashes to forward slashes
-    const char *src = path + g_windows_len;
-    char *dst = result + g_container_len;
-    while (*src) {
-        *dst++ = (*src == '\\') ? '/' : *src;
-        src++;
-    }
-    *dst = '\0';
+        /* WSL: /mnt/d/... */
+        if (pm->is_wsl && strncmp(path, pm->from, pm->from_len) == 0) {
+            char next = path[pm->from_len];
+            if (next == '\0' || next == '/') {
+                match_start = path + pm->from_len;
+                match_len = strlen(match_start);
+                size_t rlen = pm->to_len + match_len;
+                char *dst = (rlen < STACK_BUF_SIZE) ? buf : malloc(rlen + 1);
+                if (!dst) return path;
+                memcpy(dst, pm->to, pm->to_len);
+                memcpy(dst + pm->to_len, match_start, match_len);
+                dst[rlen] = '\0';
+                if (dst != buf) *alloc = dst;
+                tls_cache_insert(path, dst, h);
+                return dst;
+            }
+        }
 
-    return result;
-}
-
-/**
- * Translate input path for syscalls (Windows → container if needed).
- * Returns original path if no translation needed, or translated path.
- * Caller must free *allocated if it's not NULL.
- */
-static const char *translate_input(const char *path, char **allocated) {
-    *allocated = NULL;
-    if (!path) return path;
-
-    init_path_mapping();
-
-    char *translated = windows_to_container(path);
-    if (translated) {
-        *allocated = translated;
-        return translated;
+        /* UNC: \\server\share or //server/share */
+        if (pm->is_unc && (path[0] == '\\' || path[0] == '/') && (path[1] == '\\' || path[1] == '/')) {
+            char norm[STACK_BUF_SIZE];
+            size_t plen = strlen(path);
+            size_t ni = 0;
+            for (size_t i = 0; i < plen && ni < STACK_BUF_SIZE - 1; i++) {
+                norm[ni++] = (path[i] == '\\') ? '/' : path[i];
+            }
+            norm[ni] = '\0';
+            if (strncmp(norm, pm->from, pm->from_len) == 0) {
+                char next = norm[pm->from_len];
+                if (next == '\0' || next == '/') {
+                    match_start = norm + pm->from_len;
+                    match_len = ni - pm->from_len;
+                    size_t rlen = pm->to_len + match_len;
+                    char *dst = (rlen < STACK_BUF_SIZE) ? buf : malloc(rlen + 1);
+                    if (!dst) return path;
+                    memcpy(dst, pm->to, pm->to_len);
+                    memcpy(dst + pm->to_len, match_start, match_len);
+                    dst[rlen] = '\0';
+                    if (dst != buf) *alloc = dst;
+                    tls_cache_insert(path, dst, h);
+                    return dst;
+                }
+            }
+        }
     }
 
     return path;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
- * Output Translation — DISABLED
+ * Macro-Based Interceptor Code Generation
  *
- * getcwd, get_current_dir_name, realpath are NOT intercepted.
- *
- * Reason: Bun (Claude Code's runtime) calls glibc getcwd() at startup,
- * caches the result, then uses direct syscalls for lstat() on that path.
- * If getcwd returns "D:/GitHub/x" (Windows format), Bun's lstat("D:/GitHub/x")
- * fails because: (a) it's a relative path on Linux (no leading /), and
- * (b) Bun's direct syscalls bypass fakepath's input translation.
- *
- * FUSE handles path translation in JSON/JSONL file contents (session files,
- * config). Drive symlinks (/D: → /d) handle absolute Windows paths at
- * filesystem level. Together they provide full coverage without needing
- * getcwd translation.
- *
- * Only INPUT translation is active below (Windows → container for glibc tools).
+ * Instead of ~600 lines of boilerplate, each interceptor is a single line.
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * Input Translation (Windows → Container)
- * These functions receive paths from the application
- * ═══════════════════════════════════════════════════════════════════════════ */
+/* Comma helper for macro arguments */
+#define COMMA ,
 
-int open(const char *pathname, int flags, ...) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(pathname, &alloc);
-
-    int result;
-    if (flags & O_CREAT) {
-        va_list args;
-        va_start(args, flags);
-        mode_t mode = va_arg(args, mode_t);
-        va_end(args);
-        result = real_open(real_path, flags, mode);
-    } else {
-        result = real_open(real_path, flags);
+/* Single-path interceptors: translate one path argument */
+#define INTERCEPT_1PATH(ret, name, args, call_pre, pathvar, call_post) \
+    ret name args {                                                    \
+        ENSURE_INIT();                                                 \
+        char _b[STACK_BUF_SIZE]; char *_a = NULL;                      \
+        const char *_r = translate_path(pathvar, _b, &_a);             \
+        ret _res = real_##name(call_pre _r call_post);                 \
+        free(_a);                                                      \
+        return _res;                                                   \
     }
 
-    free(alloc);
+/* Same but for functions returning void* (dlopen) */
+#define INTERCEPT_1PATH_PTR(ret, name, args, call_pre, pathvar, call_post) \
+    ret name args {                                                        \
+        ENSURE_INIT();                                                     \
+        char _b[STACK_BUF_SIZE]; char *_a = NULL;                          \
+        const char *_r = translate_path(pathvar, _b, &_a);                 \
+        ret _res = real_##name(call_pre _r call_post);                     \
+        free(_a);                                                          \
+        return _res;                                                       \
+    }
+
+/* Two-path interceptors: translate two path arguments */
+#define INTERCEPT_2PATH(ret, name, args, pre1, p1, mid, p2, post) \
+    ret name args {                                                \
+        ENSURE_INIT();                                             \
+        char _b1[STACK_BUF_SIZE], _b2[STACK_BUF_SIZE];            \
+        char *_a1 = NULL, *_a2 = NULL;                             \
+        const char *_r1 = translate_path(p1, _b1, &_a1);          \
+        const char *_r2 = translate_path(p2, _b2, &_a2);          \
+        ret _res = real_##name(pre1 _r1 mid _r2 post);            \
+        free(_a1); free(_a2);                                      \
+        return _res;                                               \
+    }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Interceptors: File Operations
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* open/open64 need special handling for variadic O_CREAT + mode */
+int open(const char *pathname, int flags, ...) {
+    ENSURE_INIT();
+    char _b[STACK_BUF_SIZE]; char *_a = NULL;
+    const char *rp = translate_path(pathname, _b, &_a);
+    int result;
+    if (flags & O_CREAT) {
+        va_list ap; va_start(ap, flags);
+        mode_t mode = va_arg(ap, mode_t);
+        va_end(ap);
+        result = real_open(rp, flags, mode);
+    } else {
+        result = real_open(rp, flags);
+    }
+    free(_a);
     return result;
 }
 
 int open64(const char *pathname, int flags, ...) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(pathname, &alloc);
-
+    ENSURE_INIT();
+    char _b[STACK_BUF_SIZE]; char *_a = NULL;
+    const char *rp = translate_path(pathname, _b, &_a);
     int result;
     if (flags & O_CREAT) {
-        va_list args;
-        va_start(args, flags);
-        mode_t mode = va_arg(args, mode_t);
-        va_end(args);
-        result = real_open64(real_path, flags, mode);
+        va_list ap; va_start(ap, flags);
+        mode_t mode = va_arg(ap, mode_t);
+        va_end(ap);
+        result = real_open64(rp, flags, mode);
     } else {
-        result = real_open64(real_path, flags);
+        result = real_open64(rp, flags);
     }
-
-    free(alloc);
+    free(_a);
     return result;
 }
 
 int openat(int dirfd, const char *pathname, int flags, ...) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(pathname, &alloc);
-
+    ENSURE_INIT();
+    char _b[STACK_BUF_SIZE]; char *_a = NULL;
+    const char *rp = translate_path(pathname, _b, &_a);
     int result;
     if (flags & O_CREAT) {
-        va_list args;
-        va_start(args, flags);
-        mode_t mode = va_arg(args, mode_t);
-        va_end(args);
-        result = real_openat(dirfd, real_path, flags, mode);
+        va_list ap; va_start(ap, flags);
+        mode_t mode = va_arg(ap, mode_t);
+        va_end(ap);
+        result = real_openat(dirfd, rp, flags, mode);
     } else {
-        result = real_openat(dirfd, real_path, flags);
+        result = real_openat(dirfd, rp, flags);
     }
-
-    free(alloc);
+    free(_a);
     return result;
 }
 
 int openat64(int dirfd, const char *pathname, int flags, ...) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(pathname, &alloc);
-
+    ENSURE_INIT();
+    char _b[STACK_BUF_SIZE]; char *_a = NULL;
+    const char *rp = translate_path(pathname, _b, &_a);
     int result;
     if (flags & O_CREAT) {
-        va_list args;
-        va_start(args, flags);
-        mode_t mode = va_arg(args, mode_t);
-        va_end(args);
-        result = real_openat64(dirfd, real_path, flags, mode);
+        va_list ap; va_start(ap, flags);
+        mode_t mode = va_arg(ap, mode_t);
+        va_end(ap);
+        result = real_openat64(dirfd, rp, flags, mode);
     } else {
-        result = real_openat64(dirfd, real_path, flags);
+        result = real_openat64(dirfd, rp, flags);
     }
-
-    free(alloc);
+    free(_a);
     return result;
 }
 
-FILE *fopen(const char *pathname, const char *mode) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(pathname, &alloc);
-
-    FILE *result = real_fopen(real_path, mode);
-    free(alloc);
-    return result;
-}
-
-FILE *fopen64(const char *pathname, const char *mode) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(pathname, &alloc);
-
-    FILE *result = real_fopen64(real_path, mode);
-    free(alloc);
-    return result;
-}
-
-FILE *freopen(const char *pathname, const char *mode, FILE *stream) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(pathname, &alloc);
-
-    FILE *result = real_freopen(real_path, mode, stream);
-    free(alloc);
-    return result;
-}
-
-FILE *freopen64(const char *pathname, const char *mode, FILE *stream) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(pathname, &alloc);
-
-    FILE *result = real_freopen64(real_path, mode, stream);
-    free(alloc);
-    return result;
-}
-
-int stat(const char *pathname, struct stat *statbuf) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(pathname, &alloc);
-
-    int result = real_stat(real_path, statbuf);
-    free(alloc);
-    return result;
-}
-
-int lstat(const char *pathname, struct stat *statbuf) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(pathname, &alloc);
-
-    int result = real_lstat(real_path, statbuf);
-    free(alloc);
-    return result;
-}
-
-int access(const char *pathname, int mode) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(pathname, &alloc);
-
-    int result = real_access(real_path, mode);
-    free(alloc);
-    return result;
-}
-
-int faccessat(int dirfd, const char *pathname, int mode, int flags) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(pathname, &alloc);
-
-    int result = real_faccessat(dirfd, real_path, mode, flags);
-    free(alloc);
-    return result;
-}
-
-int chdir(const char *path) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(path, &alloc);
-
-    int result = real_chdir(real_path);
-    free(alloc);
-    return result;
-}
-
-ssize_t readlink(const char *pathname, char *buf, size_t bufsiz) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(pathname, &alloc);
-
-    ssize_t result = real_readlink(real_path, buf, bufsiz);
-    free(alloc);
-
-    // Output translation disabled (see comment above Output Translation section)
-    return result;
-}
-
-ssize_t readlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(pathname, &alloc);
-
-    ssize_t result = real_readlinkat(dirfd, real_path, buf, bufsiz);
-    free(alloc);
-
-    // Output translation disabled (see comment above Output Translation section)
-    return result;
-}
-
-int mkdir(const char *pathname, mode_t mode) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(pathname, &alloc);
-
-    int result = real_mkdir(real_path, mode);
-    free(alloc);
-    return result;
-}
-
-int mkdirat(int dirfd, const char *pathname, mode_t mode) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(pathname, &alloc);
-
-    int result = real_mkdirat(dirfd, real_path, mode);
-    free(alloc);
-    return result;
-}
-
-int rmdir(const char *pathname) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(pathname, &alloc);
-
-    int result = real_rmdir(real_path);
-    free(alloc);
-    return result;
-}
-
-int unlink(const char *pathname) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(pathname, &alloc);
-
-    int result = real_unlink(real_path);
-    free(alloc);
-    return result;
-}
-
-int unlinkat(int dirfd, const char *pathname, int flags) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(pathname, &alloc);
-
-    int result = real_unlinkat(dirfd, real_path, flags);
-    free(alloc);
-    return result;
-}
-
-int rename(const char *oldpath, const char *newpath) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc1 = NULL, *alloc2 = NULL;
-    const char *real_old = translate_input(oldpath, &alloc1);
-    const char *real_new = translate_input(newpath, &alloc2);
-
-    int result = real_rename(real_old, real_new);
-    free(alloc1);
-    free(alloc2);
-    return result;
-}
-
-int renameat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc1 = NULL, *alloc2 = NULL;
-    const char *real_old = translate_input(oldpath, &alloc1);
-    const char *real_new = translate_input(newpath, &alloc2);
-
-    int result = real_renameat(olddirfd, real_old, newdirfd, real_new);
-    free(alloc1);
-    free(alloc2);
-    return result;
-}
-
-int symlink(const char *target, const char *linkpath) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc1 = NULL, *alloc2 = NULL;
-    const char *real_target = translate_input(target, &alloc1);
-    const char *real_link = translate_input(linkpath, &alloc2);
-
-    int result = real_symlink(real_target, real_link);
-    free(alloc1);
-    free(alloc2);
-    return result;
-}
-
-int symlinkat(const char *target, int newdirfd, const char *linkpath) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc1 = NULL, *alloc2 = NULL;
-    const char *real_target = translate_input(target, &alloc1);
-    const char *real_link = translate_input(linkpath, &alloc2);
-
-    int result = real_symlinkat(real_target, newdirfd, real_link);
-    free(alloc1);
-    free(alloc2);
-    return result;
-}
-
-int link(const char *oldpath, const char *newpath) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc1 = NULL, *alloc2 = NULL;
-    const char *real_old = translate_input(oldpath, &alloc1);
-    const char *real_new = translate_input(newpath, &alloc2);
-
-    int result = real_link(real_old, real_new);
-    free(alloc1);
-    free(alloc2);
-    return result;
-}
-
-int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath, int flags) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc1 = NULL, *alloc2 = NULL;
-    const char *real_old = translate_input(oldpath, &alloc1);
-    const char *real_new = translate_input(newpath, &alloc2);
-
-    int result = real_linkat(olddirfd, real_old, newdirfd, real_new, flags);
-    free(alloc1);
-    free(alloc2);
-    return result;
-}
-
-int chmod(const char *pathname, mode_t mode) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(pathname, &alloc);
-
-    int result = real_chmod(real_path, mode);
-    free(alloc);
-    return result;
-}
-
-int fchmodat(int dirfd, const char *pathname, mode_t mode, int flags) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(pathname, &alloc);
-
-    int result = real_fchmodat(dirfd, real_path, mode, flags);
-    free(alloc);
-    return result;
-}
-
-int chown(const char *pathname, uid_t owner, gid_t group) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(pathname, &alloc);
-
-    int result = real_chown(real_path, owner, group);
-    free(alloc);
-    return result;
-}
-
-int lchown(const char *pathname, uid_t owner, gid_t group) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(pathname, &alloc);
-
-    int result = real_lchown(real_path, owner, group);
-    free(alloc);
-    return result;
-}
-
-int fchownat(int dirfd, const char *pathname, uid_t owner, gid_t group, int flags) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(pathname, &alloc);
-
-    int result = real_fchownat(dirfd, real_path, owner, group, flags);
-    free(alloc);
-    return result;
-}
-
-DIR *opendir(const char *name) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(name, &alloc);
-
-    DIR *result = real_opendir(real_path);
-    free(alloc);
-    return result;
-}
-
-int execve(const char *pathname, char *const argv[], char *const envp[]) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(pathname, &alloc);
-
-    int result = real_execve(real_path, argv, envp);
-    free(alloc);
-    return result;
-}
-
-int execvp(const char *file, char *const argv[]) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(file, &alloc);
-
-    int result = real_execvp(real_path, argv);
-    free(alloc);
-    return result;
-}
-
-int execvpe(const char *file, char *const argv[], char *const envp[]) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(file, &alloc);
-
-    int result = real_execvpe(real_path, argv, envp);
-    free(alloc);
-    return result;
-}
-
-int scandir(const char *dirp, struct dirent ***namelist,
-            int (*filter)(const struct dirent *),
-            int (*compar)(const struct dirent **, const struct dirent **)) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(dirp, &alloc);
-
-    int result = real_scandir(real_path, namelist, filter, compar);
-    free(alloc);
-    return result;
-}
-
-int truncate(const char *path, off_t length) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(path, &alloc);
-
-    int result = real_truncate(real_path, length);
-    free(alloc);
-    return result;
-}
-
-int utimensat(int dirfd, const char *pathname, const struct timespec times[2], int flags) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(pathname, &alloc);
-
-    int result = real_utimensat(dirfd, real_path, times, flags);
-    free(alloc);
-    return result;
-}
-
-int creat(const char *pathname, mode_t mode) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(pathname, &alloc);
-
-    int result = real_creat(real_path, mode);
-    free(alloc);
-    return result;
-}
-
-int creat64(const char *pathname, mode_t mode) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(pathname, &alloc);
-
-    int result = real_creat64(real_path, mode);
-    free(alloc);
-    return result;
-}
-
-char *realpath(const char *path, char *resolved_path) {
-    init_real_functions();
-    init_path_mapping();
-
-    char *alloc = NULL;
-    const char *real_path = translate_input(path, &alloc);
-
-    char *result = real_realpath(real_path, resolved_path);
-    free(alloc);
-    return result;
-}
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Macro-generated interceptors
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* fopen family */
+INTERCEPT_1PATH(FILE*, fopen,     (const char *p, const char *m),   , p, COMMA m)
+INTERCEPT_1PATH(FILE*, fopen64,   (const char *p, const char *m),   , p, COMMA m)
+INTERCEPT_1PATH(FILE*, freopen,   (const char *p, const char *m, FILE *s), , p, COMMA m COMMA s)
+INTERCEPT_1PATH(FILE*, freopen64, (const char *p, const char *m, FILE *s), , p, COMMA m COMMA s)
+
+/* stat family */
+INTERCEPT_1PATH(int, stat,   (const char *p, struct stat *s),        , p, COMMA s)
+INTERCEPT_1PATH(int, lstat,  (const char *p, struct stat *s),        , p, COMMA s)
+INTERCEPT_1PATH(int, access, (const char *p, int m),                 , p, COMMA m)
+INTERCEPT_1PATH(int, faccessat, (int d, const char *p, int m, int f), d COMMA, p, COMMA m COMMA f)
+
+/* chdir, readlink */
+INTERCEPT_1PATH(int,     chdir,     (const char *p),                     , p, )
+INTERCEPT_1PATH(ssize_t, readlink,  (const char *p, char *b, size_t s),  , p, COMMA b COMMA s)
+INTERCEPT_1PATH(ssize_t, readlinkat,(int d, const char *p, char *b, size_t s), d COMMA, p, COMMA b COMMA s)
+
+/* mkdir, rmdir, unlink */
+INTERCEPT_1PATH(int, mkdir,    (const char *p, mode_t m),       , p, COMMA m)
+INTERCEPT_1PATH(int, mkdirat,  (int d, const char *p, mode_t m), d COMMA, p, COMMA m)
+INTERCEPT_1PATH(int, rmdir,    (const char *p),                 , p, )
+INTERCEPT_1PATH(int, unlink,   (const char *p),                 , p, )
+INTERCEPT_1PATH(int, unlinkat, (int d, const char *p, int f),   d COMMA, p, COMMA f)
+
+/* rename family */
+INTERCEPT_2PATH(int, rename,   (const char *o, const char *n),                     , o, COMMA, n, )
+INTERCEPT_2PATH(int, renameat, (int od, const char *o, int nd, const char *n),      od COMMA, o, COMMA nd COMMA, n, )
 
 int renameat2(int olddirfd, const char *oldpath, int newdirfd, const char *newpath, unsigned int flags) {
-    init_real_functions();
-    init_path_mapping();
-
+    ENSURE_INIT();
     if (!real_renameat2) { errno = ENOSYS; return -1; }
-
-    char *alloc1 = NULL, *alloc2 = NULL;
-    const char *real_old = translate_input(oldpath, &alloc1);
-    const char *real_new = translate_input(newpath, &alloc2);
-
-    int result = real_renameat2(olddirfd, real_old, newdirfd, real_new, flags);
-    free(alloc1);
-    free(alloc2);
-    return result;
+    char _b1[STACK_BUF_SIZE], _b2[STACK_BUF_SIZE];
+    char *_a1 = NULL, *_a2 = NULL;
+    const char *ro = translate_path(oldpath, _b1, &_a1);
+    const char *rn = translate_path(newpath, _b2, &_a2);
+    int r = real_renameat2(olddirfd, ro, newdirfd, rn, flags);
+    free(_a1); free(_a2);
+    return r;
 }
 
-int statx(int dirfd, const char *pathname, int flags, unsigned int mask, struct statx *statxbuf) {
-    init_real_functions();
-    init_path_mapping();
+/* symlink, link */
+INTERCEPT_2PATH(int, symlink,   (const char *t, const char *l),                         , t, COMMA, l, )
+INTERCEPT_2PATH(int, symlinkat, (const char *t, int d, const char *l),                  , t, COMMA d COMMA, l, )
+INTERCEPT_2PATH(int, link,      (const char *o, const char *n),                         , o, COMMA, n, )
+INTERCEPT_2PATH(int, linkat,    (int od, const char *o, int nd, const char *n, int f),   od COMMA, o, COMMA nd COMMA, n, COMMA f)
 
-    if (!real_statx) { errno = ENOSYS; return -1; }
+/* chmod, chown */
+INTERCEPT_1PATH(int, chmod,     (const char *p, mode_t m),                    , p, COMMA m)
+INTERCEPT_1PATH(int, fchmodat,  (int d, const char *p, mode_t m, int f),      d COMMA, p, COMMA m COMMA f)
+INTERCEPT_1PATH(int, chown,     (const char *p, uid_t u, gid_t g),           , p, COMMA u COMMA g)
+INTERCEPT_1PATH(int, lchown,    (const char *p, uid_t u, gid_t g),           , p, COMMA u COMMA g)
+INTERCEPT_1PATH(int, fchownat,  (int d, const char *p, uid_t u, gid_t g, int f), d COMMA, p, COMMA u COMMA g COMMA f)
 
-    char *alloc = NULL;
-    const char *real_path = translate_input(pathname, &alloc);
+/* dir operations */
+INTERCEPT_1PATH(DIR*, opendir, (const char *p), , p, )
+INTERCEPT_1PATH(int,  scandir, (const char *p, struct dirent ***n, int(*fi)(const struct dirent*), int(*co)(const struct dirent**, const struct dirent**)), , p, COMMA n COMMA fi COMMA co)
 
-    int result = real_statx(dirfd, real_path, flags, mask, statxbuf);
-    free(alloc);
-    return result;
+/* exec family */
+INTERCEPT_1PATH(int, execve,  (const char *p, char *const a[], char *const e[]), , p, COMMA a COMMA e)
+INTERCEPT_1PATH(int, execvp,  (const char *p, char *const a[]),                  , p, COMMA a)
+INTERCEPT_1PATH(int, execvpe, (const char *p, char *const a[], char *const e[]), , p, COMMA a COMMA e)
+
+/* truncate, utimensat, creat */
+INTERCEPT_1PATH(int, truncate,  (const char *p, off_t l),                    , p, COMMA l)
+INTERCEPT_1PATH(int, utimensat, (int d, const char *p, const struct timespec t[2], int f), d COMMA, p, COMMA t COMMA f)
+INTERCEPT_1PATH(int, creat,     (const char *p, mode_t m),                   , p, COMMA m)
+INTERCEPT_1PATH(int, creat64,   (const char *p, mode_t m),                   , p, COMMA m)
+
+/* realpath, canonicalize_file_name */
+INTERCEPT_1PATH(char*, realpath, (const char *p, char *r), , p, COMMA r)
+
+char *canonicalize_file_name(const char *path) {
+    ENSURE_INIT();
+    if (!real_canonicalize_file_name) return real_realpath ? real_realpath(path, NULL) : NULL;
+    char _b[STACK_BUF_SIZE]; char *_a = NULL;
+    const char *rp = translate_path(path, _b, &_a);
+    char *res = real_canonicalize_file_name(rp);
+    free(_a);
+    return res;
 }
 
-/* glibc internal stat wrappers - some tools call these directly */
+/* glibc internal stat wrappers */
 int __xstat(int ver, const char *pathname, struct stat *statbuf) {
-    init_real_functions();
-    init_path_mapping();
-
-    if (!real___xstat) return -1;
-    char *alloc = NULL;
-    const char *real_path = translate_input(pathname, &alloc);
-
-    int result = real___xstat(ver, real_path, statbuf);
-    free(alloc);
-    return result;
+    ENSURE_INIT();
+    if (!real___xstat) { errno = ENOSYS; return -1; }
+    char _b[STACK_BUF_SIZE]; char *_a = NULL;
+    const char *rp = translate_path(pathname, _b, &_a);
+    int res = real___xstat(ver, rp, statbuf);
+    free(_a);
+    return res;
 }
 
 int __lxstat(int ver, const char *pathname, struct stat *statbuf) {
-    init_real_functions();
-    init_path_mapping();
-
-    if (!real___lxstat) return -1;
-    char *alloc = NULL;
-    const char *real_path = translate_input(pathname, &alloc);
-
-    int result = real___lxstat(ver, real_path, statbuf);
-    free(alloc);
-    return result;
+    ENSURE_INIT();
+    if (!real___lxstat) { errno = ENOSYS; return -1; }
+    char _b[STACK_BUF_SIZE]; char *_a = NULL;
+    const char *rp = translate_path(pathname, _b, &_a);
+    int res = real___lxstat(ver, rp, statbuf);
+    free(_a);
+    return res;
 }
+
+int __fxstatat(int ver, int dirfd, const char *pathname, struct stat *statbuf, int flags) {
+    ENSURE_INIT();
+    if (!real___fxstatat) { errno = ENOSYS; return -1; }
+    char _b[STACK_BUF_SIZE]; char *_a = NULL;
+    const char *rp = translate_path(pathname, _b, &_a);
+    int res = real___fxstatat(ver, dirfd, rp, statbuf, flags);
+    free(_a);
+    return res;
+}
+
+/* statx, fstatat (Tier 2) */
+int statx(int dirfd, const char *pathname, int flags, unsigned int mask, struct statx *statxbuf) {
+    ENSURE_INIT();
+    if (!real_statx) { errno = ENOSYS; return -1; }
+    char _b[STACK_BUF_SIZE]; char *_a = NULL;
+    const char *rp = translate_path(pathname, _b, &_a);
+    int res = real_statx(dirfd, rp, flags, mask, statxbuf);
+    free(_a);
+    return res;
+}
+
+int fstatat(int dirfd, const char *pathname, struct stat *statbuf, int flags) {
+    ENSURE_INIT();
+    if (!real_fstatat) { errno = ENOSYS; return -1; }
+    char _b[STACK_BUF_SIZE]; char *_a = NULL;
+    const char *rp = translate_path(pathname, _b, &_a);
+    int res = real_fstatat(dirfd, rp, statbuf, flags);
+    free(_a);
+    return res;
+}
+
+/* eaccess */
+int eaccess(const char *pathname, int mode) {
+    ENSURE_INIT();
+    if (!real_eaccess) { errno = ENOSYS; return -1; }
+    char _b[STACK_BUF_SIZE]; char *_a = NULL;
+    const char *rp = translate_path(pathname, _b, &_a);
+    int res = real_eaccess(rp, mode);
+    free(_a);
+    return res;
+}
+
+/* dlopen */
+void *dlopen(const char *filename, int flags) {
+    ENSURE_INIT();
+    if (!filename) return real_dlopen(NULL, flags);
+    char _b[STACK_BUF_SIZE]; char *_a = NULL;
+    const char *rp = translate_path(filename, _b, &_a);
+    void *res = real_dlopen(rp, flags);
+    free(_a);
+    return res;
+}
+
+/* pathconf, mknod */
+INTERCEPT_1PATH(long, pathconf, (const char *p, int n), , p, COMMA n)
+
+int mknod(const char *pathname, mode_t mode, dev_t dev) {
+    ENSURE_INIT();
+    if (!real_mknod) { errno = ENOSYS; return -1; }
+    char _b[STACK_BUF_SIZE]; char *_a = NULL;
+    const char *rp = translate_path(pathname, _b, &_a);
+    int res = real_mknod(rp, mode, dev);
+    free(_a);
+    return res;
+}
+
+int mknodat(int dirfd, const char *pathname, mode_t mode, dev_t dev) {
+    ENSURE_INIT();
+    if (!real_mknodat) { errno = ENOSYS; return -1; }
+    char _b[STACK_BUF_SIZE]; char *_a = NULL;
+    const char *rp = translate_path(pathname, _b, &_a);
+    int res = real_mknodat(dirfd, rp, mode, dev);
+    free(_a);
+    return res;
+}
+
+/* nftw, ftw */
+int nftw(const char *dirpath, int (*fn)(const char *, const struct stat *, int, struct FTW *), int nopenfd, int flags) {
+    ENSURE_INIT();
+    if (!real_nftw) { errno = ENOSYS; return -1; }
+    char _b[STACK_BUF_SIZE]; char *_a = NULL;
+    const char *rp = translate_path(dirpath, _b, &_a);
+    int res = real_nftw(rp, fn, nopenfd, flags);
+    free(_a);
+    return res;
+}
+
+int ftw(const char *dirpath, int (*fn)(const char *, const struct stat *, int), int nopenfd) {
+    ENSURE_INIT();
+    if (!real_ftw) { errno = ENOSYS; return -1; }
+    char _b[STACK_BUF_SIZE]; char *_a = NULL;
+    const char *rp = translate_path(dirpath, _b, &_a);
+    int res = real_ftw(rp, fn, nopenfd);
+    free(_a);
+    return res;
+}
+
+/* xattr family */
+INTERCEPT_1PATH(int,     setxattr,     (const char *p, const char *n, const void *v, size_t s, int f), , p, COMMA n COMMA v COMMA s COMMA f)
+INTERCEPT_1PATH(ssize_t, getxattr,     (const char *p, const char *n, void *v, size_t s),             , p, COMMA n COMMA v COMMA s)
+INTERCEPT_1PATH(int,     lsetxattr,    (const char *p, const char *n, const void *v, size_t s, int f), , p, COMMA n COMMA v COMMA s COMMA f)
+INTERCEPT_1PATH(ssize_t, lgetxattr,    (const char *p, const char *n, void *v, size_t s),             , p, COMMA n COMMA v COMMA s)
+INTERCEPT_1PATH(ssize_t, listxattr,    (const char *p, char *l, size_t s),                            , p, COMMA l COMMA s)
+INTERCEPT_1PATH(ssize_t, llistxattr,   (const char *p, char *l, size_t s),                            , p, COMMA l COMMA s)
+INTERCEPT_1PATH(int,     removexattr,  (const char *p, const char *n),                                , p, COMMA n)
+INTERCEPT_1PATH(int,     lremovexattr, (const char *p, const char *n),                                , p, COMMA n)
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Constructor - Initialize on library load
@@ -925,7 +731,5 @@ int __lxstat(int ver, const char *pathname, struct stat *statbuf) {
 
 __attribute__((constructor))
 static void fakepath_init(void) {
-    init_real_functions();
-    // Don't init_path_mapping here - it needs getcwd which we override
-    // It will be initialized on first use
+    pthread_once(&g_init_once, do_init);
 }

@@ -47,7 +47,7 @@ detect_platform() {
     esac
 
     case "$(uname -m)" in
-        x86_64|amd64) arch="x64" ;;
+        x86_64|amd64) arch="amd64" ;;
         aarch64|arm64) arch="arm64" ;;
         *)
             echo -e "  ${RED}Unsupported architecture: $(uname -m)${NC}" >&2
@@ -55,7 +55,7 @@ detect_platform() {
             ;;
     esac
 
-    echo "${os}-${arch}"
+    echo "${os}_${arch}"
 }
 
 # Get latest version from GitHub
@@ -68,28 +68,48 @@ install_ccbox() {
     local platform="$1"
     local version="$2"
 
-    local binary_name="ccbox-${version}-${platform}"
-    local binary_url="https://github.com/${REPO}/releases/download/${version}/${binary_name}"
+    # GoReleaser archive naming: ccbox_{version}_{os}_{arch}.tar.gz (or .zip for windows)
+    local ver_no_v="${version#v}"
+    local archive_name="ccbox_${ver_no_v}_${platform}"
+    local ext="tar.gz"
+    if [[ "$platform" == windows_* ]]; then
+        ext="zip"
+    fi
+    local archive_url="https://github.com/${REPO}/releases/download/${version}/${archive_name}.${ext}"
 
-    local tmp_file
-    tmp_file=$(mktemp)
-    trap 'rm -f "$tmp_file"' EXIT
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+    trap 'rm -rf "$tmp_dir"' EXIT
 
-    task "Downloading ccbox"
-    if curl -fsSL "$binary_url" -o "$tmp_file"; then
+    task "Downloading ccbox ${version}"
+    if curl -fsSL "$archive_url" -o "$tmp_dir/archive.${ext}"; then
         done_
     else
-        fail_ "URL: $binary_url"
+        fail_ "URL: $archive_url"
         exit 1
     fi
 
+    task "Extracting"
+    if [[ "$ext" == "tar.gz" ]]; then
+        tar xzf "$tmp_dir/archive.tar.gz" -C "$tmp_dir"
+    else
+        unzip -q "$tmp_dir/archive.zip" -d "$tmp_dir"
+    fi
+    done_
+
     mkdir -p "$INSTALL_DIR"
-    mv "$tmp_file" "$INSTALL_DIR/ccbox"
-    chmod +x "$INSTALL_DIR/ccbox"
+
+    local binary="ccbox"
+    if [[ "$platform" == windows_* ]]; then
+        binary="ccbox.exe"
+    fi
+
+    mv "$tmp_dir/$binary" "$INSTALL_DIR/$binary"
+    chmod +x "$INSTALL_DIR/$binary"
 
     echo ""
     echo -e "  ${DIM}Installed to${NC}  $INSTALL_DIR"
-    echo -e "    ${CYAN}ccbox${NC}  ${DIM}$(du -h "$INSTALL_DIR/ccbox" 2>/dev/null | cut -f1 || echo "binary")${NC}"
+    echo -e "    ${CYAN}ccbox${NC}  ${DIM}$(du -h "$INSTALL_DIR/$binary" 2>/dev/null | cut -f1 || echo "binary")${NC}"
 }
 
 # Check if install directory is in PATH and add if not

@@ -1,12 +1,12 @@
-# Dependencies
-node_modules/
-package-lock.json
-
-# Build output
+# Go build output
+ccbox
+ccbox.exe
+ccbox-fuse
 dist/
-dist-test/
-out/
 build/
+
+# Go module
+vendor/
 
 # Logs
 *.log
@@ -31,7 +31,7 @@ $RECYCLE.BIN/
 
 # Test coverage
 coverage/
-.nyc_output/
+*.out
 
 # Temp and cache
 *.tmp
@@ -42,25 +42,17 @@ temp/
 .temp/
 *.cache
 
-# Bun
-bun.lockb
-
 # Native code build artifacts (source and pre-compiled binaries are tracked)
 native/out-*/
 native/*.b64
 native/*.o
 
-# Executables and scripts
-*.exe
-*.bat
-*.cmd
-*.com
-*.msi
-ccbox
-
 # Windows artifacts
 nul
 *.lnk
+
+# GoReleaser
+dist/
 
 # Local git config
 .gitconfig
