@@ -78,6 +78,7 @@ func init() {
 	rootCmd.AddCommand(updateCmd)
 	rootCmd.AddCommand(voiceCmd)
 	rootCmd.AddCommand(pasteCmd)
+	rootCmd.AddCommand(uninstallCmd)
 }
 
 // Execute runs the root command and exits on error.
