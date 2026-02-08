@@ -29,7 +29,7 @@ jobs:
         run: |
           PR=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "release-please--branches--main" --json number --jq '.[0].number')
           if [ -n "$PR" ]; then
-            gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --squash --delete-branch || \
+            gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --squash --admin --delete-branch || \
               echo "::warning::Release PR #$PR created but auto-merge failed. Merge manually: https://github.com/$GITHUB_REPOSITORY/pull/$PR"
           fi
 
