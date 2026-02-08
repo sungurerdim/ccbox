@@ -5,7 +5,6 @@ on:
     branches: [main]
 
 permissions:
-  actions: write
   contents: write
   pull-requests: write
 
@@ -24,22 +23,15 @@ jobs:
           manifest-file: .release-please-manifest.json
 
       - name: Auto-merge release PR
-        if: steps.release.outputs.pr
+        if: steps.release.outputs.prs_created == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh pr merge --auto --squash \
-            "${{ fromJSON(steps.release.outputs.pr).number }}" \
-            --repo "${{ github.repository }}"
-
-      - name: Trigger CI on release PR branch
-        if: steps.release.outputs.pr
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh workflow run ci.yml \
-            --ref "release-please--branches--main" \
-            --repo "${{ github.repository }}"
+          PR=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "release-please--branches--main" --json number --jq '.[0].number')
+          if [ -n "$PR" ]; then
+            gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --squash --delete-branch || \
+              echo "::warning::Release PR #$PR created but auto-merge failed. Merge manually: https://github.com/$GITHUB_REPOSITORY/pull/$PR"
+          fi
 
   goreleaser:
     name: GoReleaser
