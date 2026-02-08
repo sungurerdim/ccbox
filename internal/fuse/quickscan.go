@@ -102,7 +102,6 @@ func translatePathSegments(path string, dirMappings []DirMapping) string {
 			b = append(b, '/')
 			i++
 			// Check segment after /
-			matched := false
 			for _, dm := range dirMappings {
 				clen := len(dm.ContainerName)
 				if i+clen <= len(path) && path[i:i+clen] == dm.ContainerName {
@@ -113,7 +112,6 @@ func translatePathSegments(path string, dirMappings []DirMapping) string {
 					if next == 0 || next == '/' {
 						b = append(b, dm.NativeName...)
 						i += clen
-						matched = true
 						break
 					}
 				}
