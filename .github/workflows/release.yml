@@ -31,6 +31,15 @@ jobs:
             "${{ fromJSON(steps.release.outputs.pr).number }}" \
             --repo "${{ github.repository }}"
 
+      - name: Trigger CI on release PR branch
+        if: steps.release.outputs.pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run ci.yml \
+            --ref "release-please--branches--main" \
+            --repo "${{ github.repository }}"
+
   goreleaser:
     name: GoReleaser
     needs: release-please
