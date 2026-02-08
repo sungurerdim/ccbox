@@ -39,8 +39,7 @@ Its location will be printed so you can remove it manually.`,
 			log.Yellow("Proceed? [y/N] ")
 
 			var answer string
-			fmt.Scanln(&answer)
-			if answer != "y" && answer != "Y" {
+			if _, err := fmt.Scanln(&answer); err != nil || (answer != "y" && answer != "Y") {
 				log.Info("Aborted.")
 				return nil
 			}
