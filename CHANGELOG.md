@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0](https://github.com/sungurerdim/ccbox/compare/v0.2.0...v0.3.0) (2026-02-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* rewrite codebase from TypeScript/Bun to Go ([#6](https://github.com/sungurerdim/ccbox/issues/6))
+* Complete rewrite of ccbox from TypeScript/Bun to Go.
+
+### Features
+
+* bridge overhaul, cross-platform, voice & clipboard ([f28e449](https://github.com/sungurerdim/ccbox/commit/f28e4497c9a2895b566fe2dccaadf4141b7075e9))
+* bridge voice/paste, container labels, Docker SDK migration ([#11](https://github.com/sungurerdim/ccbox/issues/11)) ([130cb51](https://github.com/sungurerdim/ccbox/commit/130cb5165572436d1307d098f7bea2d685ba5bea))
+* **cli:** add uninstall command ([#8](https://github.com/sungurerdim/ccbox/issues/8)) ([2f08dbb](https://github.com/sungurerdim/ccbox/commit/2f08dbbe353cfd1e8c3855c6e856e8cbb37cfa1a))
+* rewrite codebase from TypeScript/Bun to Go ([b55b287](https://github.com/sungurerdim/ccbox/commit/b55b28739c7d61287bc5733b2b4a463a9ea749fa))
+* rewrite codebase from TypeScript/Bun to Go ([#6](https://github.com/sungurerdim/ccbox/issues/6)) ([719a705](https://github.com/sungurerdim/ccbox/commit/719a7052a04f80e0e343998402e7386e2511b906))
+
+
+### Bug Fixes
+
+* resolve golangci-lint errors in fuse package ([b478503](https://github.com/sungurerdim/ccbox/commit/b4785030b2a5654926ab586337de18f4b6befbfa))
+* resolve golangci-lint errors in fuse package ([#7](https://github.com/sungurerdim/ccbox/issues/7)) ([32c329e](https://github.com/sungurerdim/ccbox/commit/32c329eb03a53e08c9dbfec4db00088051e1e8d7))
+
 ## [0.3.0](https://github.com/sungurerdim/ccbox/compare/v0.2.0...v0.3.0) (2026-02-07)
 
 
