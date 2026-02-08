@@ -348,14 +348,14 @@ func (fh *CcboxFileHandle) Write(ctx context.Context, data []byte, off int64) (u
 				if err != nil {
 					return 0, gofuse.ToErrno(err)
 				}
-				syscall.Ftruncate(fh.fd, int64(nw))
+				_ = syscall.Ftruncate(fh.fd, int64(nw))
 				return uint32(len(data)), 0
 			}
 			// Write at offset: read-modify-write
 			if err := syscall.Flock(fh.fd, syscall.LOCK_EX); err != nil {
 				return 0, gofuse.ToErrno(err)
 			}
-			defer syscall.Flock(fh.fd, syscall.LOCK_UN)
+			defer func() { _ = syscall.Flock(fh.fd, syscall.LOCK_UN) }()
 
 			var st syscall.Stat_t
 			if err := syscall.Fstat(fh.fd, &st); err != nil {
@@ -366,13 +366,13 @@ func (fh *CcboxFileHandle) Write(ctx context.Context, data []byte, off int64) (u
 				total = st.Size
 			}
 			merged := make([]byte, total)
-			syscall.Pread(fh.fd, merged[:st.Size], 0)
+			_, _ = syscall.Pread(fh.fd, merged[:st.Size], 0)
 			copy(merged[off:], transformed)
 			nw, err := syscall.Pwrite(fh.fd, merged, 0)
 			if err != nil {
 				return 0, gofuse.ToErrno(err)
 			}
-			syscall.Ftruncate(fh.fd, int64(nw))
+			_ = syscall.Ftruncate(fh.fd, int64(nw))
 			return uint32(len(data)), 0
 		}
 	}
@@ -442,7 +442,7 @@ func (n *CcboxNode) Create(ctx context.Context, name string, flags uint32, mode 
 
 	caller, _ := fuse.FromContext(ctx)
 	if caller != nil {
-		syscall.Fchown(fd, int(caller.Uid), int(caller.Gid))
+		_ = syscall.Fchown(fd, int(caller.Uid), int(caller.Gid))
 	}
 
 	var st syscall.Stat_t
@@ -480,7 +480,7 @@ func (n *CcboxNode) Mkdir(ctx context.Context, name string, mode uint32, out *fu
 
 	caller, _ := fuse.FromContext(ctx)
 	if caller != nil {
-		syscall.Chown(fpath, int(caller.Uid), int(caller.Gid))
+		_ = syscall.Chown(fpath, int(caller.Uid), int(caller.Gid))
 	}
 
 	var st syscall.Stat_t
@@ -562,7 +562,7 @@ func postRenameTransform(path string, r *CcboxRoot) {
 	if transformed != nil {
 		nw, err := syscall.Pwrite(fd, transformed, 0)
 		if err == nil {
-			syscall.Ftruncate(fd, int64(nw))
+			_ = syscall.Ftruncate(fd, int64(nw))
 		}
 		r.Trace.TX("rename transform: %s (%d -> %d bytes)", path, nr, len(transformed))
 	}
@@ -578,7 +578,7 @@ func (n *CcboxNode) Symlink(ctx context.Context, target, name string, out *fuse.
 
 	caller, _ := fuse.FromContext(ctx)
 	if caller != nil {
-		syscall.Lchown(fpath, int(caller.Uid), int(caller.Gid))
+		_ = syscall.Lchown(fpath, int(caller.Uid), int(caller.Gid))
 	}
 
 	var st syscall.Stat_t
