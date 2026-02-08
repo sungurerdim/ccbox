@@ -1,19 +1,16 @@
-# Multi-arch build for ccbox native components
+# Multi-arch build for fakepath.so (LD_PRELOAD library)
+# FUSE is now built in Go via native cross-compile (see build.sh)
 FROM debian:bookworm-slim AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc libc6-dev libfuse3-dev pkg-config \
+    gcc libc6-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
-COPY ccbox-fuse.c fakepath.c ./
-
-# Build FUSE helper (requires libfuse3)
-RUN gcc -Wall -Werror -O2 -s -o ccbox-fuse ccbox-fuse.c $(pkg-config fuse3 --cflags --libs)
+COPY fakepath.c ./
 
 # Build fakepath.so (LD_PRELOAD library for path translation)
-RUN gcc -shared -fPIC -Wall -Werror -O2 -s -o fakepath.so fakepath.c -ldl -D_GNU_SOURCE
+RUN gcc -shared -fPIC -Wall -Werror -O2 -s -o fakepath.so fakepath.c -ldl -lpthread -D_GNU_SOURCE
 
 FROM scratch
-COPY --from=builder /build/ccbox-fuse /ccbox-fuse
 COPY --from=builder /build/fakepath.so /fakepath.so

@@ -75,7 +75,7 @@ No single mechanism can cover all cases. Bun bypasses glibc, so fakepath can't i
 
 ## Layer 1: Drive Symlinks
 
-**Source:** `src/dockerfile-gen.ts`
+**Source:** `internal/generate/dockerfile.go`
 
 At Docker image build time:
 
@@ -96,13 +96,13 @@ done'
 
 ## Layer 2: FUSE Filesystem Overlay
 
-**Source:** `native/ccbox-fuse.c`
+**Source:** `internal/fuse/` (Go, hanwen/go-fuse v2) + `cmd/ccbox-fuse/main.go`
 
 FUSE operates at the Linux VFS layer — all file I/O passes through it regardless of whether the caller uses glibc, direct syscalls, or io_uring.
 
 ### Setup (In-Place Overlay)
 
-The entrypoint script (`src/generator.ts`) sets up FUSE using a bind-mount trick:
+The entrypoint script (`embedded/entrypoint.sh`) sets up FUSE using a bind-mount trick:
 
 ```bash
 # 1. Bind-mount original directory to temp location
@@ -129,7 +129,7 @@ Pass 2: Directory name replacement (CCBOX_DIR_MAP)
   D--GitHub-myapp  ↔  -d-GitHub-myapp
 ```
 
-**Read direction** (`transform_to_container_alloc` + `apply_dirmap`):
+**Read direction** (`TransformToContainer` + `ApplyDirMap`):
 
 ```
 Disk:      "C:\\Users\\You\\.claude\\projects\\D--GitHub-myapp\\session.jsonl"
@@ -139,7 +139,7 @@ Pass 1:    "/ccbox/.claude/projects/D--GitHub-myapp/session.jsonl"
 Pass 2:    "/ccbox/.claude/projects/-d-GitHub-myapp/session.jsonl"  ✓
 ```
 
-**Write direction** (`transform_to_host_alloc` + `apply_dirmap`):
+**Write direction** (`TransformToHost` + `ApplyDirMap`):
 
 ```
 App:       "/ccbox/.claude/projects/-d-GitHub-myapp/session.jsonl"
@@ -149,14 +149,14 @@ Pass 1:    "C:\\Users\\You\\.claude\\projects\\-d-GitHub-myapp\\session.jsonl"
 Pass 2:    "C:\\Users\\You\\.claude\\projects\\D--GitHub-myapp\\session.jsonl"  ✓
 ```
 
-The `apply_dirmap` post-pass is a clean, independent string replacement that runs on the entire buffer after prefix transformation. It matches `/segment/` and `\\segment\\` boundaries, so it works regardless of separator style.
+The `ApplyDirMap` post-pass is a clean, independent string replacement that runs on the entire buffer after prefix transformation. It matches `/segment/` and `\\segment\\` boundaries, so it works regardless of separator style.
 
 ### Filesystem Path Translation (Directory Mapping)
 
 FUSE also translates directory names at the filesystem level:
 
-- **`get_source_path()`**: When container accesses `/projects/-d-GitHub-myapp/`, FUSE translates to disk path `/projects/D--GitHub-myapp/`
-- **`readdir()`**: When listing `/projects/`, disk entry `D--GitHub-myapp` is presented as `-d-GitHub-myapp`
+- **`GetSourcePath()`**: When container accesses `/projects/-d-GitHub-myapp/`, FUSE translates to disk path `/projects/D--GitHub-myapp/`
+- **`Readdir()`**: When listing `/projects/`, disk entry `D--GitHub-myapp` is presented as `-d-GitHub-myapp`
 
 ### Path Types Detected
 
@@ -170,17 +170,16 @@ FUSE also translates directory names at the filesystem level:
 
 | Feature | Mechanism | Effect |
 |---------|-----------|--------|
-| **Kernel cache timeouts** | `ccbox_init`: `entry_timeout=30s`, `attr_timeout=30s`, `negative_timeout=15s` | Kernel caches stat/getattr results — avoids FUSE callbacks for 30s |
-| **auto_cache** | `cfg->auto_cache = 1` in `ccbox_init` | Kernel invalidates page cache when file mtime/size changes |
-| **Smart direct_io** | `ccbox_open`: cache hit → `keep_cache`, miss → `direct_io` | First read populates cache; subsequent reads served from kernel page cache (no FUSE callback) |
-| **Read cache** (`g_rcache`) | LRU cache, 256 slots (max 4 MB/entry), keyed by path + mtime (sec+nsec) | Avoids re-reading and re-transforming on repeated reads |
-| **Skip cache** (`g_scache`) | 512-slot ring buffer, keyed by path + mtime | Remembers files with no mapping patterns — avoids repeated quick-scan |
-| **Negative cache** (`g_neg_cache`) | 64-entry ring buffer, 2s TTL, monotonic clock | Avoids repeated `lstat()` for non-existent files |
-| **FH bit encoding** | Bit 63 of `fi->fh` stores transform flag | Avoids re-evaluating `needs_transform()` on every read/write |
-| **Lazy getattr** | No file I/O on getattr; only rcache lookup | Eliminates expensive read-for-size on stat() calls |
+| **Kernel cache timeouts** | `EntryTimeout=30s`, `AttrTimeout=30s`, `NegativeTimeout=15s` | Kernel caches stat/getattr results — avoids FUSE callbacks for 30s |
+| **Smart direct_io** | `Open`: cache hit → `FOPEN_KEEP_CACHE`, miss → `FOPEN_DIRECT_IO` | First read populates cache; subsequent reads served from kernel page cache (no FUSE callback) |
+| **Read cache** (`RCache`) | LRU cache, 256 slots (max 4 MB/entry), keyed by path + mtime (sec+nsec) | Avoids re-reading and re-transforming on repeated reads |
+| **Skip cache** (`SCache`) | 512-slot ring buffer, keyed by path + mtime | Remembers files with no mapping patterns — avoids repeated quick-scan |
+| **Negative cache** (`NegCache`) | 64-entry ring buffer, 2s TTL, monotonic clock | Avoids repeated `lstat()` for non-existent files |
+| **FileHandle transform flag** | `CcboxFileHandle.needsTransform` bool | Avoids re-evaluating `NeedsTransform()` on every read/write |
+| **Lazy getattr** | No file I/O on getattr; only RCache lookup | Eliminates expensive read-for-size on stat() calls |
 | **Extension-only filter** | No path whitelist; `.json`/`.jsonl` extension check only | Simple, complete coverage — transform functions are no-ops on non-path content |
-| **Monotonic clock** | `CLOCK_MONOTONIC_COARSE` via vDSO | Zero-syscall time reads for cache expiry |
-| **Buffer overflow protection** | `WORK_PUT` macro + `work_append` helper | Safe bounds checking on all output buffer writes |
+| **Buffer pooling** | `sync.Pool` for 64KB quick-scan buffers | Reduces GC pressure on repeated scans |
+| **strings.Builder** | Pre-allocated builder for transform output | Efficient buffer construction without intermediate allocations |
 
 #### Cache Sizing
 
@@ -190,29 +189,25 @@ FUSE also translates directory names at the filesystem level:
 | **SCACHE** | 512 | N/A (metadata only) | ~256 KB | ~256 KB |
 | **Negative** | 64 | N/A (path only) | ~256 KB | ~256 KB |
 
-#### Read Path (open → read)
+#### Read Path (Open → Read)
 
 ```
-ccbox_open(path):
-  if needs_transform(path):
+Open(path):
+  if NeedsTransform(path):
     fstat(fd) → get mtime
-    rcache_lookup(path, mtime) OR scache_lookup(path, mtime)?
-      → YES: fi->keep_cache = 1   (kernel page cache active)
-      → NO:  fi->direct_io = 1    (bypass page cache, size unknown)
+    RCache.Lookup(path, mtime) OR SCache.Lookup(path, mtime)?
+      → YES: FOPEN_KEEP_CACHE  (kernel page cache active)
+      → NO:  FOPEN_DIRECT_IO   (bypass page cache, size unknown)
 
-ccbox_read(path, offset, size):
-  if transform file:
-    1. scache hit?    → pread() passthrough (no transform needed)
-    2. rcache hit?    → memcpy from cache
-    3. quick_scan?    → no patterns found → scache insert + pread()
-    4. full transform → rcache insert + return transformed data
+Read(offset, size):
+  if needsTransform:
+    1. SCache hit?    → pread() passthrough (no transform needed)
+    2. RCache hit?    → return cached data slice
+    3. QuickScan?     → no patterns found → SCache insert + pread()
+    4. full transform → RCache insert + return transformed data
 ```
 
-On second open, the file is in rcache/scache → `keep_cache` is set → kernel page cache serves subsequent reads without any FUSE callback.
-
-### Concurrency
-
-Offset writes use `flock(LOCK_EX/LOCK_UN)` to prevent read-modify-write races.
+On second open, the file is in RCache/SCache → `FOPEN_KEEP_CACHE` is set → kernel page cache serves subsequent reads without any FUSE callback.
 
 ### Trace Logging
 
@@ -232,24 +227,26 @@ tail -f /run/ccbox-fuse-trace.log
 
 **Source:** `native/fakepath.c`
 
-fakepath intercepts glibc function calls to translate **syscall path arguments** (not file contents). Active only on Windows hosts where `CCBOX_WIN_ORIGINAL_PATH` is set.
+fakepath intercepts glibc function calls to translate **syscall path arguments** (not file contents). Active on Windows hosts where `CCBOX_PATH_MAP` or `CCBOX_WIN_ORIGINAL_PATH` is set.
 
 ### Translation Direction
 
 **Input only** (Windows → container). Output translation (getcwd → Windows) is disabled because Bun caches `getcwd()` at startup and then calls `lstat()` via direct syscalls. If `getcwd()` returned `D:/GitHub/x`, Bun's `lstat("D:/GitHub/x")` would fail (relative path on Linux, and direct syscalls bypass fakepath).
 
-### Intercepted Functions
+### Intercepted Functions (~65 total)
 
 | Category | Functions |
 |----------|-----------|
 | **File open** | `open`, `open64`, `openat`, `openat64`, `fopen`, `fopen64`, `freopen`, `freopen64`, `creat`, `creat64` |
-| **File info** | `stat`, `lstat`, `__xstat`, `__lxstat`, `access`, `faccessat`, `statx` |
-| **Directory** | `chdir`, `mkdir`, `mkdirat`, `rmdir`, `opendir`, `scandir` |
-| **File ops** | `unlink`, `unlinkat`, `rename`, `renameat`, `renameat2`, `truncate`, `utimensat` |
+| **File info** | `stat`, `lstat`, `__xstat`, `__lxstat`, `__xstat64`, `__lxstat64`, `fstatat`, `__fxstatat`, `access`, `faccessat`, `eaccess`, `statx` |
+| **Directory** | `chdir`, `mkdir`, `mkdirat`, `rmdir`, `opendir`, `scandir`, `nftw`, `ftw` |
+| **File ops** | `unlink`, `unlinkat`, `rename`, `renameat`, `renameat2`, `truncate`, `utimensat`, `mknod`, `mknodat` |
 | **Links** | `readlink`, `readlinkat`, `symlink`, `symlinkat`, `link`, `linkat` |
 | **Permissions** | `chmod`, `fchmodat`, `chown`, `lchown`, `fchownat` |
 | **Execute** | `execve`, `execvp`, `execvpe` |
-| **Path resolve** | `realpath` |
+| **Path resolve** | `realpath`, `canonicalize_file_name`, `pathconf` |
+| **Dynamic loading** | `dlopen` |
+| **Extended attrs** | `setxattr`, `getxattr`, `lsetxattr`, `lgetxattr`, `listxattr`, `llistxattr`, `removexattr`, `lremovexattr` |
 
 ### Limitations
 
@@ -270,7 +267,7 @@ Two mechanisms keep these in sync:
 
 | Mechanism | Layer | What it does |
 |-----------|-------|-------------|
-| `CCBOX_DIR_MAP` filesystem | FUSE `get_source_path` + `readdir` | Translates directory names at filesystem level |
+| `CCBOX_DIR_MAP` filesystem | FUSE `GetSourcePath` + `readdir` | Translates directory names at filesystem level |
 | `CCBOX_DIR_MAP` content | FUSE `apply_dirmap` post-pass | Translates encoded names inside JSON file contents |
 
 ## Docker Mount Structure
@@ -300,11 +297,11 @@ docker run \
 
 | Variable | Set by | Used by | Example |
 |----------|--------|---------|---------|
-| `HOME` | docker-runtime.ts | All tools | `/ccbox` |
-| `CLAUDE_CONFIG_DIR` | docker-runtime.ts | Claude Code | `/ccbox/.claude` |
-| `CCBOX_PATH_MAP` | docker-runtime.ts | ccbox-fuse | `D:/GitHub/myapp:/d/GitHub/myapp;C:/Users/You/.claude:/ccbox/.claude` |
-| `CCBOX_DIR_MAP` | docker-runtime.ts | ccbox-fuse | `-d-GitHub-myapp:D--GitHub-myapp` |
-| `CCBOX_WIN_ORIGINAL_PATH` | docker-runtime.ts | fakepath.so | `D:/GitHub/myapp` |
+| `HOME` | internal/run | All tools | `/ccbox` |
+| `CLAUDE_CONFIG_DIR` | internal/run | Claude Code | `/ccbox/.claude` |
+| `CCBOX_PATH_MAP` | internal/run | ccbox-fuse, fakepath.so | `D:/GitHub/myapp:/d/GitHub/myapp;C:/Users/You/.claude:/ccbox/.claude` |
+| `CCBOX_DIR_MAP` | internal/run | ccbox-fuse | `-d-GitHub-myapp:D--GitHub-myapp` |
+| `CCBOX_WIN_ORIGINAL_PATH` | internal/run | fakepath.so (legacy) | `D:/GitHub/myapp` |
 | `CCBOX_FUSE_TRACE` | User | ccbox-fuse | `1` (transform only) or `2` (all) |
 | `CCBOX_FUSE_EXTENSIONS` | User (optional) | ccbox-fuse | `json,jsonl,yaml` (default: `json,jsonl`) |
 
@@ -320,11 +317,11 @@ Content: {"path":"C:\\Users\\You\\.claude\\projects\\D--GitHub-myapp\\todo.json"
 Container Claude Code reads the same file:
 
 ```
-Step 1 — Filesystem path (get_source_path + dirmap):
+Step 1 — Filesystem path (GetSourcePath + dirmap):
   App requests:     /projects/-d-GitHub-myapp/session.jsonl
   FUSE translates:  /run/.../projects/D--GitHub-myapp/session.jsonl  (disk)
 
-Step 2 — File content (transform_to_container_alloc):
+Step 2 — File content (TransformToContainer):
   Pass 1 (prefix):  C:\\...  → /ccbox/.claude    D:\\...  → /d/GitHub/myapp
   Pass 2 (dirmap):  D--GitHub-myapp → -d-GitHub-myapp
 
@@ -334,11 +331,11 @@ Step 2 — File content (transform_to_container_alloc):
 Container writes back — exact reverse:
 
 ```
-Step 1 — File content (transform_to_host_alloc):
+Step 1 — File content (TransformToHost):
   Pass 1 (prefix):  /ccbox/.claude → C:\\...    /d/GitHub/myapp → D:\\...
   Pass 2 (dirmap):  -d-GitHub-myapp → D--GitHub-myapp
 
-Step 2 — Filesystem path (get_source_path + dirmap):
+Step 2 — Filesystem path (GetSourcePath + dirmap):
   /-d-GitHub-myapp/ → /D--GitHub-myapp/  (disk)
 
   Disk:             {"path":"C:\\Users\\You\\.claude\\projects\\D--GitHub-myapp\\todo.json","cwd":"D:\\GitHub\\myapp"}
@@ -353,13 +350,17 @@ Host format preserved. Both clients work correctly.
 bash native/build.sh
 ```
 
-This builds `ccbox-fuse` and `fakepath.so` for both architectures using Docker buildx. Output:
+This builds:
+- **ccbox-fuse** (Go) via native cross-compile (`GOOS=linux CGO_ENABLED=0 go build`)
+- **fakepath.so** (C) via Docker buildx (needs glibc headers)
+
+Output:
 
 ```
-native/ccbox-fuse-linux-amd64
-native/ccbox-fuse-linux-arm64
-native/fakepath-linux-amd64.so
-native/fakepath-linux-arm64.so
+embedded/ccbox-fuse-linux-amd64
+embedded/ccbox-fuse-linux-arm64
+embedded/fakepath-linux-amd64.so
+embedded/fakepath-linux-arm64.so
 ```
 
-Build uses `-Wall -Werror` — zero warnings policy.
+fakepath.so build uses `-Wall -Werror` — zero warnings policy.

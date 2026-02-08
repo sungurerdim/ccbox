@@ -2,131 +2,115 @@
 
 ## Prerequisites
 
-- [Bun](https://bun.sh/) runtime
+- [Go](https://go.dev/) 1.23+
 - [Docker](https://www.docker.com/) Desktop or Engine
 - Git
 
 ## Setup
 
 ```bash
-# Install Bun
-curl -fsSL https://bun.sh/install | bash
-
-# Clone and install
 git clone https://github.com/sungurerdim/ccbox.git
 cd ccbox
-bun install
+go mod tidy
 ```
 
 ## Development
 
 ```bash
-bun run dev              # Run from source
-bun run typecheck        # TypeScript check
-bun run lint             # ESLint
-bun run circular         # Check circular dependencies
+make dev       # Run from source
+make build     # Build binary
+make lint      # go vet + golangci-lint
+make fmt       # Format code
+make tidy      # go mod tidy
 ```
 
 ## Testing
 
 ```bash
-bun run test             # Unit tests
-bun run test:e2e         # End-to-end tests
-bun run test:all         # All tests
+make test      # Unit tests (with race detector)
 ```
-
-Tests use a custom framework in `tests/verify.mjs`. Add new test cases following existing patterns.
 
 ## Building
 
 ```bash
-bun run build            # Build JS bundle
-bun run build:binary     # Build binary for current platform
-bun run build:binary:all # Build for all platforms
+make build                    # Build for current platform
+# Cross-compile:
+GOOS=linux GOARCH=amd64 go build -o ccbox-linux ./cmd/ccbox
 ```
+
+### Native Components
+
+FUSE and fakepath binaries are pre-compiled and embedded via `//go:embed`. To rebuild them:
+
+```bash
+bash native/build.sh          # Requires Docker (for fakepath.so cross-compile)
+```
+
+This produces:
+- `embedded/ccbox-fuse-linux-{amd64,arm64}` — Go FUSE binary (native cross-compile)
+- `embedded/fakepath-linux-{amd64,arm64}.so` — C LD_PRELOAD library (Docker cross-compile)
 
 ## Project Structure
 
 ```
-src/
-├── cli.ts           # CLI entry (Commander.js)
-├── commands/run.ts  # Main run command
-├── config.ts        # Stack definitions
-├── detector.ts      # Project type detection
-├── build.ts         # Image building
-├── generator.ts     # Dockerfile generation
-├── docker.ts        # Docker operations
-├── paths.ts         # Path handling
-├── logger.ts        # Logging abstraction
-├── errors.ts        # Error classes
-└── deps.ts          # Dependency detection
+cmd/
+├── ccbox/               # Main CLI entry point
+└── ccbox-fuse/          # FUSE filesystem binary (Linux only)
+
+internal/
+├── cli/                 # Cobra commands + global flags
+├── config/              # Stack definitions, configuration
+├── detect/              # Project type detection
+├── docker/              # Docker SDK operations (client, container, image)
+├── fuse/                # FUSE filesystem (path transform, caching)
+├── generate/            # Dockerfile + entrypoint generation
+├── run/                 # Run orchestration (args builder, phases)
+├── bridge/              # Bridge mode TUI (bubbletea)
+├── platform/            # Platform detection (Windows, macOS, Linux, WSL)
+├── paths/               # Path utilities
+└── log/                 # Leveled logger with lipgloss
+
+embedded/                # go:embed assets (FUSE, fakepath.so, entrypoint)
+native/                  # C source for fakepath + build scripts
 ```
 
-## Architecture: Dependency Hierarchy
-
-The codebase follows a layered architecture. Higher layers can import from lower layers, but not vice versa.
+## Architecture: Package Hierarchy
 
 ```
-CLI Layer (Orchestrators)
+CLI Layer (cmd/ + internal/cli/)
     |
     v
-Core Services
+Orchestration (internal/run/)
     |
     v
-Utilities
+Core Services (internal/config, detect, docker, generate, fuse)
+    |
+    v
+Utilities (internal/platform, paths, log)
 ```
-
-### Layer 1: CLI Layer (Orchestrators)
-
-**Files:** `cli.ts`, `commands/*.ts`
-
-- Entry points for user commands
-- **Intentionally allowed to import from all lower layers**
-- Coordinates between services
-- Handles user input/output
-
-The CLI layer is the "fan-in" point where multiple imports converge. This is by design - orchestrators need access to all the pieces they coordinate.
-
-### Layer 2: Core Services
-
-**Files:** `config.ts`, `detector.ts`, `deps.ts`, `docker.ts`, `build.ts`, `generator.ts`, `dockerfile-gen.ts`, `docker-runtime.ts`, `cleanup.ts`, `prompts.ts`
-
-- Business logic and domain operations
-- Can import from utilities and peer services
-- Should not import from CLI layer
-
-### Layer 3: Utilities
-
-**Files:** `logger.ts`, `errors.ts`, `paths.ts`, `constants.ts`, `utils.ts`
-
-- Low-level utilities with no business logic
-- Should only import from other utilities
-- Must not have circular dependencies
 
 ### Import Rules
 
 | From Layer | Can Import From |
 |------------|-----------------|
-| CLI | Core Services, Utilities |
+| CLI | Orchestration, Core Services, Utilities |
+| Orchestration | Core Services, Utilities |
 | Core Services | Utilities, Peer Services |
 | Utilities | Other Utilities only |
 
-This structure ensures testability (services work without CLI), maintainability (clear boundaries), and extensibility (new commands just orchestrate existing services).
-
 ## Code Style
 
-- TypeScript strict mode
-- ESLint for linting
-- Prefer `const` over `let`
-- Named exports over default
-- Custom error classes for domain errors
+- `go vet` + `golangci-lint` must pass
+- Prefer simple, readable code
+- Named returns only when they improve clarity
+- Error wrapping with `fmt.Errorf("context: %w", err)`
 
 ## Pull Requests
 
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/my-feature`
 3. Make changes with clear commit messages
-4. Run all checks: `bun run typecheck && bun run lint && bun run test`
+4. Run all checks: `make lint && make test`
 5. Push and open a PR against `main`
 
 ### PR Guidelines
@@ -138,12 +122,11 @@ This structure ensures testability (services work without CLI), maintainability 
 
 ## Adding a New Stack
 
-1. Add enum value to `LanguageStack` in `src/config.ts`
-2. Add stack info to `STACK_INFO`
-3. Add dependency to `STACK_DEPENDENCIES`
-4. Add Dockerfile generator in `src/dockerfile-gen.ts`
-5. Add detection patterns in `src/detector.ts`
-6. Test with a sample project
+1. Add stack constant to `internal/config/stacks.go`
+2. Add stack info to `StackInfo` map
+3. Add dependency detection in `internal/detect/`
+4. Add Dockerfile generation in `internal/generate/dockerfile.go`
+5. Test with a sample project
 
 ## Security
 

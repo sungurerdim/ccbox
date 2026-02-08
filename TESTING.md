@@ -1,46 +1,57 @@
 # Testing Guide
 
-## Critical Path Tests
-
-Tests marked with `@critical` and `[critical]` prefix cover security-sensitive code paths that **must never regress**. These tests validate the security boundary of the Docker sandbox.
-
-### Path Traversal Prevention (3 tests)
-- `[critical] resolveForDocker rejects path traversal` - Blocks `../../etc/passwd` attacks
-- `[critical] PathError for path traversal attempt` - Validates `../` rejection in project paths
-- `[critical] resolveForDocker rejects null bytes` - Blocks null byte injection
-
-### Container Security (4 tests)
-- `[critical] PIDS limit is in safe range (256-8192)` - Fork bomb protection
-- `[critical] getHostUserIds returns valid uid/gid pair` - Correct container user mapping
-- `[critical] buildClaudeArgs always includes --dangerously-skip-permissions` - Bypass mode in sandbox
-- `[critical] getImageName format is docker-compatible` - Prevents image name injection
-
-### Docker Safety (4 tests)
-- `[critical] getProjectImageName produces docker-compatible format` - Safe image naming
-- `[critical] getProjectImageName sanitizes special chars` - Input sanitization
-- `[critical] getContainerName sanitizes special chars` - Container name safety
-- `getContainerName generates unique names` - Prevents container collision
-
-### Environment Variable Validation (3 tests)
-- `getDockerRunCmd custom envVars included` - Env vars passed correctly
-- `getDockerRunCmd debug mode sets CCBOX_DEBUG` - Debug state propagation
-- `getDockerRunCmd unrestricted mode sets CCBOX_UNRESTRICTED` - Mode signaling
-
 ## Running Tests
 
 ```bash
-bun run test              # Unit tests
-bun run test:coverage     # Unit tests with coverage report
-bun run test:e2e          # End-to-end (requires Docker)
-bun run test:all          # All tests
+make test      # Unit tests with race detector
+make lint      # go vet + golangci-lint
 ```
 
-## Coverage
+## Critical Path Tests
 
-Coverage is tracked with c8. Minimum thresholds: 70% branches, lines, functions, statements.
+Tests covering security-sensitive code paths that **must never regress**:
 
-Configuration: `.c8rc.json`
+### Path Traversal Prevention
+- Blocks `../../etc/passwd` attacks in project path validation
+- Validates `../` rejection in project paths
+- Blocks null byte injection
 
-## Test Retry (E2E)
+### Container Security
+- Fork bomb protection (PID limits in safe range)
+- Correct container user mapping (UID/GID)
+- Bypass mode enabled in sandbox (`--dangerously-skip-permissions`)
+- Docker-compatible image name format
 
-Docker-based E2E tests use retry logic for transient failures (network timeouts, daemon restarts). In CI environments (`CI=true`), timeouts are doubled automatically.
+### Docker Safety
+- Safe image naming (sanitized special chars)
+- Safe container naming
+- Unique container names (prevent collision)
+
+### Environment Variable Validation
+- Custom env vars passed correctly
+- Debug mode propagation
+- Unrestricted mode signaling
+
+## Test Structure
+
+Tests are colocated with source code using Go's standard `_test.go` convention:
+
+```
+internal/
+├── config/config_test.go
+├── detect/detect_test.go
+├── docker/docker_test.go
+├── paths/paths_test.go
+└── ...
+```
+
+## Quality Gates
+
+All of these must pass before merge:
+
+```bash
+go vet ./...           # Static analysis
+golangci-lint run      # Lint rules
+go test -race ./...    # Tests with race detector
+go build ./cmd/ccbox   # Build verification
+```

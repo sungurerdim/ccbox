@@ -122,14 +122,18 @@ ama ücretsiz ve native Claude Code feature parity ile.
 - [ ] E2E test coverage
 
 ### FUSE Refactoring
-- [ ] C kodunu daha modüler yap
-- [ ] Memory leak kontrolü
+- [x] C kodunu Go'ya port et (hanwen/go-fuse v2)
+- [x] CGO_ENABLED=0 statik binary, Docker buildx bağımlılığı kaldırıldı
+- [x] LRU read cache, skip cache, negative dentry cache
+- [x] sync.Pool buffer pooling
 - [ ] Error recovery iyileştirmesi
 
-### Entrypoint Modernizasyonu
-- [ ] Shell script → Go/Rust binary (opsiyonel)
-- [ ] Daha iyi error handling
-- [ ] Structured logging
+### fakepath.so İyileştirmesi
+- [x] Multi-mapping desteği (CCBOX_PATH_MAP)
+- [x] Thread safety (pthread_once)
+- [x] TLS path cache (32 slot, FNV-1a)
+- [x] Macro-based code generation (~65 interceptor)
+- [ ] Daha fazla interceptor coverage gerektiğinde ekle
 
 ---
 
