@@ -327,14 +327,16 @@ func BuildDockerRunConfig(
 
 	cmd = append(cmd, "--name", containerName)
 
+	// Container labels for bridge TUI filtering and metadata
+	cmd = append(cmd, "--label", "ccbox=true")
+	cmd = append(cmd, "--label", "ccbox.stack="+string(stack))
+	cmd = append(cmd, "--label", "ccbox.project="+projectName)
+
 	// Host project path for session compatibility.
 	// Claude Code uses pwd to determine project path for sessions.
 	// Mount directly to host-like path so sessions match across environments.
 	// Dockerfile creates /{a..z} directories for Windows drive letter support.
-	driveLetterRe := regexp.MustCompile(`^([A-Za-z]):`)
-	hostProjectPath := driveLetterRe.ReplaceAllStringFunc(dockerProjectPath, func(match string) string {
-		return "/" + strings.ToLower(match[:1])
-	})
+	hostProjectPath := paths.DriveLetterToContainerPath(dockerProjectPath)
 
 	// Project mount (always) - mount to host-like path for session compatibility
 	cmd = append(cmd, "-v", dockerProjectPath+":"+hostProjectPath+":rw")
@@ -405,6 +407,12 @@ func BuildDockerRunConfig(
 	addTmpfsMounts(&cmd)
 	addLogOptions(&cmd)
 	addDnsOptions(&cmd)
+
+	// host.docker.internal: Docker Desktop (Windows/macOS) provides this automatically.
+	// On native Linux Docker Engine, we need to add it explicitly for MCP and host services.
+	if runtime.GOOS == "linux" && !platform.NeedsFuse() {
+		cmd = append(cmd, "--add-host=host.docker.internal:host-gateway")
+	}
 
 	// Debug, restricted/unrestricted mode flags
 	if opts.Debug > 0 {
@@ -579,10 +587,7 @@ func addWorktreeMount(cmd *[]string, absProjectPath, gitPath string) {
 		return
 	}
 
-	driveRe := regexp.MustCompile(`^([A-Za-z]):`)
-	containerGitDir := driveRe.ReplaceAllStringFunc(dockerGitDir, func(m string) string {
-		return "/" + strings.ToLower(m[:1])
-	})
+	containerGitDir := paths.DriveLetterToContainerPath(dockerGitDir)
 
 	// Only mount if not already under project path
 	if !strings.HasPrefix(mainGitDir, absProjectPath) {
@@ -693,8 +698,25 @@ func addGitEnv(cmd *[]string) {
 // addSshAgent adds SSH agent forwarding if available on host.
 // Mounts SSH_AUTH_SOCK socket into container for key-based auth.
 // Private keys stay on host -- only the agent socket is shared.
+//
+// Platform behavior:
+//   - Linux/macOS/WSL: forwards SSH_AUTH_SOCK Unix domain socket
+//   - Windows native: forwards OpenSSH named pipe (\\.\pipe\openssh-ssh-agent)
 func addSshAgent(cmd *[]string) {
 	sshAuthSock := os.Getenv("SSH_AUTH_SOCK")
+
+	// Windows native: try OpenSSH named pipe if SSH_AUTH_SOCK is not set
+	if sshAuthSock == "" && runtime.GOOS == "windows" {
+		const winSSHPipe = `\\.\pipe\openssh-ssh-agent`
+		if _, err := os.Stat(winSSHPipe); err == nil {
+			// Docker Desktop can forward Windows named pipes
+			*cmd = append(*cmd, "-v", winSSHPipe+":/run/ssh-agent.sock:ro")
+			*cmd = append(*cmd, "-e", "SSH_AUTH_SOCK=/run/ssh-agent.sock")
+			log.Dim("SSH: agent forwarded (Windows pipe)")
+			return
+		}
+	}
+
 	if sshAuthSock == "" {
 		return
 	}
@@ -828,6 +850,18 @@ func addDnsOptions(cmd *[]string) {
 func addClaudeEnv(cmd *[]string) {
 	tz := GetHostTimezone()
 	*cmd = append(*cmd, "-e", "TZ="+tz)
+
+	// Authentication: pass through API keys and OAuth tokens if set on host
+	authVars := []string{
+		"ANTHROPIC_API_KEY",
+		"CLAUDE_CODE_API_KEY",
+		"CLAUDE_CODE_OAUTH_TOKEN",
+	}
+	for _, v := range authVars {
+		if val := os.Getenv(v); val != "" {
+			*cmd = append(*cmd, "-e", v+"="+val)
+		}
+	}
 
 	envVars := []string{
 		"FORCE_COLOR=1",

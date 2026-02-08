@@ -183,6 +183,18 @@ func ResolveForDocker(path string) (string, error) {
 	return pathStr, nil
 }
 
+// driveLetterRe matches a Windows drive letter prefix like "D:" or "c:".
+var driveLetterRe = regexp.MustCompile(`^([A-Za-z]):`)
+
+// DriveLetterToContainerPath converts a Docker-style Windows path (D:/GitHub/x)
+// to a container POSIX path (/d/GitHub/x). This is the path format used inside
+// the container where drive letters map to /{letter}/ directories.
+func DriveLetterToContainerPath(dockerPath string) string {
+	return driveLetterRe.ReplaceAllStringFunc(dockerPath, func(match string) string {
+		return "/" + strings.ToLower(match[:1])
+	})
+}
+
 // ContainerPath formats a container path to prevent MSYS path translation on Windows.
 // Git Bash (MSYS2) translates Unix-style paths like /ccbox to C:/Program Files/Git/ccbox.
 // A double slash prefix prevents this translation.

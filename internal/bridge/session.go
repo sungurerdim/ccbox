@@ -2,26 +2,25 @@ package bridge
 
 import (
 	"context"
-	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/sungur/ccbox/internal/docker"
 )
 
 // DiscoverSessions lists Claude Code sessions inside a running container by
 // looking for JSONL conversation files under the well-known session directory.
 func DiscoverSessions(ctx context.Context, containerID string) []Session {
-	cmd := exec.CommandContext(ctx,
-		"docker", "exec", containerID,
+	result, err := docker.Exec(ctx, containerID, []string{
 		"find", "/ccbox/.claude/projects",
 		"-name", "*.jsonl",
 		"-type", "f",
-	)
-	out, err := cmd.Output()
-	if err != nil {
+	})
+	if err != nil || result.ExitCode != 0 {
 		return nil
 	}
 
-	output := strings.TrimSpace(string(out))
+	output := strings.TrimSpace(result.Stdout)
 	if output == "" {
 		return nil
 	}

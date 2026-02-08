@@ -41,6 +41,8 @@ type BridgeModel struct {
 	width         int
 	height        int
 	quitting      bool
+	isRecording   bool
+	isPasting     bool
 
 	// Config for launching new containers.
 	projectPath string

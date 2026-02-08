@@ -92,6 +92,17 @@ func (m BridgeModel) View() string {
 		}
 	}
 
+	// Activity indicators.
+	if m.isRecording {
+		b.WriteString("\n")
+		b.WriteString(statusStyle.Render("[REC] Recording audio..."))
+		b.WriteString("\n")
+	} else if m.isPasting {
+		b.WriteString("\n")
+		b.WriteString(statusStyle.Render("[PASTE] Sending to container..."))
+		b.WriteString("\n")
+	}
+
 	// Status message.
 	if m.statusMessage != "" {
 		b.WriteString("\n")
