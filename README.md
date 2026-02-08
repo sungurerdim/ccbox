@@ -140,7 +140,7 @@ Inside the container, `git push`, `gh pr create`, and `ssh` commands work automa
 
 ccbox auto-detects your project type. Use `-s <stack>` to override.
 
-<!-- Source of truth for stack definitions: src/config.ts STACK_INFO -->
+<!-- Source of truth for stack definitions: internal/config/stacks.go -->
 <details>
 <summary><b>View all 20 stacks</b></summary>
 
@@ -313,11 +313,11 @@ rm -f ~/.local/bin/ccbox      # Remove binary (Linux/Mac)
 
 ```bash
 git clone https://github.com/sungurerdim/ccbox.git
-cd ccbox && bun install
+cd ccbox
 
-bun run dev          # Run from source
-bun run test         # Run tests
-bun run build:binary # Build binary
+make dev       # Run from source
+make test      # Run tests
+make build     # Build binary
 ```
 
 > [CONTRIBUTING.md](CONTRIBUTING.md) | [ARCHITECTURE.md](ARCHITECTURE.md)

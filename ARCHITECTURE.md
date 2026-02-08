@@ -80,14 +80,14 @@ Claude Code maintains `.claude.json` (onboarding state) in **two locations simul
 1. `~/.claude.json` — home directory
 2. `~/.claude/.claude.json` — inside the config directory
 
-Both files exist independently on the host. `docker-runtime.ts` bind-mounts each one separately into the container:
+Both files exist independently on the host. `internal/run/args.go` bind-mounts each one separately into the container:
 
-```typescript
-// See: src/docker-runtime.ts (addMinimalMounts / getDockerRunCmd)
+```go
+// See: internal/run/args.go (addMinimalMounts)
 // Mount 1: ~/.claude.json → /ccbox/.claude.json
-cmd.push("-v", `${claudeJsonHome}:/ccbox/.claude.json:rw`);
+cmd = append(cmd, "-v", claudeJsonHome+":/ccbox/.claude.json:rw")
 // Mount 2: ~/.claude/.claude.json → /ccbox/.claude/.claude.json
-cmd.push("-v", `${claudeJsonConfig}:/ccbox/.claude/.claude.json:rw`);
+cmd = append(cmd, "-v", claudeJsonConfig+":/ccbox/.claude/.claude.json:rw")
 ```
 
 #### 4. Plugin Cache Cleanup
@@ -95,8 +95,8 @@ cmd.push("-v", `${claudeJsonConfig}:/ccbox/.claude/.claude.json:rw`);
 On startup, the entrypoint removes orphaned plugin markers that can accumulate across container restarts:
 
 ```bash
-# See: src/templates/entrypoint.sh (Clean orphaned plugin markers section)
-find "/ccbox/.claude/plugins/cache" -name ".orphaned_at" -type f -exec rm -f {} +
+# See: embedded/entrypoint.sh (Plugin case-sensitivity fix section)
+find "$_pdir" -maxdepth 1 -name ".orphaned_at" -delete
 ```
 
 #### 5. User Switching with gosu
@@ -237,54 +237,60 @@ This ensures images always have the latest stable versions when rebuilt.
 
 ## Modular Architecture
 
-ccbox uses a modular TypeScript architecture:
+ccbox uses a modular Go architecture:
 
 ```
-src/
-├── cli.ts              # CLI entry point (Commander.js)
-├── commands/
-│   ├── run.ts          # Main run command logic
-│   ├── run-phases.ts   # Phase 1: detection & stack resolution
-│   └── build-helpers.ts # Build phase helpers
-├── config.ts           # Stack definitions, validation
-├── stacks.ts           # LanguageStack enum & metadata
-├── constants.ts        # Shared constants (SSOT)
-├── detector.ts         # Project type detection
-├── deps.ts             # Dependency detection (55+ package managers)
-├── generator.ts        # Dockerfile generation (re-exports)
-│   ├── dockerfile-gen.ts   # Dockerfile content generation
-│   └── docker-runtime.ts   # Runtime args, worktree support & entrypoint
-├── build.ts            # Image building logic
-├── docker.ts           # Docker operations facade
-│   └── docker/
-│       ├── executor.ts     # safeDockerRun, checkDockerStatus
-│       ├── inspect.ts      # Image/container queries
-│       └── cleanup.ts      # Image/container removal
-├── paths.ts            # Path validation & translation
-├── logger.ts           # Unified logging abstraction
-├── errors.ts           # Custom error classes
-├── cleanup.ts          # Container/image cleanup
-└── utils.ts            # Shared utilities
+cmd/
+├── ccbox/                   # Main CLI entry point
+└── ccbox-fuse/              # FUSE filesystem binary (Linux only)
+
+internal/
+├── cli/                     # Cobra root command + subcommands
+│   ├── root.go              # Global flags, version info
+│   ├── run.go               # Default action (detect → build → run)
+│   ├── rebuild.go           # Image rebuild command
+│   └── clean.go             # Cleanup command
+├── config/                  # Stack definitions, env vars, paths
+├── detect/                  # Project type detection (55+ package managers)
+├── docker/                  # Docker SDK operations
+│   ├── client.go            # Docker client creation + auto-start
+│   ├── container.go         # Container lifecycle (create, run, list)
+│   ├── image.go             # Image build, inspect, list
+│   └── cleanup.go           # Resource cleanup
+├── generate/                # Dockerfile + entrypoint generation
+│   ├── dockerfile.go        # Dockerfile content per stack
+│   └── writer.go            # Write build files to temp dir
+├── run/                     # Run orchestration
+│   └── args.go              # Docker run args builder + phases
+├── fuse/                    # FUSE filesystem (path transform, caching)
+│   ├── node.go              # CcboxNode, FUSE ops (Lookup, Read, Write, ...)
+│   ├── transform.go         # Bidirectional path content transformation
+│   ├── dirmap.go            # Directory name mapping
+│   ├── cache.go             # LRU read cache, skip cache, negative cache
+│   ├── config.go            # FUSE config parsing
+│   ├── quickscan.go         # 64KB quick-scan pattern detection
+│   └── trace.go             # Leveled trace logger
+├── bridge/                  # Bridge mode TUI (bubbletea + lipgloss)
+├── platform/                # Platform detection (Windows, macOS, Linux, WSL)
+├── paths/                   # Path utilities
+└── log/                     # Leveled logger with lipgloss styling
+
+embedded/                    # go:embed assets
+native/                      # C source for fakepath + build scripts
 ```
 
 ### Logger Module
 
-Centralized logging with level control:
+Centralized logging with lipgloss styling:
 
-```typescript
-import { log, style, setLogLevel, LogLevel } from "./logger.js";
+```go
+import "github.com/sungur/ccbox/internal/log"
 
-setLogLevel(LogLevel.DEBUG);  // DEBUG, INFO, WARN, ERROR, SILENT
-log.info("Building image...");
-log.success("Build complete");
-log.dim("Skipped optional step");
-console.log(style.cyan("Colored output"));
+log.Info("Building image...")
+log.Success("Build complete")
+log.Debug("Verbose details here")
 ```
 
 ### Git Worktree Support
 
-When running inside a git worktree, the `.git` path is a file (not a directory) pointing to the main repo's `.git/worktrees/<name>`. `docker-runtime.ts` detects this and automatically mounts the main `.git` directory into the container, enabling full git operations.
-
-```typescript
-// See: src/docker-runtime.ts (getDockerRunCmd, lines 479-505)
-// Detects .git file → parses gitdir path → mounts main .git directory
+When running inside a git worktree, the `.git` path is a file (not a directory) pointing to the main repo's `.git/worktrees/<name>`. `internal/run/args.go` detects this and automatically mounts the main `.git` directory into the container, enabling full git operations.
