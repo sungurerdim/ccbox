@@ -25,14 +25,11 @@ func main() {
 	args := os.Args[1:]
 	var mountPoint string
 	var opts string
-	foreground := false
-
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
-		case "-f":
-			foreground = true
-		case "-d":
-			foreground = true // debug implies foreground
+		case "-f", "-d":
+			// foreground/debug flags accepted but not used;
+			// the binary always runs in foreground.
 		case "-o":
 			if i+1 < len(args) {
 				i++
@@ -106,13 +103,8 @@ func main() {
 
 	go func() {
 		<-sigCh
-		server.Unmount()
+		_ = server.Unmount()
 	}()
-
-	if !foreground {
-		// Daemonize: not needed for container use, foreground is default
-		// When called with -f, we stay in foreground
-	}
 
 	server.Wait()
 }
