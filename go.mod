@@ -8,6 +8,7 @@ require (
 	github.com/creativeprojects/go-selfupdate v1.5.2
 	github.com/docker/docker v28.0.1+incompatible
 	github.com/docker/go-units v0.5.0
+	github.com/hanwen/go-fuse/v2 v2.9.0
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/pflag v1.0.6
 	golang.org/x/text v0.33.0
@@ -36,7 +37,6 @@ require (
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/google/go-github/v74 v74.0.0 // indirect
 	github.com/google/go-querystring v1.1.0 // indirect
-	github.com/hanwen/go-fuse/v2 v2.9.0 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-retryablehttp v0.7.8 // indirect
 	github.com/hashicorp/go-version v1.8.0 // indirect
