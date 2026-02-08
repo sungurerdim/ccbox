@@ -2,15 +2,14 @@ name: CI
 
 on:
   push:
-    branches:
-      - main
-      - 'release-please--branches--**'
+    branches: [main]
     paths-ignore:
       - '**.md'
       - 'LICENSE'
       - '.claude/**'
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
