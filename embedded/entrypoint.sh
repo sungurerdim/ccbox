@@ -141,6 +141,20 @@ if [[ -n "$CCBOX_PATH_MAP" && -x "/usr/local/bin/ccbox-fuse" ]]; then
     [[ -d "$PWD/.claude" ]] && _setup_fuse_overlay "$PWD/.claude" "project" && export CCBOX_FUSE_PROJECT=1
     _log "Path mapping: $CCBOX_PATH_MAP"
 
+    # FUSE health check: warn if path translation setup failed
+    if [[ -z "$CCBOX_FUSE_GLOBAL" && -z "$CCBOX_FUSE_PROJECT" ]]; then
+        echo "[ccbox:WARN] FUSE mount failed - path translation unavailable" >&2
+        echo "[ccbox:WARN] Sessions may not sync with host Claude Code" >&2
+    fi
+
+    # MCP: symlink ~/.claude.json through FUSE overlay for path translation
+    # Claude Code reads MCP config from both ~/.claude.json and ~/.claude/.claude.json
+    # FUSE overlay is on /ccbox/.claude (directory), but /ccbox/.claude.json is a
+    # separate bind mount outside the overlay. Symlink it so reads get transformed paths.
+    if [[ -n "$CCBOX_FUSE_GLOBAL" && -f "/ccbox/.claude.json" ]]; then
+        ln -sf /ccbox/.claude/.claude.json /ccbox/.claude.json 2>/dev/null || true
+    fi
+
     # Plugin case-sensitivity fix
     for _pdir in /ccbox/.claude/plugins/marketplaces /ccbox/.claude/plugins/cache; do
         [[ -d "$_pdir" ]] || continue
@@ -198,6 +212,15 @@ if [[ -f /root/.gitconfig && -n "$CCBOX_UID" ]]; then
 fi
 
 [[ -d "$PWD/.git" ]] && { _log "Git repository detected"; git config --global --add safe.directory "$PWD" 2>/dev/null || true; }
+
+# === Bridge Input Directory ===
+mkdir -p "$PWD/.claude/input/.processed" 2>/dev/null || true
+[[ -n "$CCBOX_UID" ]] && chown -R "$CCBOX_UID:$CCBOX_GID" "$PWD/.claude/input" 2>/dev/null || true
+
+# Add .claude/input/ to .gitignore if not already present
+if [[ -f "$PWD/.gitignore" ]] && ! grep -q '.claude/input/' "$PWD/.gitignore" 2>/dev/null; then
+    echo -e '\n# ccbox bridge input\n.claude/input/' >> "$PWD/.gitignore"
+fi
 
 # === GitHub CLI (gh) Token Support ===
 # If GITHUB_TOKEN is set, configure git to use it for HTTPS operations

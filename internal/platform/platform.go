@@ -111,6 +111,9 @@ func ClipboardImageCmd() []string {
 			"-e", "write png to f",
 			"-e", "close access f"}
 	case Linux, WindowsWSL:
+		if os.Getenv("WAYLAND_DISPLAY") != "" {
+			return []string{"wl-paste", "--type", "image/png"}
+		}
 		return []string{"xclip", "-selection", "clipboard", "-t", "image/png", "-o"}
 	default:
 		return nil
@@ -126,6 +129,9 @@ func ClipboardTextCmd() []string {
 	case MacOS:
 		return []string{"pbpaste"}
 	case Linux, WindowsWSL:
+		if os.Getenv("WAYLAND_DISPLAY") != "" {
+			return []string{"wl-paste"}
+		}
 		return []string{"xclip", "-selection", "clipboard", "-o"}
 	default:
 		return nil

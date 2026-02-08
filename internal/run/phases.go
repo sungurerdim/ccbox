@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/sungur/ccbox/internal/config"
+	"github.com/sungur/ccbox/internal/docker"
 	"github.com/sungur/ccbox/internal/log"
 	"github.com/sungur/ccbox/internal/paths"
 )
@@ -256,12 +257,7 @@ func checkDockerRunning() error {
 	ctx, cancel := context.WithTimeout(context.Background(), config.DockerCommandTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "docker", "info")
-	cmd.Env = paths.GetDockerEnv()
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-
-	if err := cmd.Run(); err != nil {
+	if err := docker.EnsureRunning(ctx, config.DockerStartupTimeout); err != nil {
 		return fmt.Errorf("Docker is not running. Start Docker and try again")
 	}
 	return nil
@@ -303,16 +299,11 @@ func imageExists(imageName string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), config.DockerCommandTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "docker", "image", "inspect", imageName)
-	cmd.Env = paths.GetDockerEnv()
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-
-	return cmd.Run() == nil
+	return docker.Exists(ctx, imageName)
 }
 
 // buildImage builds a Docker image for the given stack.
-func buildImage(stack string, progress string, cache bool) error {
+func buildImage(stack string, _ string, cache bool) error {
 	buildDir := config.GetCcboxTempBuild(stack)
 	if err := os.MkdirAll(buildDir, 0755); err != nil {
 		return fmt.Errorf("cannot create build directory: %w", err)
@@ -320,27 +311,12 @@ func buildImage(stack string, progress string, cache bool) error {
 
 	imageName := config.GetImageName(stack)
 
-	args := []string{"build", "-t", imageName}
-
-	if progress != "" && progress != "auto" {
-		args = append(args, "--progress", progress)
-	}
-
-	if !cache {
-		args = append(args, "--no-cache")
-	}
-
-	args = append(args, buildDir)
-
 	ctx, cancel := context.WithTimeout(context.Background(), config.DockerBuildTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "docker", args...)
-	cmd.Env = paths.GetDockerEnv()
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	return cmd.Run()
+	return docker.Build(ctx, buildDir, imageName, docker.BuildOptions{
+		NoCache: !cache,
+	})
 }
 
 // executeContainer runs the Docker container with the given configuration
@@ -406,7 +382,8 @@ func executeContainer(runConfig *DockerRunConfig, projectName string, debug int,
 		// Ctrl+C -- normal user interruption
 		return nil
 	case 137:
-		log.Warn("Container was killed (OOM or manual stop)")
+		memLimit := config.DefaultMemoryLimit
+		log.Warn(fmt.Sprintf("Container was killed (OOM or manual stop, limit: %s)", memLimit))
 		log.Dim("Try: ccbox --unrestricted (removes memory limits)")
 	case 139:
 		log.Warn("Container crashed (segmentation fault)")
@@ -415,7 +392,7 @@ func executeContainer(runConfig *DockerRunConfig, projectName string, debug int,
 		return nil
 	default:
 		log.Warnf("Container exited with code %d", exitCode)
-		log.Dim("Logs are preserved by default for investigation")
+		log.Dim("Try: ccbox --debug for more information")
 	}
 
 	os.Exit(exitCode)
@@ -429,24 +406,11 @@ func PruneStaleResources(debug bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), config.PruneTimeout)
 	defer cancel()
 
-	// Remove stopped ccbox containers older than 24h
-	cmd := exec.CommandContext(ctx, "docker", "container", "prune",
-		"--filter", "label=ccbox",
-		"--filter", "until=24h",
-		"-f")
-	cmd.Env = paths.GetDockerEnv()
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	_ = cmd.Run()
+	// Remove stopped ccbox containers
+	_, _ = docker.PruneContainers(ctx)
 
 	// Prune build cache older than configured age
-	cmd2 := exec.CommandContext(ctx, "docker", "builder", "prune",
-		"--filter", "until="+config.PruneCacheAge,
-		"-f")
-	cmd2.Env = paths.GetDockerEnv()
-	cmd2.Stdout = nil
-	cmd2.Stderr = nil
-	_ = cmd2.Run()
+	_ = docker.PruneBuilder(ctx, config.PruneCacheAge)
 
 	if debug {
 		log.Debug("Pruned stale Docker resources")

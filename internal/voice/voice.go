@@ -5,6 +5,8 @@ package voice
 import (
 	"bytes"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,6 +32,11 @@ func Pipeline(opts Options) (string, error) {
 
 	if err := checkDependencies(); err != nil {
 		return "", err
+	}
+
+	// Ensure whisper model is downloaded before recording
+	if _, err := EnsureModel(opts.Model); err != nil {
+		return "", fmt.Errorf("model download failed: %w", err)
 	}
 
 	audioPath, err := Record(opts.Duration)
@@ -154,6 +161,58 @@ func checkDependencies() error {
 	return nil
 }
 
+// EnsureModel checks if the whisper model exists, downloading it if missing.
+// Returns the path to the model file.
+func EnsureModel(model string) (string, error) {
+	modelPath := resolveModelPath(model)
+	if _, err := os.Stat(modelPath); err == nil {
+		return modelPath, nil
+	}
+
+	// Model not found, download it
+	url := fmt.Sprintf("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-%s.bin", model)
+
+	// Ensure cache directory exists
+	cacheDir := filepath.Dir(modelPath)
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		return "", fmt.Errorf("create cache dir: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "Downloading whisper model %q...\n", model)
+
+	resp, err := http.Get(url) //nolint:gosec // URL is constructed from known safe base
+	if err != nil {
+		return "", fmt.Errorf("download model: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("download model: HTTP %d", resp.StatusCode)
+	}
+
+	tmpPath := modelPath + ".tmp"
+	f, err := os.Create(tmpPath)
+	if err != nil {
+		return "", fmt.Errorf("create temp file: %w", err)
+	}
+
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		f.Close()
+		os.Remove(tmpPath)
+		return "", fmt.Errorf("download model: %w", err)
+	}
+	f.Close()
+
+	// Atomic rename
+	if err := os.Rename(tmpPath, modelPath); err != nil {
+		os.Remove(tmpPath)
+		return "", fmt.Errorf("install model: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "Model %q downloaded to %s\n", model, modelPath)
+	return modelPath, nil
+}
+
 // resolveModelPath finds the whisper model file on disk.
 // Checks common installation locations and returns the first match,
 // or the default cache path if none found (whisper-cli will report its own error).
@@ -182,7 +241,10 @@ func inputFormat() string {
 	case "darwin":
 		return "avfoundation"
 	case "linux":
-		return "pulse"
+		if commandExists("pactl") {
+			return "pulse"
+		}
+		return "alsa"
 	case "windows":
 		return "dshow"
 	default:
@@ -198,7 +260,11 @@ func inputDevice() string {
 	case "linux":
 		return "default"
 	case "windows":
-		return "audio=Microphone"
+		// Allow override via environment variable for non-standard audio devices
+		if dev := os.Getenv("CCBOX_AUDIO_DEVICE"); dev != "" {
+			return "audio=" + dev
+		}
+		return "audio=@device_cm_{33D9A762-90C8-11D0-BD43-00A0C911CE86}\\wave:{0.0.0.00000000}.{default}"
 	default:
 		return "default"
 	}

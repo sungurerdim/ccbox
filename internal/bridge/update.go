@@ -2,12 +2,14 @@ package bridge
 
 import (
 	"context"
-	"encoding/json"
-	"os/exec"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	dcontainer "github.com/docker/docker/api/types/container"
+	dfilters "github.com/docker/docker/api/types/filters"
+	"github.com/sungur/ccbox/internal/docker"
+	"github.com/sungur/ccbox/internal/voice"
 )
 
 // --- Message types ---
@@ -65,9 +67,11 @@ func (m BridgeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "v":
+			m.isRecording = true
 			return m, sendVoice(m.containers)
 
 		case "p":
+			m.isPasting = true
 			return m, sendPaste(m.containers)
 
 		case "enter":
@@ -104,6 +108,8 @@ func (m BridgeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case statusMsg:
 		m.statusMessage = msg.message
 		m.statusExpiry = time.Now().Add(3 * time.Second)
+		m.isRecording = false
+		m.isPasting = false
 	}
 
 	// Clear expired status.
@@ -155,8 +161,9 @@ func tickEvery(d time.Duration) tea.Cmd {
 
 func stopContainer(id, name string) tea.Cmd {
 	return func() tea.Msg {
-		cmd := exec.Command("docker", "stop", "--time", "10", id)
-		if err := cmd.Run(); err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := docker.Stop(ctx, id, 10); err != nil {
 			return statusMsg{message: "Stop failed: " + err.Error()}
 		}
 		displayName := name
@@ -182,8 +189,14 @@ func sendVoice(containers []ContainerInfo) tea.Cmd {
 		if len(containers) == 0 {
 			return statusMsg{message: "No containers running"}
 		}
-		// TODO: Implement voice pipeline.
-		return statusMsg{message: "Voice recording... (not yet implemented)"}
+		text, err := voice.Pipeline(voice.Options{Duration: 10, Model: "base.en"})
+		if err != nil {
+			return statusMsg{message: "Voice: " + err.Error()}
+		}
+		if text == "" {
+			return statusMsg{message: "No speech detected"}
+		}
+		return pasteToContainer(containers[0], []byte(text), "voice")
 	}
 }
 
@@ -192,8 +205,16 @@ func sendPaste(containers []ContainerInfo) tea.Cmd {
 		if len(containers) == 0 {
 			return statusMsg{message: "No containers running"}
 		}
-		// TODO: Implement clipboard paste pipeline.
-		return statusMsg{message: "Pasting clipboard... (not yet implemented)"}
+		// Try image first, then text
+		imgData, err := readClipboardImage()
+		if err == nil && len(imgData) > 0 {
+			return pasteToContainer(containers[0], imgData, "image")
+		}
+		textData, err := readClipboardText()
+		if err == nil && textData != "" {
+			return pasteToContainer(containers[0], []byte(textData), "text")
+		}
+		return statusMsg{message: "Clipboard empty"}
 	}
 }
 
@@ -208,62 +229,40 @@ func openTerminalToContainer(containerName string) tea.Cmd {
 
 // --- Docker container listing ---
 
-// dockerPSEntry maps the JSON output of `docker ps --format '{{json .}}'`.
-type dockerPSEntry struct {
-	ID     string `json:"ID"`
-	Names  string `json:"Names"`
-	Status string `json:"Status"`
-	State  string `json:"State"`
-	Labels string `json:"Labels"`
-}
-
-// listRunningContainers returns all running ccbox containers by querying
-// the Docker CLI. We use `docker ps` with a label filter and JSON output
-// rather than the Docker SDK to avoid version-specific type mismatches.
+// listRunningContainers returns all running ccbox containers using the Docker SDK.
 func listRunningContainers() []ContainerInfo {
-	cmd := exec.Command(
-		"docker", "ps",
-		"--filter", "label=ccbox",
-		"--format", "{{json .}}",
-		"--no-trunc",
-	)
-	out, err := cmd.Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cli, err := docker.NewClient()
+	if err != nil {
+		return nil
+	}
+
+	sdkContainers, err := cli.ContainerList(ctx, dcontainer.ListOptions{
+		Filters: dfilters.NewArgs(dfilters.Arg("label", "ccbox")),
+	})
 	if err != nil {
 		return nil
 	}
 
 	var containers []ContainerInfo
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if line == "" {
-			continue
-		}
-		var entry dockerPSEntry
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			continue
+	for _, c := range sdkContainers {
+		name := ""
+		if len(c.Names) > 0 {
+			name = strings.TrimPrefix(c.Names[0], "/")
 		}
 
 		info := ContainerInfo{
-			ID:     entry.ID,
-			Name:   entry.Names,
-			Status: entry.Status,
+			ID:     c.ID,
+			Name:   name,
+			Status: c.Status,
+			Stack:  c.Labels["ccbox.stack"],
 		}
 
-		// Parse labels to extract ccbox metadata.
-		// Labels string looks like: "ccbox=true,ccbox.stack=node,ccbox.project=myapp"
-		for _, pair := range strings.Split(entry.Labels, ",") {
-			kv := strings.SplitN(pair, "=", 2)
-			if len(kv) != 2 {
-				continue
-			}
-			switch kv[0] {
-			case "ccbox.stack":
-				info.Stack = kv[1]
-			case "ccbox.project":
-				info.Project = kv[1]
-			}
+		if project, ok := c.Labels["ccbox.project"]; ok {
+			info.Project = project
 		}
-
-		// Fall back to container name for project if label is missing.
 		if info.Project == "" {
 			info.Project = info.Name
 		}
