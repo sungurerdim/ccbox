@@ -2,81 +2,29 @@ name: Release
 
 on:
   push:
-    branches: [main]
+    tags:
+      - 'v*'
 
 permissions:
   contents: write
-  pull-requests: write
 
 jobs:
-  release-please:
-    name: Release Please
+  release:
+    name: GoReleaser
     runs-on: ubuntu-latest
-    outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
-      tag_name: ${{ steps.release.outputs.tag_name }}
-      version: ${{ steps.release.outputs.version }}
-    steps:
-      - uses: googleapis/release-please-action@v4
-        id: release
-        with:
-          release-type: node
-
-  build:
-    needs: release-please
-    if: ${{ needs.release-please.outputs.release_created }}
-    strategy:
-      fail-fast: true
-      matrix:
-        include:
-          - { os: ubuntu-latest,  target: bun-linux-x64,    platform: linux-x64 }
-          - { os: ubuntu-latest,  target: bun-linux-arm64,  platform: linux-arm64 }
-          - { os: macos-latest,   target: bun-darwin-x64,   platform: darwin-x64 }
-          - { os: macos-latest,   target: bun-darwin-arm64, platform: darwin-arm64 }
-          - { os: windows-latest, target: bun-windows-x64,  platform: windows-x64 }
-    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
+          fetch-depth: 0
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-go@v5
         with:
-          bun-version-file: package.json
+          go-version-file: 'go.mod'
 
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Build binary
-        shell: bash
-        run: |
-          mkdir -p dist
-          EXT=$([[ "${{ matrix.platform }}" == windows-* ]] && echo ".exe" || echo "")
-          NAME="ccbox-v${{ needs.release-please.outputs.version }}-${{ matrix.platform }}${EXT}"
-          bun build src/cli.ts --compile --target ${{ matrix.target }} --outfile "dist/${NAME}" --minify
-
-      - uses: actions/upload-artifact@v4
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
         with:
-          name: binary-${{ matrix.platform }}
-          path: dist/ccbox-*
-
-  upload:
-    needs: [release-please, build]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-          pattern: binary-*
-          merge-multiple: true
-
-      - name: Generate checksums
-        run: cd dist && sha256sum * > checksums.txt && cat checksums.txt
-
-      - name: Upload release assets
+          version: '~> v2'
+          args: release --clean
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release upload "${{ needs.release-please.outputs.tag_name }}" \
-            dist/* \
-            --repo "${{ github.repository }}"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,109 +1,93 @@
 # API Reference
 
-Internal module documentation for ccbox development.
+Internal package documentation for ccbox development.
 
-## Modules
+## Packages
 
-### config.ts
+### internal/config
 
 Stack definitions and configuration management.
 
 #### Types
 
-```typescript
-enum LanguageStack {
-  BASE = "base",       // Claude Code only
-  PYTHON = "python",   // Python + uv + ruff
-  WEB = "web",         // Node.js + TypeScript
-  GO = "go",           // Go + golangci-lint
-  RUST = "rust",       // Rust + clippy
-  JAVA = "java",       // JDK + Maven + Gradle
-  // ... 15 more stacks
-}
+```go
+type LanguageStack string
 
-interface Config {
-  version: string;
-  gitName: string;
-  gitEmail: string;
-  claudeConfigDir: string;
+const (
+    StackBase    LanguageStack = "base"
+    StackPython  LanguageStack = "python"
+    StackWeb     LanguageStack = "web"
+    StackGo      LanguageStack = "go"
+    StackRust    LanguageStack = "rust"
+    StackJava    LanguageStack = "java"
+    // ... 15 more stacks
+)
+
+type StackInfo struct {
+    Name         string
+    Description  string
+    Parent       LanguageStack
+    BaseImage    string
 }
 ```
 
 #### Functions
 
-```typescript
+```go
 // Get Docker image name for stack
-getImageName(stack: LanguageStack): string
+GetImageName(stack LanguageStack) string
 // Returns: "ccbox_python:latest"
 
-// Check if image exists locally
-imageExists(stack: LanguageStack): boolean
-
 // Generate unique container name
-getContainerName(projectName: string, unique?: boolean): string
+GetContainerName(projectName string) string
 // Returns: "ccbox_myproject_a1b2c3"
 
 // Parse and validate stack from string
-createStack(value: string): LanguageStack
-// Throws ValidationError if invalid
+ParseStack(value string) (LanguageStack, error)
 ```
 
-### build.ts
+### internal/docker
 
-Docker image building operations.
-
-#### Types
-
-```typescript
-interface BuildOptions {
-  progress?: string;  // "auto" | "plain" | "tty"
-}
-```
+Docker SDK operations (no shell-out).
 
 #### Functions
 
-```typescript
-// Build stack image (handles dependencies)
-buildImage(stack: LanguageStack, options?: BuildOptions): Promise<boolean>
+```go
+// Build a Docker image from build context
+BuildImage(ctx context.Context, opts BuildOptions) error
 
-// Build project-specific image with dependencies
-buildProjectImage(
-  projectPath: string,
-  projectName: string,
-  stack: LanguageStack,
-  depsList: DepsInfo[],
-  depsMode: DepsMode,
-  options?: BuildOptions
-): Promise<string | null>
-// Returns image name or null on failure
+// Create and start a container
+RunContainer(ctx context.Context, cfg RunConfig) (int, error)
 
-// Ensure image ready (build if needed)
-ensureImageReady(
-  stack: LanguageStack,
-  buildOnly: boolean,
-  options?: BuildOptions
-): Promise<boolean>
+// Check if image exists locally
+Exists(ctx context.Context, name string) bool
+
+// List ccbox containers
+ListCcbox(ctx context.Context) ([]container.Summary, error)
+
+// Cleanup old images and containers
+Cleanup(ctx context.Context) error
 ```
 
-### detector.ts
+### internal/detect
 
 Project type detection for automatic stack selection.
 
 #### Types
 
-```typescript
-interface DetectionResult {
-  recommendedStack: LanguageStack;
-  detectedLanguages: string[];
-  detectionDetails?: Record<string, string>;  // file that triggered detection
+```go
+type DetectionResult struct {
+    RecommendedStack  config.LanguageStack
+    DetectedLanguages []string
+    Details           map[string]string
 }
 ```
 
 #### Functions
 
-```typescript
+```go
 // Detect project type from directory contents
-detectProjectType(directory: string, verbose?: boolean): DetectionResult
+DetectProjectType(directory string, verbose bool) DetectionResult
 ```
 
 **Detection patterns:**
@@ -113,116 +97,86 @@ detectProjectType(directory: string, verbose?: boolean): DetectionResult
 - `Cargo.toml` -> rust
 - `pom.xml`, `build.gradle` -> java
 
-### generator.ts
+### internal/generate
 
 Dockerfile and entrypoint generation.
 
 #### Functions
 
-```typescript
-// Generate Dockerfile for stack
-generateDockerfile(stack: LanguageStack): string
+```go
+// Generate Dockerfile content for stack
+GenerateDockerfile(stack config.LanguageStack) string
 
-// Generate entrypoint.sh script
-generateEntrypoint(): string
+// Generate entrypoint.sh script content
+GenerateEntrypoint() string
 
-// Write build files to temp directory
-writeBuildFiles(stack: LanguageStack, targetArch?: string): string
-// Returns build directory path
-
-// Generate project Dockerfile with deps
-generateProjectDockerfile(
-  baseImage: string,
-  depsList: DepsInfo[],
-  depsMode: DepsMode,
-  projectPath: string
-): string
+// Write build files to temp directory, returns build dir path
+WriteBuildFiles(stack config.LanguageStack) (string, error)
 ```
 
-### logger.ts
+### internal/run
 
-Centralized logging with level control.
+Run orchestration — builds args, manages container lifecycle.
+
+#### Functions
+
+```go
+// Build Docker run command arguments
+BuildArgs(opts RunOptions) ([]string, error)
+
+// Execute the full run pipeline: detect → build → run
+Execute(opts RunOptions) error
+```
+
+### internal/log
+
+Leveled logger with lipgloss styling.
+
+#### Functions
+
+```go
+// Logger methods
+log.Debug(msg string)    // dim, only at DEBUG level
+log.Info(msg string)     // normal
+log.Warn(msg string)     // yellow
+log.Error(msg string)    // red
+log.Success(msg string)  // green
+
+// Set minimum log level
+SetLevel(level Level)
+```
+
+### internal/fuse
+
+FUSE filesystem for transparent path translation (Linux only).
 
 #### Types
 
-```typescript
-enum LogLevel {
-  DEBUG = 0,
-  INFO = 1,
-  WARN = 2,
-  ERROR = 3,
-  SILENT = 4,
+```go
+type Config struct {
+    SourceDir    string
+    PathMappings []PathMapping
+    DirMappings  []DirMapping
+    Extensions   []string
+    TraceLevel   int
+}
+
+type PathMapping struct {
+    From, To     string
+    Drive        byte
+    IsUNC, IsWSL bool
 }
 ```
 
 #### Functions
 
-```typescript
-// Set minimum log level
-setLogLevel(level: LogLevel): void
+```go
+// Create and mount FUSE filesystem
+NewCcboxFS(mountDir string, root *CcboxRoot, opts ...fuse.MountOption) (*fuse.Server, error)
 
-// Logger methods
-log.debug(message: string): void   // dim, only at DEBUG level
-log.info(message: string): void    // normal
-log.warn(message: string): void    // yellow
-log.error(message: string): void   // red
-log.success(message: string): void // green
-log.dim(message: string): void     // dim gray
-log.bold(message: string): void    // bold
-```
+// Transform file content: host paths → container paths
+TransformToContainer(buf []byte, mappings []PathMapping, dirMappings []DirMapping) []byte
 
-#### Style Helpers
-
-```typescript
-// Return styled strings (for composition)
-style.dim(text: string): string
-style.bold(text: string): string
-style.red(text: string): string
-style.green(text: string): string
-style.cyan(text: string): string
-```
-
-## Examples
-
-### Detect and build for project
-
-```typescript
-import { detectProjectType } from "./detector.js";
-import { ensureImageReady } from "./build.js";
-
-const result = detectProjectType("/path/to/project", true);
-console.log(`Detected: ${result.detectedLanguages.join(", ")}`);
-console.log(`Stack: ${result.recommendedStack}`);
-
-await ensureImageReady(result.recommendedStack, false);
-```
-
-### Custom logging
-
-```typescript
-import { log, style, setLogLevel, LogLevel } from "./logger.js";
-
-setLogLevel(LogLevel.DEBUG);
-
-log.info("Starting operation...");
-log.debug("Verbose details here");
-log.success("Done!");
-
-// Compose styled output
-log.raw(`${style.green("OK")} - ${style.dim("optional details")}`);
-```
-
-### Validate paths
-
-```typescript
-import { validateProjectPath } from "./paths.js";
-import { PathError } from "./errors.js";
-
-try {
-  const safe = validateProjectPath("/home/user/project");
-} catch (e) {
-  if (e instanceof PathError) {
-    console.error("Invalid path:", e.message);
-  }
-}
+// Transform file content: container paths → host paths
+TransformToHost(buf []byte, mappings []PathMapping, dirMappings []DirMapping) []byte
 ```
