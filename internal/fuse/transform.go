@@ -7,8 +7,6 @@ import (
 	"unicode"
 )
 
-const transformHeadroom = 4 * 1024 * 1024
-
 // TransformToContainer converts Windows/WSL/UNC paths in JSON content to Linux container paths.
 // Returns nil if no transformation was needed.
 func TransformToContainer(buf []byte, mappings []PathMapping, dirMappings []DirMapping) []byte {

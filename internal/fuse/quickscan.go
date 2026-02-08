@@ -118,10 +118,7 @@ func translatePathSegments(path string, dirMappings []DirMapping) string {
 					}
 				}
 			}
-			if !matched && i < len(path) {
-				// Don't append; next iteration will handle
-			}
-		} else {
+			} else {
 			b = append(b, path[i])
 			i++
 		}
