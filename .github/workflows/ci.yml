@@ -90,7 +90,7 @@ jobs:
 
       - name: Check version consistency
         run: |
-          VERSION=$(cat version.txt | tr -d '[:space:]')
+          VERSION=$(awk '{print $1}' version.txt | tr -d '[:space:]')
           MANIFEST_VERSION=$(grep -o '"[0-9][^"]*"' .release-please-manifest.json | tr -d '"')
           echo "version.txt:    $VERSION"
           echo "manifest.json:  $MANIFEST_VERSION"
