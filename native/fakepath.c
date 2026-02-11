@@ -69,6 +69,17 @@ static int g_mapping_count = 0;
 static int g_initialized = 0;
 static int g_has_wsl = 0;  /* optimization: skip /mnt/ check if no WSL mappings */
 
+/* Directory name mappings (CCBOX_DIR_MAP): container_name → native_name segment replacement.
+ * Same format parsed by FUSE's parseDirMap(): "container:native;container2:native2" */
+typedef struct {
+    char *container_name;  /* e.g. "-D-GitHub-ccbox" */
+    char *native_name;     /* e.g. "D--GitHub-ccbox" */
+    size_t cn_len, nn_len;
+} DirMapping;
+
+static DirMapping g_dirmappings[MAX_MAPPINGS];
+static int g_dirmap_count = 0;
+
 /* ═══════════════════════════════════════════════════════════════════════════
  * TLS Path Cache (zero-contention, per-thread)
  * ═══════════════════════════════════════════════════════════════════════════ */
@@ -230,6 +241,84 @@ static void parse_pathmap(const char *env) {
     free(copy);
 }
 
+static void parse_dirmap(const char *env) {
+    if (!env || !*env) return;
+    char *copy = strdup(env);
+    if (!copy) return;
+    char *saveptr = NULL, *entry = strtok_r(copy, ";", &saveptr);
+    while (entry && g_dirmap_count < MAX_MAPPINGS) {
+        char *sep = strchr(entry, ':');
+        if (sep && sep != entry) {
+            *sep = '\0';
+            DirMapping *dm = &g_dirmappings[g_dirmap_count];
+            dm->container_name = strdup(entry);
+            dm->native_name = strdup(sep + 1);
+            if (dm->container_name && dm->native_name) {
+                dm->cn_len = strlen(dm->container_name);
+                dm->nn_len = strlen(dm->native_name);
+                g_dirmap_count++;
+            } else {
+                free(dm->container_name);
+                free(dm->native_name);
+            }
+        }
+        entry = strtok_r(NULL, ";", &saveptr);
+    }
+    free(copy);
+}
+
+/**
+ * Apply directory name mappings to a translated path.
+ * Scans for /container_name/ or /container_name\0 segment boundaries
+ * and replaces with native_name.
+ * Returns original path if no dirmap match. Sets *alloc if heap allocated.
+ */
+static const char *apply_dirmap(const char *path, char *buf, char **alloc) {
+    *alloc = NULL;
+    if (!path || g_dirmap_count == 0) return path;
+
+    size_t plen = strlen(path);
+    const char *match_pos = NULL;
+    DirMapping *matched = NULL;
+
+    /* Scan for a matching segment */
+    for (int d = 0; d < g_dirmap_count; d++) {
+        DirMapping *dm = &g_dirmappings[d];
+        /* Search for /container_name boundary */
+        const char *search = path;
+        while ((search = strstr(search, dm->container_name)) != NULL) {
+            /* Check left boundary: must be preceded by '/' */
+            if (search > path && *(search - 1) == '/') {
+                /* Check right boundary: must be followed by '/' or '\0' */
+                char after = search[dm->cn_len];
+                if (after == '/' || after == '\0') {
+                    match_pos = search;
+                    matched = dm;
+                    goto found;
+                }
+            }
+            search += dm->cn_len;
+        }
+    }
+    return path;
+
+found:
+    {
+        size_t prefix_len = (size_t)(match_pos - path);
+        size_t suffix_len = plen - prefix_len - matched->cn_len;
+        size_t rlen = prefix_len + matched->nn_len + suffix_len;
+        char *dst = (rlen < STACK_BUF_SIZE) ? buf : malloc(rlen + 1);
+        if (!dst) return path;
+        memcpy(dst, path, prefix_len);
+        memcpy(dst + prefix_len, matched->native_name, matched->nn_len);
+        memcpy(dst + prefix_len + matched->nn_len,
+               match_pos + matched->cn_len, suffix_len);
+        dst[rlen] = '\0';
+        if (dst != buf) *alloc = dst;
+        return dst;
+    }
+}
+
 static void do_init(void) {
     /* Resolve all real function pointers */
     RESOLVE(getcwd); RESOLVE(open); RESOLVE(open64);
@@ -266,6 +355,12 @@ static void do_init(void) {
         parse_pathmap(pathmap);
     }
 
+    /* Parse directory name mappings from CCBOX_DIR_MAP */
+    const char *dirmap = getenv("CCBOX_DIR_MAP");
+    if (dirmap && *dirmap) {
+        parse_dirmap(dirmap);
+    }
+
     /* Legacy: CCBOX_WIN_ORIGINAL_PATH (single mapping, cwd-based) */
     if (g_mapping_count == 0) {
         const char *win_path = getenv("CCBOX_WIN_ORIGINAL_PATH");
@@ -287,24 +382,15 @@ static void do_init(void) {
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 /**
- * Translate a path if it matches a mapping prefix.
+ * Core path translation: matches path against mapping prefixes.
  * Uses stack buffer first, heap fallback for long paths.
  * Returns original path if no translation needed.
  * *alloc is set to heap pointer if allocated (caller must free).
+ * Does NOT consult TLS cache -- caller (translate_path) handles caching.
  */
-static const char *translate_path(const char *path, char *buf, char **alloc) {
+static const char *translate_path_core(const char *path, char *buf, char **alloc) {
     *alloc = NULL;
-    if (!path || !g_initialized || !g_mapping_count) return path;
-
-    /* Fast rejection: first byte check */
-    unsigned char c0 = (unsigned char)path[0];
-    if (!isalpha(c0) && c0 != '/' && c0 != '\\') return path;
-    if (c0 == '/' && !g_has_wsl) return path;  /* no WSL mappings → skip / paths */
-
-    /* TLS cache lookup */
-    uint32_t h = fnv1a(path);
-    const char *cached = tls_cache_lookup(path, h);
-    if (cached) return cached;
+    if (!path || !g_mapping_count) return path;
 
     for (int m = 0; m < g_mapping_count; m++) {
         PathMapping *pm = &g_mappings[m];
@@ -339,7 +425,6 @@ static const char *translate_path(const char *path, char *buf, char **alloc) {
                     memcpy(dst + pm->to_len, match_start, match_len);
                     dst[rlen] = '\0';
                     if (dst != buf) *alloc = dst;
-                    tls_cache_insert(path, dst, h);
                     return dst;
                 }
             }
@@ -359,7 +444,6 @@ static const char *translate_path(const char *path, char *buf, char **alloc) {
                 memcpy(dst + pm->to_len, match_start, match_len);
                 dst[rlen] = '\0';
                 if (dst != buf) *alloc = dst;
-                tls_cache_insert(path, dst, h);
                 return dst;
             }
         }
@@ -385,7 +469,6 @@ static const char *translate_path(const char *path, char *buf, char **alloc) {
                     memcpy(dst + pm->to_len, match_start, match_len);
                     dst[rlen] = '\0';
                     if (dst != buf) *alloc = dst;
-                    tls_cache_insert(path, dst, h);
                     return dst;
                 }
             }
@@ -393,6 +476,62 @@ static const char *translate_path(const char *path, char *buf, char **alloc) {
     }
 
     return path;
+}
+
+/**
+ * Full path translation with TLS cache + dirmap.
+ * Pipeline: TLS lookup → translate_path_core → apply_dirmap → TLS insert.
+ * All interceptors call this function.
+ */
+static const char *translate_path(const char *path, char *buf, char **alloc) {
+    *alloc = NULL;
+    if (!path || !g_initialized) return path;
+    if (!g_mapping_count && !g_dirmap_count) return path;
+
+    /* Fast rejection: first byte check */
+    unsigned char c0 = (unsigned char)path[0];
+    if (!isalpha(c0) && c0 != '/' && c0 != '\\') return path;
+    if (c0 == '/' && !g_has_wsl && !g_dirmap_count) return path;
+
+    /* TLS cache lookup */
+    uint32_t h = fnv1a(path);
+    const char *cached = tls_cache_lookup(path, h);
+    if (cached) return cached;
+
+    /* Step 1: core path translation (Windows/WSL/UNC → container path) */
+    char core_buf[STACK_BUF_SIZE];
+    char *core_alloc = NULL;
+    const char *core_result = translate_path_core(path, core_buf, &core_alloc);
+
+    /* Step 2: dirmap segment replacement */
+    char dm_buf[STACK_BUF_SIZE];
+    char *dm_alloc = NULL;
+    const char *final_result = apply_dirmap(core_result, dm_buf, &dm_alloc);
+
+    /* If nothing changed, return original */
+    if (final_result == path) {
+        free(core_alloc);
+        return path;
+    }
+
+    /* Cache the final result. The caller needs a stable pointer in buf or heap. */
+    size_t flen = strlen(final_result);
+    char *dst;
+    if (flen < STACK_BUF_SIZE) {
+        memcpy(buf, final_result, flen + 1);
+        dst = buf;
+    } else {
+        dst = malloc(flen + 1);
+        if (!dst) { free(core_alloc); free(dm_alloc); return path; }
+        memcpy(dst, final_result, flen + 1);
+        *alloc = dst;
+    }
+
+    tls_cache_insert(path, dst, h);
+
+    free(core_alloc);
+    free(dm_alloc);
+    return dst;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
