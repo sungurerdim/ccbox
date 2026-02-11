@@ -185,8 +185,7 @@ ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 // ============================================================================
 
 func baseDockerfile() string {
-	return `# syntax=docker/dockerfile:1
-# ccbox/base - Claude Code (default)
+	return `# ccbox/base - Claude Code (default)
 FROM debian:bookworm-slim
 
 LABEL org.opencontainers.image.title="ccbox/base"
@@ -200,8 +199,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 }
 
 func pythonDockerfile() string {
-	return `# syntax=docker/dockerfile:1
-# ccbox/python - Python dev tools (ruff, mypy, pytest, uv)
+	return `# ccbox/python - Python dev tools (ruff, mypy, pytest, uv)
 FROM ccbox_base:latest
 
 LABEL org.opencontainers.image.title="ccbox/python"
@@ -209,8 +207,7 @@ LABEL org.opencontainers.image.title="ccbox/python"
 }
 
 func goDockerfile() string {
-	return `# syntax=docker/dockerfile:1
-# ccbox/go - Go + Claude Code + golangci-lint
+	return `# ccbox/go - Go + Claude Code + golangci-lint
 FROM golang:latest
 
 LABEL org.opencontainers.image.title="ccbox/go"
@@ -227,8 +224,7 @@ RUN curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/i
 }
 
 func rustDockerfile() string {
-	return `# syntax=docker/dockerfile:1
-# ccbox/rust - Rust + Claude Code + clippy + rustfmt
+	return `# ccbox/rust - Rust + Claude Code + clippy + rustfmt
 FROM rust:latest
 
 LABEL org.opencontainers.image.title="ccbox/rust"
@@ -245,8 +241,7 @@ RUN rustup component add clippy rustfmt
 }
 
 func javaDockerfile() string {
-	return `# syntax=docker/dockerfile:1
-# ccbox/java - Java (Temurin LTS) + Claude Code + Maven + quality tools
+	return `# ccbox/java - Java (Temurin LTS) + Claude Code + Maven + quality tools
 FROM eclipse-temurin:latest
 
 LABEL org.opencontainers.image.title="ccbox/java"
@@ -276,8 +271,7 @@ RUN GJF_VER=$(curl -sfL https://api.github.com/repos/google/google-java-format/r
 }
 
 func webDockerfile() string {
-	return `# syntax=docker/dockerfile:1
-# ccbox/web - Node.js + Bun + TypeScript + test tools (fullstack)
+	return `# ccbox/web - Node.js + Bun + TypeScript + test tools (fullstack)
 FROM ccbox_base:latest
 
 LABEL org.opencontainers.image.title="ccbox/web"
@@ -310,8 +304,7 @@ RUN npm install -g typescript eslint vitest prettier @types/node \
 }
 
 func cppDockerfile() string {
-	return `# syntax=docker/dockerfile:1
-# ccbox/cpp - C++ + CMake + build tools
+	return `# ccbox/cpp - C++ + CMake + build tools
 FROM ccbox_base:latest
 
 LABEL org.opencontainers.image.title="ccbox/cpp"
@@ -328,8 +321,7 @@ RUN pip3 install --break-system-packages conan
 }
 
 func dotnetDockerfile() string {
-	return `# syntax=docker/dockerfile:1
-# ccbox/dotnet - .NET SDK + quality tools
+	return `# ccbox/dotnet - .NET SDK + quality tools
 FROM ccbox_base:latest
 
 LABEL org.opencontainers.image.title="ccbox/dotnet"
@@ -354,8 +346,7 @@ RUN dotnet tool install --tool-path /opt/dotnet-tools dotnet-reportgenerator-glo
 }
 
 func swiftDockerfile() string {
-	return `# syntax=docker/dockerfile:1
-# ccbox/swift - Swift + quality tools
+	return `# ccbox/swift - Swift + quality tools
 FROM ccbox_base:latest
 
 LABEL org.opencontainers.image.title="ccbox/swift"
@@ -378,8 +369,7 @@ RUN SWIFTLINT_VER=$(curl -sfL https://api.github.com/repos/realm/SwiftLint/relea
 }
 
 func dartDockerfile() string {
-	return `# syntax=docker/dockerfile:1
-# ccbox/dart - Dart + quality tools (built-in: dart analyze, dart format, dart test)
+	return `# ccbox/dart - Dart + quality tools (built-in: dart analyze, dart format, dart test)
 FROM ccbox_base:latest
 
 LABEL org.opencontainers.image.title="ccbox/dart"
@@ -401,8 +391,7 @@ RUN dart pub global activate dart_code_metrics 2>/dev/null || true \
 }
 
 func luaDockerfile() string {
-	return `# syntax=docker/dockerfile:1
-# ccbox/lua - Lua + LuaRocks + quality tools
+	return `# ccbox/lua - Lua + LuaRocks + quality tools
 FROM ccbox_base:latest
 
 LABEL org.opencontainers.image.title="ccbox/lua"
@@ -423,8 +412,7 @@ RUN luarocks install luacheck \
 // ============================================================================
 
 func jvmDockerfile() string {
-	return `# syntax=docker/dockerfile:1
-# ccbox/jvm - Java + Scala + Clojure + Kotlin
+	return `# ccbox/jvm - Java + Scala + Clojure + Kotlin
 FROM ccbox_java:latest
 
 LABEL org.opencontainers.image.title="ccbox/jvm"
@@ -446,8 +434,7 @@ RUN KOTLIN_VER=$(curl -sfL https://api.github.com/repos/JetBrains/kotlin/release
 }
 
 func functionalDockerfile() string {
-	return `# syntax=docker/dockerfile:1
-# ccbox/functional - Haskell + OCaml + Elixir/Erlang
+	return `# ccbox/functional - Haskell + OCaml + Elixir/Erlang
 FROM ccbox_base:latest
 
 LABEL org.opencontainers.image.title="ccbox/functional"
@@ -487,8 +474,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 }
 
 func scriptingDockerfile() string {
-	return `# syntax=docker/dockerfile:1
-# ccbox/scripting - Ruby + PHP + Perl + quality tools (web backends)
+	return `# ccbox/scripting - Ruby + PHP + Perl + quality tools (web backends)
 FROM ccbox_base:latest
 
 LABEL org.opencontainers.image.title="ccbox/scripting"
@@ -519,8 +505,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 }
 
 func systemsDockerfile() string {
-	return `# syntax=docker/dockerfile:1
-# ccbox/systems - C++ + Zig + Nim (systems programming)
+	return `# ccbox/systems - C++ + Zig + Nim (systems programming)
 # Extends cpp stack - includes CMake, Clang, Conan
 FROM ccbox_cpp:latest
 
@@ -546,8 +531,7 @@ RUN curl -fsSL https://nim-lang.org/choosenim/init.sh | sh -s -- -y \
 // ============================================================================
 
 func dataDockerfile() string {
-	return `# syntax=docker/dockerfile:1
-# ccbox/data - Python + R + Julia (data science)
+	return `# ccbox/data - Python + R + Julia (data science)
 # Extends python stack - includes uv, ruff, pytest, mypy
 FROM ccbox_python:latest
 
@@ -570,8 +554,7 @@ RUN JULIA_PATH_ARCH=$(dpkg --print-architecture | sed 's/amd64/x64/;s/arm64/aarc
 }
 
 func aiDockerfile() string {
-	return `# syntax=docker/dockerfile:1
-# ccbox/ai - Python + Jupyter + PyTorch + TensorFlow (ML/AI)
+	return `# ccbox/ai - Python + Jupyter + PyTorch + TensorFlow (ML/AI)
 # Extends python stack - includes uv, ruff, pytest, mypy
 FROM ccbox_python:latest
 
@@ -595,8 +578,7 @@ RUN UV_BREAK_SYSTEM_PACKAGES=1 uv pip install --system tensorflow \
 }
 
 func mobileDockerfile() string {
-	return `# syntax=docker/dockerfile:1
-# ccbox/mobile - Dart + Flutter SDK + Android tools
+	return `# ccbox/mobile - Dart + Flutter SDK + Android tools
 # Extends dart stack - includes Dart SDK
 FROM ccbox_dart:latest
 
@@ -620,8 +602,7 @@ ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 }
 
 func gameDockerfile() string {
-	return `# syntax=docker/dockerfile:1
-# ccbox/game - C++ + SDL2 + Lua + OpenGL (game development)
+	return `# ccbox/game - C++ + SDL2 + Lua + OpenGL (game development)
 # Extends cpp stack - includes CMake, Clang, Conan
 FROM ccbox_cpp:latest
 
@@ -642,8 +623,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 }
 
 func fullstackDockerfile() string {
-	return `# syntax=docker/dockerfile:1
-# ccbox/fullstack - Node.js + Python + PostgreSQL client
+	return `# ccbox/fullstack - Node.js + Python + PostgreSQL client
 # Extends web stack - includes Node.js, TypeScript, eslint, vitest
 FROM ccbox_web:latest
 

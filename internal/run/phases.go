@@ -12,6 +12,7 @@ import (
 
 	"github.com/sungur/ccbox/internal/config"
 	"github.com/sungur/ccbox/internal/docker"
+	"github.com/sungur/ccbox/internal/generate"
 	"github.com/sungur/ccbox/internal/log"
 	"github.com/sungur/ccbox/internal/paths"
 )
@@ -304,9 +305,9 @@ func imageExists(imageName string) bool {
 
 // buildImage builds a Docker image for the given stack.
 func buildImage(stack string, _ string, cache bool) error {
-	buildDir := config.GetCcboxTempBuild(stack)
-	if err := os.MkdirAll(buildDir, 0755); err != nil {
-		return fmt.Errorf("cannot create build directory: %w", err)
+	buildDir, err := generate.WriteBuildFiles(config.LanguageStack(stack))
+	if err != nil {
+		return fmt.Errorf("generate build files: %w", err)
 	}
 
 	imageName := config.GetImageName(stack)
