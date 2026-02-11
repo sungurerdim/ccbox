@@ -9,11 +9,11 @@ func TestDriveLetterToContainerPath(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{"D:/GitHub/ccbox", "/d/GitHub/ccbox"},
-		{"C:/Users/test", "/c/Users/test"},
+		{"D:/GitHub/ccbox", "/D/GitHub/ccbox"},
+		{"C:/Users/test", "/C/Users/test"},
 		{"/usr/local/bin", "/usr/local/bin"},         // No drive letter
-		{"d:/lower", "/d/lower"},                     // lowercase drive
-		{"D:/", "/d/"},                               // Root
+		{"d:/lower", "/d/lower"},                     // lowercase drive preserved
+		{"D:/", "/D/"},                               // Root
 		{"", ""},                                     // Empty
 	}
 
@@ -49,9 +49,9 @@ func TestWslToDockerPath(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{"/mnt/c/Users/test", "/c/Users/test"},
-		{"/mnt/d/GitHub/project", "/d/GitHub/project"},
-		{"/mnt/c", "/c"},
+		{"/mnt/c/Users/test", "/C/Users/test"},
+		{"/mnt/d/GitHub/project", "/D/GitHub/project"},
+		{"/mnt/c", "/C"},
 		{"/home/user", "/home/user"}, // Not a WSL mount
 	}
 
@@ -129,7 +129,7 @@ func TestResolveForDocker(t *testing.T) {
 		hasErr   bool
 	}{
 		{`D:\GitHub\Project`, "D:/GitHub/Project", false},
-		{"/mnt/c/Users/test", "/c/Users/test", false},
+		{"/mnt/c/Users/test", "/C/Users/test", false},
 		{"/home/user/project", "/home/user/project", false},
 	}
 

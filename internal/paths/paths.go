@@ -99,13 +99,14 @@ func WindowsToDockerPath(path string) string {
 }
 
 // WslToDockerPath converts a WSL path to Docker Desktop compatible format.
-// /mnt/c/Users/name/project -> /c/Users/name/project
+// /mnt/c/Users/name/project -> /C/Users/name/project
+// Drive letter is uppercased to match Windows convention and container mount points.
 func WslToDockerPath(path string) string {
 	match := wslMountRe.FindStringSubmatch(path)
 	if match == nil {
 		return path
 	}
-	drive := match[1]
+	drive := strings.ToUpper(match[1])
 	rest := match[2]
 	normalizedRest := normalizePathSeparators(rest)
 	if normalizedRest == "" || normalizedRest == "/" {
@@ -141,7 +142,7 @@ func validateDockerPath(original, resolved string) error {
 //
 // Handles:
 //   - Windows paths (D:\GitHub\...) -> D:/GitHub/...
-//   - WSL paths (/mnt/d/...) -> /d/... (for WSL Docker integration)
+//   - WSL paths (/mnt/d/...) -> /D/... (for WSL Docker integration)
 //   - Native Linux/macOS paths -> unchanged
 func ResolveForDocker(path string) (string, error) {
 	// Normalize backslashes for consistent pattern matching
@@ -187,11 +188,11 @@ func ResolveForDocker(path string) (string, error) {
 var driveLetterRe = regexp.MustCompile(`^([A-Za-z]):`)
 
 // DriveLetterToContainerPath converts a Docker-style Windows path (D:/GitHub/x)
-// to a container POSIX path (/d/GitHub/x). This is the path format used inside
-// the container where drive letters map to /{letter}/ directories.
+// to a container POSIX path (/D/GitHub/x). Case is preserved from the host to
+// avoid mismatches on case-sensitive container filesystems.
 func DriveLetterToContainerPath(dockerPath string) string {
 	return driveLetterRe.ReplaceAllStringFunc(dockerPath, func(match string) string {
-		return "/" + strings.ToLower(match[:1])
+		return "/" + match[:1]
 	})
 }
 

@@ -65,11 +65,13 @@ RUN set -e; \
     mkdir -p /ccbox && chown ccbox:ccbox /ccbox
 
 # Cross-platform path compatibility (Windows/macOS/Linux host paths)
-# /{a..z}    - mount points for Docker volumes (D:/x -> /d/x)
-# /{A..Z}:   - symlinks for Bun direct syscalls (lstat "D:/x" -> /D: -> /d -> /d/x)
+# /{A..Z}    - mount points for Docker volumes, case preserved (D:/x -> /D/x)
+# /{a..z}    - lowercase symlinks for compatibility (d -> D)
+# /{A..Z}:   - colon symlinks for Bun direct syscalls (lstat "D:/x" -> /D: -> /D -> /D/x)
 # /Users     - macOS home directory mount point
-RUN bash -c 'mkdir -p /{a..z} /Users && chown ccbox:ccbox /{a..z} /Users 2>/dev/null || true' \
- && bash -c 'for d in {a..z}; do u=$(echo "$d" | LC_ALL=C tr a-z A-Z); ln -sf /$d /$u: 2>/dev/null || true; done'
+RUN bash -c 'mkdir -p /{A..Z} /{a..z} /Users 2>/dev/null || true' \
+ && bash -c 'for u in {A..Z}; do l=$(echo "$u" | LC_ALL=C tr A-Z a-z); rm -rf /$l; ln -sf /$u /$l; ln -sf /$u /$u: 2>/dev/null || true; done' \
+ && bash -c 'chown ccbox:ccbox /{A..Z} /Users 2>/dev/null || true'
 
 # Locale and performance environment
 ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \
@@ -109,8 +111,8 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
 // fakepathBuild installs the pre-compiled LD_PRELOAD library for Windows path compatibility.
 const fakepathBuild = `
 # fakepath.so - LD_PRELOAD library for Windows path compatibility
-# Translates paths: getcwd() returns D:/... instead of /d/...
-#                   open("D:/...") accesses /d/...
+# Translates paths: getcwd() returns D:/... instead of /D/...
+#                   open("D:/...") accesses /D/...
 # Pre-compiled binary - no gcc needed (~2GB download savings)
 ARG TARGETARCH=amd64
 COPY fakepath-amd64.so fakepath-arm64.so /tmp/

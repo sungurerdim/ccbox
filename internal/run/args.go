@@ -123,7 +123,7 @@ func BuildContainerAwarenessPrompt(persistentPaths string) string {
 	windowsNote := ""
 	p := platform.DetectHost()
 	if p == platform.WindowsNative || p == platform.WindowsWSL {
-		windowsNote = "\nPath format: D:\\GitHub\\x -> /d/GitHub/x (auto-translated)\n"
+		windowsNote = "\nPath format: D:\\GitHub\\x -> /D/GitHub/x (auto-translated)\n"
 	}
 
 	return strings.TrimSpace(fmt.Sprintf(`[CCBOX CONTAINER]
@@ -477,15 +477,15 @@ func BuildDockerRunConfig(
 	cmd = append(cmd, "-e", config.Env.PersistentPaths+"="+persistentPaths)
 
 	// FUSE path mapping: host paths -> container paths (for JSON config transformation).
-	// Maps Windows paths (D:/...) to POSIX paths (/d/...) in session files.
+	// Maps Windows paths (D:/...) to POSIX paths (/D/...) in session files.
 	var pathMappings []string
 
-	// Map project directory (Windows D:/... -> POSIX /d/...)
+	// Map project directory (Windows D:/... -> POSIX /D/...)
 	if dockerProjectPath != hostProjectPath {
 		pathMappings = append(pathMappings, dockerProjectPath+":"+hostProjectPath)
 	}
 
-	// Map WSL path if detected (/mnt/d/... -> /d/...)
+	// Map WSL path if detected (/mnt/d/... -> /D/...)
 	if wslMatch != nil {
 		pathMappings = append(pathMappings, originalPath+":"+hostProjectPath)
 	}
@@ -502,9 +502,9 @@ func BuildDockerRunConfig(
 
 	// Directory name mapping for session bridge (FUSE dirmap).
 	// Claude Code encodes project paths as directory names: [:/\. ] -> -
-	// Container sees /d/GitHub/ccbox -> encodes as -d-GitHub-ccbox
+	// Container sees /D/GitHub/ccbox -> encodes as -D-GitHub-ccbox
 	// Native Windows sees D:\GitHub\ccbox -> encodes as D--GitHub-ccbox
-	// FUSE translates between these so sessions are shared.
+	// Entrypoint creates symlink from container-encoded to native-encoded name.
 	if dockerProjectPath != hostProjectPath {
 		encodePath := func(p string) string {
 			re := regexp.MustCompile(`[:/\\. ]`)
