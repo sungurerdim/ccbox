@@ -3,7 +3,6 @@ package docker
 import (
 	"archive/tar"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -62,8 +61,9 @@ func Build(ctx context.Context, buildDir string, tag string, opts BuildOptions) 
 		BuildArgs:   opts.BuildArgs,
 		Labels:      opts.Labels,
 		Target:      opts.Target,
-		Remove:      true, // remove intermediate containers after build
-		ForceRemove: true, // remove intermediate containers even on failure
+		Remove:      true,                // remove intermediate containers after build
+		ForceRemove: true,                // remove intermediate containers even on failure
+		Version:     types.BuilderBuildKit, // required for RUN --mount=type=cache
 	}
 
 	resp, err := cli.ImageBuild(ctx, buildContext, buildOpts)
@@ -82,25 +82,10 @@ func Build(ctx context.Context, buildDir string, tag string, opts BuildOptions) 
 }
 
 // readBuildOutput decodes the JSON message stream from Docker's build API.
-// Each message may contain a progress stream line or an error. Stream lines
-// are printed to stdout; errors are returned immediately.
+// Supports both legacy builder and BuildKit output formats.
 func readBuildOutput(reader io.Reader) error {
-	decoder := json.NewDecoder(reader)
-	for {
-		var msg jsonmessage.JSONMessage
-		if err := decoder.Decode(&msg); err != nil {
-			if err == io.EOF {
-				return nil
-			}
-			return fmt.Errorf("read build output: %w", err)
-		}
-		if msg.Error != nil {
-			return fmt.Errorf("build error: %s", msg.Error.Message)
-		}
-		if msg.Stream != "" {
-			fmt.Print(msg.Stream)
-		}
-	}
+	fd := os.Stdout.Fd()
+	return jsonmessage.DisplayJSONMessagesStream(reader, os.Stdout, fd, true, nil)
 }
 
 // createBuildContext creates a tar archive of the build directory contents,

@@ -110,28 +110,38 @@ _setup_fuse_overlay() {
     _log "FUSE mounted: $label"
 }
 
-# === Session Directory Merge (shadow -> native) ===
+# === Session Directory Mapping (container name -> native name) ===
 if [[ -n "$CCBOX_DIR_MAP" ]]; then
     _claude_projects="${CLAUDE_CONFIG_DIR:-/ccbox/.claude}/projects"
-    if [[ -d "$_claude_projects" ]]; then
-        IFS=';' read -ra _dirmaps <<< "$CCBOX_DIR_MAP"
-        for _dm in "${_dirmaps[@]}"; do
-            _container_name="${_dm%%:*}" _native_name="${_dm##*:}"
-            [[ -z "$_container_name" || -z "$_native_name" ]] && continue
-            _literal_dir="$_claude_projects/$_container_name" _native_dir="$_claude_projects/$_native_name"
-            if [[ -d "$_literal_dir" && -d "$_native_dir" && "$_literal_dir" != "$_native_dir" ]]; then
-                _log "Merging shadow sessions: $_container_name -> $_native_name"
-                for _sf in "$_literal_dir"/*.jsonl; do
-                    [[ -f "$_sf" ]] && [[ ! -f "$_native_dir/$(basename "$_sf")" ]] && mv "$_sf" "$_native_dir/" 2>/dev/null || true
-                done
-                rm -f "$_literal_dir/sessions-index.json" "$_native_dir/sessions-index.json" 2>/dev/null
-                rmdir "$_literal_dir" 2>/dev/null || true
-            elif [[ -d "$_native_dir" ]]; then
-                _idx="$_native_dir/sessions-index.json"
-                [[ -f "$_idx" ]] && [[ -n "$(find "$_native_dir" -maxdepth 1 -name '*.jsonl' -newer "$_idx" -print -quit 2>/dev/null)" ]] && rm -f "$_idx" 2>/dev/null
-            fi
-        done
-    fi
+    mkdir -p "$_claude_projects" 2>/dev/null || true
+    IFS=';' read -ra _dirmaps <<< "$CCBOX_DIR_MAP"
+    for _dm in "${_dirmaps[@]}"; do
+        _container_name="${_dm%%:*}" _native_name="${_dm##*:}"
+        [[ -z "$_container_name" || -z "$_native_name" || "$_container_name" == "$_native_name" ]] && continue
+        _literal_dir="$_claude_projects/$_container_name" _native_dir="$_claude_projects/$_native_name"
+
+        # Merge any existing shadow sessions into native directory
+        if [[ -d "$_literal_dir" && ! -L "$_literal_dir" && -d "$_native_dir" ]]; then
+            _log "Merging shadow sessions: $_container_name -> $_native_name"
+            for _sf in "$_literal_dir"/*.jsonl; do
+                [[ -f "$_sf" ]] && [[ ! -f "$_native_dir/$(basename "$_sf")" ]] && mv "$_sf" "$_native_dir/" 2>/dev/null || true
+            done
+            rm -rf "$_literal_dir" 2>/dev/null || true
+        elif [[ -d "$_literal_dir" && ! -L "$_literal_dir" && ! -d "$_native_dir" ]]; then
+            # Shadow dir exists but native doesn't - rename it
+            mv "$_literal_dir" "$_native_dir" 2>/dev/null || true
+        fi
+
+        # Ensure native directory exists and symlink container name to it
+        mkdir -p "$_native_dir" 2>/dev/null || true
+        rm -f "$_literal_dir" 2>/dev/null || true
+        ln -sfn "$_native_name" "$_literal_dir" 2>/dev/null || true
+        _log "Session symlink: $_container_name -> $_native_name"
+
+        # Invalidate stale session index
+        _idx="$_native_dir/sessions-index.json"
+        [[ -f "$_idx" ]] && [[ -n "$(find "$_native_dir" -maxdepth 1 -name '*.jsonl' -newer "$_idx" -print -quit 2>/dev/null)" ]] && rm -f "$_idx" 2>/dev/null
+    done
 fi
 
 # === FUSE Path Translation ===

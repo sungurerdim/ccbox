@@ -54,27 +54,49 @@ function Get-LatestVersion {
 
 function Install-Ccbox {
     param(
-        [string]$Platform,
+        [string]$Arch,
         [string]$Ver
     )
 
-    $binaryName = "ccbox-$Ver-$Platform.exe"
-    $binaryUrl = "https://github.com/$Repo/releases/download/$Ver/$binaryName"
+    # GoReleaser archive format: ccbox_VERSION_windows_ARCH.zip (version without v prefix)
+    $versionNum = $Ver.TrimStart("v")
+    $archiveName = "ccbox_${versionNum}_windows_${Arch}.zip"
+    $archiveUrl = "https://github.com/$Repo/releases/download/$Ver/$archiveName"
 
     if (!(Test-Path $InstallDir)) {
         New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     }
 
     $target = Join-Path $InstallDir "ccbox.exe"
+    $tempZip = Join-Path $env:TEMP "ccbox-install.zip"
+    $tempDir = Join-Path $env:TEMP "ccbox-install"
 
     try {
         Write-Task "Downloading ccbox ..."
-        Invoke-WebRequest -Uri $binaryUrl -OutFile $target -UseBasicParsing
+        Invoke-WebRequest -Uri $archiveUrl -OutFile $tempZip -UseBasicParsing
         Write-Done
     }
     catch {
         Write-Fail $_.Exception.Message
         throw
+    }
+
+    try {
+        Write-Task "Extracting ..."
+        if (Test-Path $tempDir) { Remove-Item $tempDir -Recurse -Force }
+        Expand-Archive -Path $tempZip -DestinationPath $tempDir -Force
+        $exe = Get-ChildItem -Path $tempDir -Filter "ccbox.exe" -Recurse | Select-Object -First 1
+        if (!$exe) { throw "ccbox.exe not found in archive" }
+        Copy-Item $exe.FullName $target -Force
+        Write-Done
+    }
+    catch {
+        Write-Fail $_.Exception.Message
+        throw
+    }
+    finally {
+        Remove-Item $tempZip -Force -ErrorAction SilentlyContinue
+        Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 
     $size = [math]::Round((Get-Item $target).Length / 1MB, 1)
@@ -120,18 +142,17 @@ function Main {
     Write-Host " installer" -ForegroundColor DarkGray
     Write-Host ""
 
-    $arch = if ([Environment]::Is64BitOperatingSystem) { "x64" } else { "x86" }
-    $platform = "windows-$arch"
+    $arch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64" } else { "amd64" }
 
     if (!$Version) {
         $Version = Get-LatestVersion
     }
 
-    Write-Step "Platform" $platform
+    Write-Step "Platform" "windows-$arch"
     Write-Step "Version " $Version
     Write-Host ""
 
-    Install-Ccbox -Platform $platform -Ver $Version
+    Install-Ccbox -Arch $arch -Ver $Version
     Test-InPath
     Test-Docker
 
