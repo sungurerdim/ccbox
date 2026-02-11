@@ -26,7 +26,6 @@ var guardedBinaries = map[string]bool{
 func GenerateProjectDockerfile(baseImage string, depsList []detect.DepsInfo, depsMode detect.DepsMode, projectPath string) string {
 	var lines []string
 	lines = append(lines,
-		"# syntax=docker/dockerfile:1",
 		"# Project-specific image with dependencies",
 		fmt.Sprintf("FROM %s", baseImage),
 		"",
