@@ -5,6 +5,7 @@ on:
     branches: [main]
 
 permissions:
+  actions: write
   contents: write
   pull-requests: write
 
@@ -31,6 +32,18 @@ jobs:
           if [ -n "$PR" ]; then
             gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --auto --squash --delete-branch || \
               echo "::warning::Release PR #$PR auto-merge setup failed. Will be handled by CI auto-merge job."
+          fi
+
+      - name: Trigger CI on release PR branch
+        if: ${{ !steps.release.outputs.release_created }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "release-please--branches--main" --json number --jq '.[0].number')
+          if [ -n "$PR" ]; then
+            gh workflow run ci.yml \
+              --ref "release-please--branches--main" \
+              --repo "$GITHUB_REPOSITORY"
           fi
 
   goreleaser:
