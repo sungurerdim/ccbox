@@ -9,6 +9,7 @@ on:
       - '.claude/**'
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -100,10 +101,23 @@ jobs:
           fi
           echo "All versions consistent: $VERSION"
 
+  security:
+    name: Security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
   auto-merge:
     name: Auto Merge
     runs-on: ubuntu-latest
-    needs: [lint, test, build, validate]
+    needs: [lint, test, build, validate, security]
     if: github.event_name == 'pull_request'
     steps:
       - name: Enable auto-merge
