@@ -7,6 +7,8 @@ import (
 
 // TransformToContainer converts Windows/WSL/UNC paths in JSON content to Linux container paths.
 // Returns nil if no transformation was needed.
+//
+//nolint:gocyclo // inherent complexity from handling drive-letter, UNC, and WSL path types
 func TransformToContainer(buf []byte, mappings []PathMapping, dirMappings []DirMapping) []byte {
 	if len(buf) == 0 || len(mappings) == 0 {
 		return nil
@@ -114,6 +116,8 @@ func TransformToContainer(buf []byte, mappings []PathMapping, dirMappings []DirM
 
 // TransformToHost converts Linux container paths in JSON content back to original host paths.
 // Returns nil if no transformation was needed.
+//
+//nolint:gocyclo // inherent complexity from handling drive-letter, UNC, and WSL path types
 func TransformToHost(buf []byte, mappings []PathMapping, dirMappings []DirMapping) []byte {
 	if len(buf) == 0 || len(mappings) == 0 {
 		return nil

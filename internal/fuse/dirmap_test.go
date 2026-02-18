@@ -4,6 +4,7 @@ import (
 	"testing"
 )
 
+//nolint:gocyclo // table-driven test with many sub-cases
 func TestApplyDirMap(t *testing.T) {
 	dm := []DirMapping{
 		{ContainerName: "-D-GitHub-ccbox", NativeName: "D--GitHub-ccbox"},

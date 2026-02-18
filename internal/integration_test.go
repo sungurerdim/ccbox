@@ -14,6 +14,16 @@ import (
 	"github.com/sungur/ccbox/internal/detect"
 )
 
+func writeTestFile(t *testing.T, path string, content []byte) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // --- Detection Consolidation: verify detect.DetectProjectType produces
 // correct stacks for real-world project layouts ---
 
@@ -192,11 +202,7 @@ func TestIntegration_DetectionRealisticProjects(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 			for name, content := range tt.layout {
-				path := filepath.Join(dir, name)
-				os.MkdirAll(filepath.Dir(path), 0755)
-				if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-					t.Fatal(err)
-				}
+				writeTestFile(t, filepath.Join(dir, name), []byte(content))
 			}
 
 			result := detect.DetectProjectType(dir, false)
@@ -313,9 +319,7 @@ func TestIntegration_DepsDetection(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 			for name, content := range tt.layout {
-				if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
-					t.Fatal(err)
-				}
+				writeTestFile(t, filepath.Join(dir, name), []byte(content))
 			}
 
 			deps := detect.DetectDependencies(dir)
@@ -378,7 +382,7 @@ env:
   FLASK_ENV: development
 `
 	configPath := filepath.Join(dir, "ccbox.yaml")
-	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -499,10 +503,10 @@ func TestIntegration_ContainerNaming(t *testing.T) {
 
 func TestIntegration_HashStability(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "package.json"),
-		[]byte(`{"name":"test","dependencies":{"express":"^4.0"}}`), 0644)
-	os.WriteFile(filepath.Join(dir, "package-lock.json"),
-		[]byte(`{"lockfileVersion":3,"packages":{}}`), 0644)
+	writeTestFile(t, filepath.Join(dir, "package.json"),
+		[]byte(`{"name":"test","dependencies":{"express":"^4.0"}}`))
+	writeTestFile(t, filepath.Join(dir, "package-lock.json"),
+		[]byte(`{"lockfileVersion":3,"packages":{}}`))
 
 	deps := detect.DetectDependencies(dir)
 	if len(deps) == 0 {
@@ -572,9 +576,9 @@ func TestIntegration_StackConsistency(t *testing.T) {
 
 func TestIntegration_MutualExclusion(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"app"}`), 0644)
-	os.WriteFile(filepath.Join(dir, "tsconfig.json"), []byte(`{}`), 0644)
-	os.WriteFile(filepath.Join(dir, "package-lock.json"), []byte(`{}`), 0644)
+	writeTestFile(t, filepath.Join(dir, "package.json"), []byte(`{"name":"app"}`))
+	writeTestFile(t, filepath.Join(dir, "tsconfig.json"), []byte(`{}`))
+	writeTestFile(t, filepath.Join(dir, "package-lock.json"), []byte(`{}`))
 
 	result := detect.DetectProjectType(dir, false)
 

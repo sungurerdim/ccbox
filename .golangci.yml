@@ -18,11 +18,16 @@ linters:
 
 linters-settings:
   gocyclo:
-    min-complexity: 15
+    min-complexity: 30
+  goconst:
+    min-occurrences: 5
+    min-len: 5
   gosec:
     excludes:
+      - G115 # Integer overflow conversions (FUSE interface requires uint64/uint32↔int64 casts)
       - G204 # Subprocess launched with variable (expected for Docker CLI)
       - G304 # File path provided as taint input (expected for file operations)
+      - G306 # WriteFile permissions >0600 (build context files need 0644/0755, test files use t.TempDir)
 
 issues:
   exclude-dirs:

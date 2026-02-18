@@ -344,12 +344,12 @@ func TestTransformToContainer(t *testing.T) {
 		// --- Overlapping mappings (more specific wins by order) ---
 		{
 			name:  "overlapping mappings: more specific first",
-			input: `{"a":"D:\\GitHub\\ccbox\\internal\\f","b":"D:\\GitHub\\other\\g"}`,
+			input: `{"a":"D:\\GitHub\\ccbox\\internal\\f","b":"D:\\GitHub\\extra\\g"}`,
 			mappings: []PathMapping{
 				{From: "D:/GitHub/ccbox", To: "/D/GitHub/ccbox", Drive: 'd'},
 				{From: "D:/GitHub", To: "/D/GitHub", Drive: 'd'},
 			},
-			want: `{"a":"/D/GitHub/ccbox/internal/f","b":"/D/GitHub/other/g"}`,
+			want: `{"a":"/D/GitHub/ccbox/internal/f","b":"/D/GitHub/extra/g"}`,
 		},
 		// --- False positive drive letter not a path ---
 		{

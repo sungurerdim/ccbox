@@ -44,7 +44,7 @@ func TestDetectDependencies(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 			for name, content := range tt.files {
-				if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -103,7 +103,9 @@ func TestGetInstallCommands(t *testing.T) {
 func TestComputeHash(t *testing.T) {
 	t.Run("same content same hash", func(t *testing.T) {
 		dir := t.TempDir()
-		os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module foo\n"), 0644)
+		if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module foo\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 
 		deps := []DepsInfo{{Name: "go", Files: []string{"go.mod"}}}
 		h1 := ComputeHash(deps, dir)
@@ -116,8 +118,12 @@ func TestComputeHash(t *testing.T) {
 	t.Run("different content different hash", func(t *testing.T) {
 		dir1 := t.TempDir()
 		dir2 := t.TempDir()
-		os.WriteFile(filepath.Join(dir1, "go.mod"), []byte("module foo\n"), 0644)
-		os.WriteFile(filepath.Join(dir2, "go.mod"), []byte("module bar\n"), 0644)
+		if err := os.WriteFile(filepath.Join(dir1, "go.mod"), []byte("module foo\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir2, "go.mod"), []byte("module bar\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 
 		deps := []DepsInfo{{Name: "go", Files: []string{"go.mod"}}}
 		h1 := ComputeHash(deps, dir1)
@@ -129,7 +135,9 @@ func TestComputeHash(t *testing.T) {
 
 	t.Run("hash length 16", func(t *testing.T) {
 		dir := t.TempDir()
-		os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module foo\n"), 0644)
+		if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module foo\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 
 		deps := []DepsInfo{{Name: "go", Files: []string{"go.mod"}}}
 		h := ComputeHash(deps, dir)

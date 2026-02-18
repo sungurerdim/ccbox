@@ -290,6 +290,8 @@ func BuildClaudeArgs(opts ClaudeArgsOptions) []string {
 // BuildDockerRunConfig builds the complete docker run configuration.
 // This is the core function that assembles all Docker run arguments including
 // volume mounts, environment variables, resource limits, and security constraints.
+//
+//nolint:gocyclo // inherent complexity from many Docker configuration options
 func BuildDockerRunConfig(
 	projectPath string,
 	projectName string,

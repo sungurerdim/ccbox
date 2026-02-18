@@ -181,7 +181,7 @@ func EnsureModel(model string) (string, error) {
 	fmt.Fprintf(os.Stderr, "Downloading whisper model %q...\n", model)
 
 	client := &http.Client{Timeout: 10 * time.Minute}
-	resp, err := client.Get(url) //nolint:gosec // URL is constructed from known safe base
+	resp, err := client.Get(url)
 	if err != nil {
 		return "", fmt.Errorf("download model: %w", err)
 	}

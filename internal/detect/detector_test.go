@@ -67,7 +67,7 @@ func TestDetectProjectType(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 			for name, content := range tt.files {
-				if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -87,11 +87,18 @@ func TestDetectProjectTypeNonexistentDir(t *testing.T) {
 	}
 }
 
+func writeFile(t *testing.T, path string, content []byte) {
+	t.Helper()
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDetectProjectTypeMakefileDemotion(t *testing.T) {
 	dir := t.TempDir()
 	// Go project with Makefile -> Makefile-triggered cpp should be demoted
-	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module foo\n\ngo 1.21\n"), 0644)
-	os.WriteFile(filepath.Join(dir, "Makefile"), []byte("all:\n\tgo build\n"), 0644)
+	writeFile(t, filepath.Join(dir, "go.mod"), []byte("module foo\n\ngo 1.21\n"))
+	writeFile(t, filepath.Join(dir, "Makefile"), []byte("all:\n\tgo build\n"))
 
 	result := DetectProjectType(dir, false)
 	if result.RecommendedStack != config.StackGo {
@@ -177,7 +184,7 @@ func TestMatchesPattern(t *testing.T) {
 func TestDetectPackageManager(t *testing.T) {
 	t.Run("bun", func(t *testing.T) {
 		dir := t.TempDir()
-		os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"packageManager":"bun@1.2.9"}`), 0644)
+		writeFile(t, filepath.Join(dir, "package.json"), []byte(`{"packageManager":"bun@1.2.9"}`))
 		got := detectPackageManager(dir)
 		if got != "bun" {
 			t.Errorf("detectPackageManager() = %q, want %q", got, "bun")
@@ -186,7 +193,7 @@ func TestDetectPackageManager(t *testing.T) {
 
 	t.Run("pnpm", func(t *testing.T) {
 		dir := t.TempDir()
-		os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"packageManager":"pnpm@8.0.0"}`), 0644)
+		writeFile(t, filepath.Join(dir, "package.json"), []byte(`{"packageManager":"pnpm@8.0.0"}`))
 		got := detectPackageManager(dir)
 		if got != "pnpm" {
 			t.Errorf("detectPackageManager() = %q, want %q", got, "pnpm")
@@ -195,7 +202,7 @@ func TestDetectPackageManager(t *testing.T) {
 
 	t.Run("no field", func(t *testing.T) {
 		dir := t.TempDir()
-		os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"foo"}`), 0644)
+		writeFile(t, filepath.Join(dir, "package.json"), []byte(`{"name":"foo"}`))
 		got := detectPackageManager(dir)
 		if got != "" {
 			t.Errorf("detectPackageManager() = %q, want empty", got)
@@ -204,7 +211,7 @@ func TestDetectPackageManager(t *testing.T) {
 
 	t.Run("invalid json", func(t *testing.T) {
 		dir := t.TempDir()
-		os.WriteFile(filepath.Join(dir, "package.json"), []byte(`not json`), 0644)
+		writeFile(t, filepath.Join(dir, "package.json"), []byte(`not json`))
 		got := detectPackageManager(dir)
 		if got != "" {
 			t.Errorf("detectPackageManager() = %q, want empty", got)
@@ -223,7 +230,7 @@ func TestDetectPackageManager(t *testing.T) {
 func TestScaleSourceConfidence(t *testing.T) {
 	t.Run("single cpp file", func(t *testing.T) {
 		dir := t.TempDir()
-		os.WriteFile(filepath.Join(dir, "main.cpp"), []byte("int main(){}"), 0644)
+		writeFile(t, filepath.Join(dir, "main.cpp"), []byte("int main(){}"))
 		got := scaleSourceConfidence(dir, "cpp", ConfSourceExtension)
 		if got != ConfSourceExtSingle {
 			t.Errorf("single file should return %d, got %d", ConfSourceExtSingle, got)
@@ -232,8 +239,8 @@ func TestScaleSourceConfidence(t *testing.T) {
 
 	t.Run("multiple cpp files", func(t *testing.T) {
 		dir := t.TempDir()
-		os.WriteFile(filepath.Join(dir, "main.cpp"), []byte("int main(){}"), 0644)
-		os.WriteFile(filepath.Join(dir, "util.cpp"), []byte("void util(){}"), 0644)
+		writeFile(t, filepath.Join(dir, "main.cpp"), []byte("int main(){}"))
+		writeFile(t, filepath.Join(dir, "util.cpp"), []byte("void util(){}"))
 		got := scaleSourceConfidence(dir, "cpp", ConfSourceExtension)
 		if got != ConfSourceExtension {
 			t.Errorf("multiple files should return %d, got %d", ConfSourceExtension, got)

@@ -479,6 +479,8 @@ func LanguageToStack(lang string) config.LanguageStack {
 //  7. Winner: Highest confidence score after all adjustments wins.
 //
 // Returns BASE stack if directory doesn't exist or is unreadable.
+//
+//nolint:gocyclo // inherent complexity from 20+ language detection rules
 func DetectProjectType(directory string, verbose bool) DetectionResult {
 	// Defensive: verify directory exists before scanning
 	if _, err := os.Stat(directory); err != nil {
