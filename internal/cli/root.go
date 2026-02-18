@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/sungur/ccbox/internal/config"
 	"github.com/sungur/ccbox/internal/log"
 )
 
@@ -61,8 +62,8 @@ func init() {
 	f.Bool("no-prune", false, "Skip automatic cleanup of stale Docker resources")
 	f.BoolP("unrestricted", "U", false, "Remove CPU/memory limits (use full system resources)")
 	f.Bool("zero-residue", false, "Zero-trace mode: no cache, logs, or artifacts left behind")
-	f.String("memory", "4g", "Container memory limit (e.g., 4g, 2048m)")
-	f.String("cpus", "2.0", "Container CPU limit (e.g., 2.0)")
+	f.String("memory", config.DefaultMemoryLimit, "Container memory limit (e.g., 4g, 2048m)")
+	f.String("cpus", config.DefaultCPULimit, "Container CPU limit (e.g., 2.0)")
 	f.String("network", "full", "Network policy: full (default), isolated, or path to policy.json")
 	f.BoolP("verbose", "v", false, "Show detection details (which files triggered stack selection)")
 	f.String("progress", "auto", "Docker build progress mode (auto|plain|tty)")

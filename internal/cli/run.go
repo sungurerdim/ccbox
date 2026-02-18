@@ -91,7 +91,6 @@ func runAttachMode(cmd *cobra.Command, fileConfig config.CcboxConfig, claudeArgs
 	noPrune, _ := f.GetBool("no-prune")
 	unrestricted, _ := f.GetBool("unrestricted")
 	verbose, _ := f.GetBool("verbose")
-	progress, _ := f.GetString("progress")
 	cache, _ := f.GetBool("cache")
 	zeroResidue, _ := f.GetBool("zero-residue")
 	memory, _ := f.GetString("memory")
@@ -113,7 +112,6 @@ func runAttachMode(cmd *cobra.Command, fileConfig config.CcboxConfig, claudeArgs
 		Prune:         !noPrune && boolPtrDefault(fileConfig.Prune, true),
 		Unrestricted:  unrestricted || fileConfig.Unrestricted,
 		Verbose:       verbose,
-		Progress:      firstNonEmpty(progress, fileConfig.Progress),
 		Cache:         cache || boolPtrDefault(fileConfig.Cache, false),
 		EnvVars:       mergedEnvVars,
 		ClaudeArgs:    claudeArgs,
@@ -196,12 +194,12 @@ func buildCcboxArgsForBridge(cmd *cobra.Command, fileConfig config.CcboxConfig, 
 	}
 
 	// Memory (only if non-default)
-	if memory, _ := f.GetString("memory"); memory != "" && memory != "4g" {
+	if memory, _ := f.GetString("memory"); memory != "" && memory != config.DefaultMemoryLimit {
 		args = append(args, "--memory="+memory)
 	}
 
 	// CPU (only if non-default)
-	if cpus, _ := f.GetString("cpus"); cpus != "" && cpus != "2.0" {
+	if cpus, _ := f.GetString("cpus"); cpus != "" && cpus != config.DefaultCPULimit {
 		args = append(args, "--cpus="+cpus)
 	}
 

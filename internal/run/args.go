@@ -290,6 +290,8 @@ func BuildClaudeArgs(opts ClaudeArgsOptions) []string {
 // BuildDockerRunConfig builds the complete docker run configuration.
 // This is the core function that assembles all Docker run arguments including
 // volume mounts, environment variables, resource limits, and security constraints.
+//
+//nolint:gocyclo // inherent complexity from many Docker configuration options
 func BuildDockerRunConfig(
 	projectPath string,
 	projectName string,
@@ -506,12 +508,8 @@ func BuildDockerRunConfig(
 	// Native Windows sees D:\GitHub\ccbox -> encodes as D--GitHub-ccbox
 	// Entrypoint creates symlink from container-encoded to native-encoded name.
 	if dockerProjectPath != hostProjectPath {
-		encodePath := func(p string) string {
-			re := regexp.MustCompile(`[:/\\. ]`)
-			return re.ReplaceAllString(p, "-")
-		}
-		containerEncoded := encodePath(hostProjectPath)
-		nativeEncoded := encodePath(absProjectPath)
+		containerEncoded := encodePathForSession(hostProjectPath)
+		nativeEncoded := encodePathForSession(absProjectPath)
 		if containerEncoded != nativeEncoded {
 			cmd = append(cmd, "-e", config.Env.DirMap+"="+containerEncoded+":"+nativeEncoded)
 		}
@@ -896,9 +894,28 @@ func parseEnvVar(envVar string) (key, value string, ok bool) {
 	value = envVar[idx+1:]
 
 	// Validate key: [A-Za-z_][A-Za-z0-9_]*
-	envKeyRe := regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-	if !envKeyRe.MatchString(key) {
+	if !envVarKeyRe.MatchString(key) {
 		return "", "", false
 	}
 	return key, value, true
+}
+
+// envVarKeyRe validates environment variable key format.
+var envVarKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// sessionPathEncodeRe matches characters that Claude Code replaces with hyphens
+// when encoding project paths as directory names under ~/.claude/projects/.
+var sessionPathEncodeRe = regexp.MustCompile(`[:/\\. ]`)
+
+// encodePathForSession encodes a project path the same way Claude Code does
+// when creating session directory names under ~/.claude/projects/.
+// Characters [:/\. ] are replaced with hyphens.
+//
+// Examples:
+//
+//	/D/GitHub/ccbox   → -D-GitHub-ccbox    (container path)
+//	D:\GitHub\ccbox   → D--GitHub-ccbox    (native Windows path)
+//	/mnt/d/GitHub/x   → -mnt-d-GitHub-x   (WSL path)
+func encodePathForSession(p string) string {
+	return sessionPathEncodeRe.ReplaceAllString(p, "-")
 }
