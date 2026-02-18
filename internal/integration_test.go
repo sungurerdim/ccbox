@@ -65,8 +65,8 @@ func TestIntegration_DetectionRealisticProjects(t *testing.T) {
 		{
 			name: "real rust project",
 			layout: map[string]string{
-				"Cargo.toml": "[package]\nname = \"myapp\"\nversion = \"0.1.0\"\n",
-				"Cargo.lock": "[[package]]\nname = \"myapp\"\nversion = \"0.1.0\"\n",
+				"Cargo.toml":  "[package]\nname = \"myapp\"\nversion = \"0.1.0\"\n",
+				"Cargo.lock":  "[[package]]\nname = \"myapp\"\nversion = \"0.1.0\"\n",
 				"src/main.rs": "fn main() { println!(\"hello\"); }\n",
 			},
 			wantStack: config.StackRust,
@@ -98,8 +98,8 @@ func TestIntegration_DetectionRealisticProjects(t *testing.T) {
 		{
 			name: "real python project with poetry",
 			layout: map[string]string{
-				"pyproject.toml": "[tool.poetry]\nname = \"myapp\"\nversion = \"0.1.0\"\n\n[build-system]\nrequires = [\"poetry-core\"]\n",
-				"poetry.lock":   "[[package]]\nname = \"requests\"\n",
+				"pyproject.toml":    "[tool.poetry]\nname = \"myapp\"\nversion = \"0.1.0\"\n\n[build-system]\nrequires = [\"poetry-core\"]\n",
+				"poetry.lock":       "[[package]]\nname = \"requests\"\n",
 				"myapp/__init__.py": "",
 			},
 			wantStack: config.StackPython,
@@ -118,9 +118,9 @@ func TestIntegration_DetectionRealisticProjects(t *testing.T) {
 		{
 			name: "fullstack: node + python",
 			layout: map[string]string{
-				"package.json":     `{"name":"fullstack-app"}`,
-				"requirements.txt": "flask\nrequests\n",
-				"app.py":           "from flask import Flask\n",
+				"package.json":      `{"name":"fullstack-app"}`,
+				"requirements.txt":  "flask\nrequests\n",
+				"app.py":            "from flask import Flask\n",
 				"frontend/index.js": "console.log('hello');\n",
 			},
 			wantStack: config.StackFullstack,
@@ -130,7 +130,7 @@ func TestIntegration_DetectionRealisticProjects(t *testing.T) {
 		{
 			name: "java maven project",
 			layout: map[string]string{
-				"pom.xml": `<?xml version="1.0"?><project><modelVersion>4.0.0</modelVersion></project>`,
+				"pom.xml":                `<?xml version="1.0"?><project><modelVersion>4.0.0</modelVersion></project>`,
 				"src/main/java/App.java": "public class App {}\n",
 			},
 			wantStack: config.StackJava,
@@ -141,7 +141,7 @@ func TestIntegration_DetectionRealisticProjects(t *testing.T) {
 			name: "dotnet project",
 			layout: map[string]string{
 				"MyApp.csproj": `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType></PropertyGroup></Project>`,
-				"Program.cs":  "Console.WriteLine(\"Hello\");\n",
+				"Program.cs":   "Console.WriteLine(\"Hello\");\n",
 			},
 			wantStack: config.StackDotnet,
 			wantLang:  "dotnet",
@@ -168,7 +168,7 @@ func TestIntegration_DetectionRealisticProjects(t *testing.T) {
 		{
 			name: "makefile-only project with C++ content",
 			layout: map[string]string{
-				"Makefile":  "all:\n\tgcc -o main main.c\n",
+				"Makefile": "all:\n\tgcc -o main main.c\n",
 				"main.c":   "int main() { return 0; }\n",
 			},
 			wantStack: config.StackCpp,
@@ -237,11 +237,11 @@ func TestIntegration_DetectionRealisticProjects(t *testing.T) {
 
 func TestIntegration_DepsDetection(t *testing.T) {
 	tests := []struct {
-		name         string
-		layout       map[string]string
-		wantManager  string
-		wantInstall  string // substring of install command
-		wantEmpty    bool
+		name        string
+		layout      map[string]string
+		wantManager string
+		wantInstall string // substring of install command
+		wantEmpty   bool
 	}{
 		{
 			name: "go mod download",
@@ -264,7 +264,7 @@ func TestIntegration_DepsDetection(t *testing.T) {
 			name: "poetry with lock",
 			layout: map[string]string{
 				"pyproject.toml": "[tool.poetry]\nname = \"foo\"\n\n[build-system]\nrequires = [\"poetry-core\"]\n",
-				"poetry.lock":   "[[package]]\n",
+				"poetry.lock":    "[[package]]\n",
 			},
 			wantManager: "poetry",
 			wantInstall: "poetry install",
@@ -280,7 +280,7 @@ func TestIntegration_DepsDetection(t *testing.T) {
 		{
 			name: "pnpm lock",
 			layout: map[string]string{
-				"package.json":    `{"name":"app"}`,
+				"package.json":   `{"name":"app"}`,
 				"pnpm-lock.yaml": "lockfileVersion: '6.0'\n",
 			},
 			wantManager: "pnpm",

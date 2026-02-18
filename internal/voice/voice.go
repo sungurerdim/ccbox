@@ -64,13 +64,13 @@ func Record(duration int) (string, error) {
 	switch {
 	case commandExists("ffmpeg"):
 		cmd = exec.Command("ffmpeg",
-			"-y",                    // overwrite output
-			"-f", inputFormat(),     // platform-specific input format
-			"-i", inputDevice(),     // platform-specific input device
-			"-t", durStr,            // duration
-			"-ar", "16000",          // 16kHz (whisper requirement)
-			"-ac", "1",              // mono
-			"-c:a", "pcm_s16le",    // 16-bit PCM
+			"-y",                // overwrite output
+			"-f", inputFormat(), // platform-specific input format
+			"-i", inputDevice(), // platform-specific input device
+			"-t", durStr, // duration
+			"-ar", "16000", // 16kHz (whisper requirement)
+			"-ac", "1", // mono
+			"-c:a", "pcm_s16le", // 16-bit PCM
 			audioFile,
 		)
 	case runtime.GOOS == "linux" && commandExists("arecord"):

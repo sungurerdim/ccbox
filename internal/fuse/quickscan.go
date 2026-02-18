@@ -75,5 +75,3 @@ func QuickScanHasMappings(fd int, mappings []PathMapping, dirMappings []DirMappi
 
 	return false
 }
-
-
