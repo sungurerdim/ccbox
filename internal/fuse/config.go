@@ -1,5 +1,3 @@
-//go:build linux
-
 // Package fuse implements a FUSE filesystem for transparent cross-platform
 // path mapping in ccbox containers. It transforms Windows/WSL/UNC paths
 // in JSON/JSONL file contents bidirectionally.

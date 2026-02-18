@@ -1,5 +1,3 @@
-//go:build linux
-
 package fuse
 
 import (
@@ -33,20 +31,16 @@ type ReadCache struct {
 
 // Lookup returns cached transformed data if path and mtime match.
 func (rc *ReadCache) Lookup(path string, mtimeSec, mtimeNs int64) ([]byte, bool) {
-	rc.mu.RLock()
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
 	for i := range rc.slots {
 		e := rc.slots[i]
 		if e != nil && e.mtimeSec == mtimeSec && e.mtimeNs == mtimeNs && e.path == path {
-			rc.mu.RUnlock()
-			// Bump sequence under write lock
-			rc.mu.Lock()
 			rc.seq++
 			e.seq = rc.seq
-			rc.mu.Unlock()
 			return e.data, true
 		}
 	}
-	rc.mu.RUnlock()
 	return nil, false
 }
 

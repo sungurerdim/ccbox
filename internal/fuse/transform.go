@@ -1,5 +1,3 @@
-//go:build linux
-
 package fuse
 
 import (
@@ -31,12 +29,16 @@ func TransformToContainer(buf []byte, mappings []PathMapping, dirMappings []DirM
 					// from is like "c:/Users/Sungur/.claude", skip drive prefix "c:"
 					fromPath := mappings[m].From[2:]
 					if strings.HasPrefix(pathbuf, fromPath) {
-						b.WriteString(mappings[m].To)
-						b.WriteString(pathbuf[len(fromPath):])
-						i = ti
-						matched = true
-						anyTransform = true
-						break
+						remainder := pathbuf[len(fromPath):]
+						// Ensure match is at path segment boundary
+						if remainder == "" || remainder[0] == '/' {
+							b.WriteString(mappings[m].To)
+							b.WriteString(remainder)
+							i = ti
+							matched = true
+							anyTransform = true
+							break
+						}
 					}
 				}
 			}
@@ -48,12 +50,16 @@ func TransformToContainer(buf []byte, mappings []PathMapping, dirMappings []DirM
 				if mappings[m].IsUNC {
 					pathbuf, ti := extractJSONPath(buf, i)
 					if strings.HasPrefix(pathbuf, mappings[m].From) {
-						b.WriteString(mappings[m].To)
-						b.WriteString(pathbuf[len(mappings[m].From):])
-						i = ti
-						matched = true
-						anyTransform = true
-						break
+						remainder := pathbuf[len(mappings[m].From):]
+						// Ensure match is at path segment boundary
+						if remainder == "" || remainder[0] == '/' {
+							b.WriteString(mappings[m].To)
+							b.WriteString(remainder)
+							i = ti
+							matched = true
+							anyTransform = true
+							break
+						}
 					}
 				}
 			}
