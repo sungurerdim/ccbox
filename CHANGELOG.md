@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3](https://github.com/sungurerdim/ccbox/compare/v0.4.2...v0.4.3) (2026-02-13)
+
+
+### Features
+
+* add dirmap support and fix bridge registration ([#20](https://github.com/sungurerdim/ccbox/issues/20)) ([23cd31a](https://github.com/sungurerdim/ccbox/commit/23cd31a67c3c057e3fd10886d1bfab53f3d6e8c3))
+
 ## [0.4.2](https://github.com/sungurerdim/ccbox/compare/v0.4.1...v0.4.2) (2026-02-11)
 
 
