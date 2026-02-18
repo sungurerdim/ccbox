@@ -142,6 +142,82 @@ func TestParseEnvVar(t *testing.T) {
 	}
 }
 
+func TestEncodePathForSession(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "container path: /D/GitHub/ccbox",
+			input: "/D/GitHub/ccbox",
+			want:  "-D-GitHub-ccbox",
+		},
+		{
+			name:  "native Windows path: D:\\GitHub\\ccbox",
+			input: `D:\GitHub\ccbox`,
+			want:  "D--GitHub-ccbox",
+		},
+		{
+			name:  "Windows forward slash: D:/GitHub/ccbox",
+			input: "D:/GitHub/ccbox",
+			want:  "D--GitHub-ccbox",
+		},
+		{
+			name:  "WSL path: /mnt/d/GitHub/ccbox",
+			input: "/mnt/d/GitHub/ccbox",
+			want:  "-mnt-d-GitHub-ccbox",
+		},
+		{
+			name:  "path with spaces",
+			input: "/D/My Projects/test app",
+			want:  "-D-My-Projects-test-app",
+		},
+		{
+			name:  "path with dots",
+			input: "C:/Users/Sungur/.claude",
+			want:  "C--Users-Sungur--claude",
+		},
+		{
+			name:  "container and native encode differently",
+			input: "/D/GitHub/ccbox",
+			want:  "-D-GitHub-ccbox", // vs D--GitHub-ccbox for D:\GitHub\ccbox
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := encodePathForSession(tt.input)
+			if got != tt.want {
+				t.Errorf("encodePathForSession(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSessionEncodingDivergence(t *testing.T) {
+	// This test verifies the core problem that DirMap solves:
+	// Container and native Windows encode the SAME project differently.
+	// Without DirMap, sessions created natively would be invisible to containerized Claude.
+
+	containerPath := "/D/GitHub/ccbox"
+	nativeWindowsPath := `D:\GitHub\ccbox`
+
+	containerEncoded := encodePathForSession(containerPath)
+	nativeEncoded := encodePathForSession(nativeWindowsPath)
+
+	if containerEncoded == nativeEncoded {
+		t.Fatal("container and native encodings should differ (this is why DirMap exists)")
+	}
+
+	if containerEncoded != "-D-GitHub-ccbox" {
+		t.Errorf("container encoded = %q, want -D-GitHub-ccbox", containerEncoded)
+	}
+	if nativeEncoded != "D--GitHub-ccbox" {
+		t.Errorf("native encoded = %q, want D--GitHub-ccbox", nativeEncoded)
+	}
+}
+
 func TestConstraints(t *testing.T) {
 	c := Constraints()
 	if c.PidsLimit <= 0 {

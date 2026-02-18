@@ -1,5 +1,3 @@
-//go:build linux
-
 // Package fuse implements a FUSE filesystem for transparent cross-platform
 // path mapping in ccbox containers. It transforms Windows/WSL/UNC paths
 // in JSON/JSONL file contents bidirectionally.
@@ -19,11 +17,11 @@ const (
 
 // PathMapping represents a host↔container path mapping.
 type PathMapping struct {
-	From    string // Original host path (normalized, forward slashes)
-	To      string // Container mount path
-	Drive   byte   // Lowercase drive letter (0 if not a drive path)
-	IsUNC   bool   // UNC path (//server/share)
-	IsWSL   bool   // WSL path (/mnt/d/...)
+	From  string // Original host path (normalized, forward slashes)
+	To    string // Container mount path
+	Drive byte   // Lowercase drive letter (0 if not a drive path)
+	IsUNC bool   // UNC path (//server/share)
+	IsWSL bool   // WSL path (/mnt/d/...)
 }
 
 // DirMapping represents a directory name encoding mapping.

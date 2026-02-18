@@ -14,6 +14,12 @@ import (
 // Config file search paths (in order of precedence within each scope).
 var projectConfigFiles = []string{"ccbox.yaml", "ccbox.yml", ".ccboxrc"}
 
+// Pre-compiled regexes for YAML parsing.
+var (
+	yamlEnvKeyRe = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$`)
+	yamlKVRe     = regexp.MustCompile(`^([a-zA-Z_][a-zA-Z0-9_-]*):\s*(.*)$`)
+)
+
 // globalConfigPath returns the global config file path (~/.ccbox/config.yaml).
 func globalConfigPath() string {
 	home, err := os.UserHomeDir()
@@ -83,8 +89,8 @@ func parseSimpleYaml(content string) map[string]any {
 	inEnvBlock := false
 	envVars := make(map[string]string)
 
-	envKeyRe := regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$`)
-	kvRe := regexp.MustCompile(`^([a-zA-Z_][a-zA-Z0-9_-]*):\s*(.*)$`)
+	envKeyRe := yamlEnvKeyRe
+	kvRe := yamlKVRe
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -127,8 +133,14 @@ func parseSimpleYaml(content string) map[string]any {
 			key := match[1]
 			rawValue := strings.TrimSpace(match[2])
 			cleanValue := stripQuotes(rawValue)
+			wasQuoted := isQuoted(rawValue)
 
 			switch {
+			case wasQuoted:
+				// Quoted values are always strings (YAML spec)
+				if cleanValue != "" {
+					result[key] = cleanValue
+				}
 			case cleanValue == "true":
 				result[key] = true
 			case cleanValue == "false":
@@ -283,6 +295,15 @@ func ConfigEnvToArray(cfg CcboxConfig) []string {
 }
 
 // --- Helpers ---
+
+// isQuoted checks whether a string is surrounded by matching quotes.
+func isQuoted(s string) bool {
+	s = strings.TrimSpace(s)
+	if len(s) >= 2 {
+		return (s[0] == '"' && s[len(s)-1] == '"') || (s[0] == '\'' && s[len(s)-1] == '\'')
+	}
+	return false
+}
 
 // stripQuotes removes surrounding single or double quotes from a string.
 func stripQuotes(s string) string {

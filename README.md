@@ -77,6 +77,7 @@ ccbox --no-deps         # Skip installation
 
 | Option | Default | Description |
 |--------|---------|-------------|
+| `-q, --quiet` | off | Suppress all output (exit code only) |
 | `-y, --yes` | off | Skip all prompts |
 | `-s, --stack <name>` | auto | Language stack |
 | `-b, --build` | off | Build image only, don't start |
@@ -96,7 +97,7 @@ ccbox --no-deps         # Skip installation
 | `--network <policy>` | full | Network policy (full/isolated) |
 | `--zero-residue` | off | Zero-trace mode (no cache/logs left behind) |
 | `--no-prune` | off | Skip automatic cleanup of stale Docker resources |
-| `--no-cache` | off | Disable Docker build cache |
+| `--cache` | off | Enable Docker build cache |
 | `--progress <mode>` | auto | Docker build progress mode (auto/plain/tty) |
 | `--no-debug-logs` | off | Don't persist debug logs |
 
@@ -111,7 +112,7 @@ ccbox --allowedTools bash edit          # --allowedTools
 ccbox --append-system-prompt "Be brief" # --append-system-prompt
 ```
 
-**Other commands:** `ccbox update`, `ccbox rebuild`, `ccbox clean`, `ccbox stacks`, `ccbox voice`, `ccbox paste`, `ccbox uninstall`, `ccbox version`
+**Other commands:** `ccbox update`, `ccbox rebuild`, `ccbox clean`, `ccbox stacks`, `ccbox voice`, `ccbox paste`, `ccbox uninstall`, `ccbox --version`
 
 ### Git & SSH (Zero-Config)
 

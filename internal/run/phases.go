@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/sungur/ccbox/internal/config"
+	"github.com/sungur/ccbox/internal/detect"
 	"github.com/sungur/ccbox/internal/docker"
 	"github.com/sungur/ccbox/internal/generate"
 	"github.com/sungur/ccbox/internal/log"
@@ -33,7 +34,6 @@ type ExecuteOptions struct {
 	Prune         bool
 	Unrestricted  bool
 	Verbose       bool
-	Progress      string
 	Cache         bool
 	EnvVars       []string
 	ClaudeArgs    []string
@@ -91,98 +91,32 @@ func DetectAndReportStack(path string, stackName string, verbose bool) (*Detecti
 }
 
 // detectFromProject scans project files to determine the best language stack.
+// Delegates to the detect package which provides confidence scoring,
+// content validation, mutual exclusion, and promotion rules.
 // Returns StackBase as the default if no specific language is detected.
 func detectFromProject(projectPath string, verbose bool) config.LanguageStack {
-	type detection struct {
-		language   string
-		stack      config.LanguageStack
-		confidence int
-		trigger    string
-	}
+	result := detect.DetectProjectType(projectPath, verbose)
 
-	var detections []detection
-
-	// Detection rules: check for language-specific files/patterns
-	checks := []struct {
-		files    []string
-		language string
-		stack    config.LanguageStack
-		conf     int
-	}{
-		{[]string{"go.mod", "go.sum"}, "Go", config.StackGo, 9},
-		{[]string{"Cargo.toml", "Cargo.lock"}, "Rust", config.StackRust, 9},
-		{[]string{"package.json"}, "JavaScript/TypeScript", config.StackWeb, 7},
-		{[]string{"tsconfig.json"}, "TypeScript", config.StackWeb, 8},
-		{[]string{"pyproject.toml", "setup.py", "requirements.txt", "Pipfile"}, "Python", config.StackPython, 7},
-		{[]string{"pom.xml", "build.gradle", "build.gradle.kts"}, "Java", config.StackJava, 8},
-		{[]string{"CMakeLists.txt", "Makefile.am", "meson.build"}, "C/C++", config.StackCpp, 7},
-		{[]string{"*.csproj", "*.sln", "*.fsproj"}, "C#/.NET", config.StackDotnet, 8},
-		{[]string{"Package.swift"}, "Swift", config.StackSwift, 8},
-		{[]string{"pubspec.yaml"}, "Dart", config.StackDart, 8},
-		{[]string{"*.lua", "rockspec"}, "Lua", config.StackLua, 5},
-		{[]string{"build.sbt", "project/build.properties"}, "Scala", config.StackJVM, 8},
-		{[]string{"mix.exs"}, "Elixir", config.StackFunctional, 8},
-		{[]string{"Gemfile", "*.gemspec"}, "Ruby", config.StackScripting, 7},
-		{[]string{"composer.json"}, "PHP", config.StackScripting, 7},
-		{[]string{"*.R", "DESCRIPTION"}, "R", config.StackData, 6},
-		{[]string{"Project.toml"}, "Julia", config.StackData, 7},
-		{[]string{"Dockerfile", "docker-compose.yml", "docker-compose.yaml"}, "Docker", config.StackBase, 3},
-	}
-
-	for _, check := range checks {
-		for _, pattern := range check.files {
-			matches, err := filepath.Glob(filepath.Join(projectPath, pattern))
-			if err != nil {
-				continue
-			}
-			if len(matches) > 0 {
-				trigger := filepath.Base(matches[0])
-				detections = append(detections, detection{
-					language:   check.language,
-					stack:      check.stack,
-					confidence: check.conf,
-					trigger:    trigger,
-				})
-				break // One match per check group is enough
-			}
-		}
-	}
-
-	// Report detection results
-	if len(detections) > 0 {
+	if len(result.DetectedLanguages) > 0 {
 		if verbose {
 			log.Dim("Detection:")
-			for _, d := range detections {
-				log.Dim(fmt.Sprintf("  %-12s %2d  %s", d.language, d.confidence, d.trigger))
+			for _, d := range result.DetectedLanguages {
+				log.Dim(fmt.Sprintf("  %-12s %2d  %s", d.Language, d.Confidence, d.Trigger))
 			}
-		}
-
-		// Pick highest confidence
-		best := detections[0]
-		for _, d := range detections[1:] {
-			if d.confidence > best.confidence {
-				best = d
-			}
-		}
-
-		if verbose {
-			log.Dim(fmt.Sprintf("  -> Stack: %s", best.stack))
+			log.Dim(fmt.Sprintf("  -> Stack: %s", result.RecommendedStack))
 		} else {
-			summaryParts := make([]string, len(detections))
-			for i, d := range detections {
-				summaryParts[i] = fmt.Sprintf("%s (%d)", d.language, d.confidence)
+			summaryParts := make([]string, len(result.DetectedLanguages))
+			for i, d := range result.DetectedLanguages {
+				summaryParts[i] = fmt.Sprintf("%s (%d)", d.Language, d.Confidence)
 			}
-			log.Dim(fmt.Sprintf("Detection: %s -> %s", strings.Join(summaryParts, ", "), best.stack))
+			log.Dim(fmt.Sprintf("Detection: %s -> %s",
+				strings.Join(summaryParts, ", "), result.RecommendedStack))
 		}
-
-		return best.stack
-	}
-
-	if verbose {
+	} else if verbose {
 		log.Dim(fmt.Sprintf("Detection: no languages found -> %s", config.StackBase))
 	}
 
-	return config.StackBase
+	return result.RecommendedStack
 }
 
 // --- Execute pipeline ---
@@ -278,7 +212,7 @@ func ensureImages(stack string, opts ExecuteOptions) error {
 		baseImage := config.GetImageName(string(dep))
 		if !imageExists(baseImage) {
 			log.Bold("First-time setup: building base image...")
-			if err := buildImage(string(dep), opts.Progress, opts.Cache); err != nil {
+			if err := buildImage(string(dep), opts.Cache); err != nil {
 				return fmt.Errorf("failed to build base image: %w", err)
 			}
 			log.Newline()
@@ -287,7 +221,7 @@ func ensureImages(stack string, opts ExecuteOptions) error {
 
 	// Build stack image
 	log.Bold(fmt.Sprintf("Building %s image...", stack))
-	if err := buildImage(stack, opts.Progress, opts.Cache); err != nil {
+	if err := buildImage(stack, opts.Cache); err != nil {
 		return fmt.Errorf("failed to build %s image: %w", stack, err)
 	}
 	log.Newline()
@@ -304,7 +238,7 @@ func imageExists(imageName string) bool {
 }
 
 // buildImage builds a Docker image for the given stack.
-func buildImage(stack string, _ string, cache bool) error {
+func buildImage(stack string, cache bool) error {
 	buildDir, err := generate.WriteBuildFiles(config.LanguageStack(stack))
 	if err != nil {
 		return fmt.Errorf("generate build files: %w", err)
@@ -408,10 +342,14 @@ func PruneStaleResources(debug bool) {
 	defer cancel()
 
 	// Remove stopped ccbox containers
-	_, _ = docker.PruneContainers(ctx)
+	if _, err := docker.PruneContainers(ctx); err != nil {
+		log.Debugf("Prune containers: %v", err)
+	}
 
 	// Prune build cache older than configured age
-	_ = docker.PruneBuilder(ctx, config.PruneCacheAge)
+	if err := docker.PruneBuilder(ctx, config.PruneCacheAge); err != nil {
+		log.Debugf("Prune build cache: %v", err)
+	}
 
 	if debug {
 		log.Debug("Pruned stale Docker resources")

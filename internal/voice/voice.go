@@ -64,13 +64,13 @@ func Record(duration int) (string, error) {
 	switch {
 	case commandExists("ffmpeg"):
 		cmd = exec.Command("ffmpeg",
-			"-y",                    // overwrite output
-			"-f", inputFormat(),     // platform-specific input format
-			"-i", inputDevice(),     // platform-specific input device
-			"-t", durStr,            // duration
-			"-ar", "16000",          // 16kHz (whisper requirement)
-			"-ac", "1",              // mono
-			"-c:a", "pcm_s16le",    // 16-bit PCM
+			"-y",                // overwrite output
+			"-f", inputFormat(), // platform-specific input format
+			"-i", inputDevice(), // platform-specific input device
+			"-t", durStr, // duration
+			"-ar", "16000", // 16kHz (whisper requirement)
+			"-ac", "1", // mono
+			"-c:a", "pcm_s16le", // 16-bit PCM
 			audioFile,
 		)
 	case runtime.GOOS == "linux" && commandExists("arecord"):
@@ -180,7 +180,8 @@ func EnsureModel(model string) (string, error) {
 
 	fmt.Fprintf(os.Stderr, "Downloading whisper model %q...\n", model)
 
-	resp, err := http.Get(url) //nolint:gosec // URL is constructed from known safe base
+	client := &http.Client{Timeout: 10 * time.Minute}
+	resp, err := client.Get(url)
 	if err != nil {
 		return "", fmt.Errorf("download model: %w", err)
 	}

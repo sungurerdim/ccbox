@@ -20,7 +20,7 @@ func TestResolveModelPath(t *testing.T) {
 func TestResolveModelPathDirect(t *testing.T) {
 	// When model is a direct path that exists, it should return that path
 	tmpFile := filepath.Join(os.TempDir(), "test-model-file.bin")
-	if err := os.WriteFile(tmpFile, []byte("test"), 0644); err != nil {
+	if err := os.WriteFile(tmpFile, []byte("test"), 0o600); err != nil {
 		t.Skip("cannot create temp file")
 	}
 	defer os.Remove(tmpFile)

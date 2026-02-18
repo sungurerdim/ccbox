@@ -1,5 +1,3 @@
-//go:build linux
-
 package fuse
 
 import (
@@ -9,6 +7,8 @@ import (
 
 // TransformToContainer converts Windows/WSL/UNC paths in JSON content to Linux container paths.
 // Returns nil if no transformation was needed.
+//
+//nolint:gocyclo // inherent complexity from handling drive-letter, UNC, and WSL path types
 func TransformToContainer(buf []byte, mappings []PathMapping, dirMappings []DirMapping) []byte {
 	if len(buf) == 0 || len(mappings) == 0 {
 		return nil
@@ -31,12 +31,16 @@ func TransformToContainer(buf []byte, mappings []PathMapping, dirMappings []DirM
 					// from is like "c:/Users/Sungur/.claude", skip drive prefix "c:"
 					fromPath := mappings[m].From[2:]
 					if strings.HasPrefix(pathbuf, fromPath) {
-						b.WriteString(mappings[m].To)
-						b.WriteString(pathbuf[len(fromPath):])
-						i = ti
-						matched = true
-						anyTransform = true
-						break
+						remainder := pathbuf[len(fromPath):]
+						// Ensure match is at path segment boundary
+						if remainder == "" || remainder[0] == '/' {
+							b.WriteString(mappings[m].To)
+							b.WriteString(remainder)
+							i = ti
+							matched = true
+							anyTransform = true
+							break
+						}
 					}
 				}
 			}
@@ -48,12 +52,16 @@ func TransformToContainer(buf []byte, mappings []PathMapping, dirMappings []DirM
 				if mappings[m].IsUNC {
 					pathbuf, ti := extractJSONPath(buf, i)
 					if strings.HasPrefix(pathbuf, mappings[m].From) {
-						b.WriteString(mappings[m].To)
-						b.WriteString(pathbuf[len(mappings[m].From):])
-						i = ti
-						matched = true
-						anyTransform = true
-						break
+						remainder := pathbuf[len(mappings[m].From):]
+						// Ensure match is at path segment boundary
+						if remainder == "" || remainder[0] == '/' {
+							b.WriteString(mappings[m].To)
+							b.WriteString(remainder)
+							i = ti
+							matched = true
+							anyTransform = true
+							break
+						}
 					}
 				}
 			}
@@ -108,6 +116,8 @@ func TransformToContainer(buf []byte, mappings []PathMapping, dirMappings []DirM
 
 // TransformToHost converts Linux container paths in JSON content back to original host paths.
 // Returns nil if no transformation was needed.
+//
+//nolint:gocyclo // inherent complexity from handling drive-letter, UNC, and WSL path types
 func TransformToHost(buf []byte, mappings []PathMapping, dirMappings []DirMapping) []byte {
 	if len(buf) == 0 || len(mappings) == 0 {
 		return nil
