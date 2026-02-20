@@ -4,21 +4,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strconv"
-	"strings"
 
 	"github.com/sungur/ccbox/internal/log"
+	"gopkg.in/yaml.v3"
 )
 
 // Config file search paths (in order of precedence within each scope).
 var projectConfigFiles = []string{"ccbox.yaml", "ccbox.yml", ".ccboxrc"}
-
-// Pre-compiled regexes for YAML parsing.
-var (
-	yamlEnvKeyRe = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$`)
-	yamlKVRe     = regexp.MustCompile(`^([a-zA-Z_][a-zA-Z0-9_-]*):\s*(.*)$`)
-)
 
 // globalConfigPath returns the global config file path (~/.ccbox/config.yaml).
 func globalConfigPath() string {
@@ -68,7 +60,7 @@ func loadGlobalConfig() *CcboxConfig {
 	return cfg
 }
 
-// loadConfigFile reads and parses a single config file.
+// loadConfigFile reads and parses a single config file using yaml.v3.
 // Returns nil if the file does not exist or cannot be parsed.
 func loadConfigFile(path string) *CcboxConfig {
 	data, err := os.ReadFile(path)
@@ -76,145 +68,12 @@ func loadConfigFile(path string) *CcboxConfig {
 		return nil
 	}
 
-	parsed := parseSimpleYaml(string(data))
-	cfg := mapParsedToConfig(parsed)
-	return cfg
-}
-
-// parseSimpleYaml parses basic YAML (key: value) without external dependencies.
-// Supports a single level of nesting for the "env:" block.
-func parseSimpleYaml(content string) map[string]any {
-	result := make(map[string]any)
-	lines := strings.Split(content, "\n")
-	inEnvBlock := false
-	envVars := make(map[string]string)
-
-	envKeyRe := yamlEnvKeyRe
-	kvRe := yamlKVRe
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-
-		// Skip comments and empty lines
-		if strings.HasPrefix(trimmed, "#") || trimmed == "" {
-			if inEnvBlock && trimmed == "" {
-				continue // allow blank lines inside env block
-			}
-			continue
-		}
-
-		// Check for env block start
-		if trimmed == "env:" {
-			inEnvBlock = true
-			continue
-		}
-
-		// Handle env block entries (indented with at least 2 spaces)
-		if inEnvBlock && (strings.HasPrefix(line, "  ") || strings.HasPrefix(line, "\t")) {
-			match := envKeyRe.FindStringSubmatch(trimmed)
-			if match != nil {
-				key := match[1]
-				value := stripQuotes(match[2])
-				envVars[key] = value
-			}
-			continue
-		} else if inEnvBlock {
-			// End of env block (non-indented line)
-			inEnvBlock = false
-			if len(envVars) > 0 {
-				result["env"] = envVars
-				envVars = make(map[string]string)
-			}
-		}
-
-		// Parse top-level key: value
-		match := kvRe.FindStringSubmatch(trimmed)
-		if match != nil {
-			key := match[1]
-			rawValue := strings.TrimSpace(match[2])
-			cleanValue := stripQuotes(rawValue)
-			wasQuoted := isQuoted(rawValue)
-
-			switch {
-			case wasQuoted:
-				// Quoted values are always strings (YAML spec)
-				if cleanValue != "" {
-					result[key] = cleanValue
-				}
-			case cleanValue == "true":
-				result[key] = true
-			case cleanValue == "false":
-				result[key] = false
-			case isInteger(cleanValue):
-				if v, err := strconv.Atoi(cleanValue); err == nil {
-					result[key] = v
-				}
-			case isFloat(cleanValue):
-				if v, err := strconv.ParseFloat(cleanValue, 64); err == nil {
-					result[key] = v
-				}
-			case cleanValue != "":
-				result[key] = cleanValue
-			}
-		}
+	var cfg CcboxConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		log.Debugf("Failed to parse config %s: %v", path, err)
+		return nil
 	}
-
-	// Handle env block at end of file
-	if inEnvBlock && len(envVars) > 0 {
-		result["env"] = envVars
-	}
-
-	return result
-}
-
-// mapParsedToConfig converts a parsed YAML map to a CcboxConfig struct.
-func mapParsedToConfig(parsed map[string]any) *CcboxConfig {
-	cfg := &CcboxConfig{}
-
-	if v, ok := parsed["stack"].(string); ok {
-		cfg.Stack = v
-	}
-	if v, ok := parsed["deps"].(string); ok {
-		cfg.Deps = v
-	}
-	if v, ok := parsed["zeroResidue"].(bool); ok {
-		cfg.ZeroResidue = v
-	}
-	if v, ok := parsed["networkPolicy"].(string); ok {
-		cfg.NetworkPolicy = v
-	}
-	if v, ok := parsed["memory"].(string); ok {
-		cfg.Memory = v
-	}
-	if v, ok := parsed["cpus"].(string); ok {
-		cfg.CPUs = v
-	}
-	if v, ok := parsed["progress"].(string); ok {
-		cfg.Progress = v
-	}
-	if v, ok := parsed["cache"].(bool); ok {
-		cfg.Cache = &v
-	}
-	if v, ok := parsed["prune"].(bool); ok {
-		cfg.Prune = &v
-	}
-	if v, ok := parsed["fresh"].(bool); ok {
-		cfg.Fresh = v
-	}
-	if v, ok := parsed["headless"].(bool); ok {
-		cfg.Headless = v
-	}
-	if v, ok := parsed["unrestricted"].(bool); ok {
-		cfg.Unrestricted = v
-	}
-	if v, ok := parsed["debug"].(int); ok {
-		cfg.Debug = v
-	}
-	if v, ok := parsed["env"].(map[string]string); ok {
-		cfg.Env = v
-	}
-
-	return cfg
+	return &cfg
 }
 
 // mergeConfigs merges multiple configs with later values taking precedence.
@@ -233,7 +92,7 @@ func mergeConfigs(configs ...*CcboxConfig) CcboxConfig {
 		if cfg.Deps != "" {
 			result.Deps = cfg.Deps
 		}
-		if cfg.ZeroResidue {
+		if cfg.ZeroResidue != nil {
 			result.ZeroResidue = cfg.ZeroResidue
 		}
 		if cfg.NetworkPolicy != "" {
@@ -254,14 +113,17 @@ func mergeConfigs(configs ...*CcboxConfig) CcboxConfig {
 		if cfg.Prune != nil {
 			result.Prune = cfg.Prune
 		}
-		if cfg.Fresh {
+		if cfg.Fresh != nil {
 			result.Fresh = cfg.Fresh
 		}
-		if cfg.Headless {
+		if cfg.Headless != nil {
 			result.Headless = cfg.Headless
 		}
-		if cfg.Unrestricted {
+		if cfg.Unrestricted != nil {
 			result.Unrestricted = cfg.Unrestricted
+		}
+		if cfg.ReadOnly != nil {
+			result.ReadOnly = cfg.ReadOnly
 		}
 		if cfg.Debug > 0 {
 			result.Debug = cfg.Debug
@@ -292,44 +154,4 @@ func ConfigEnvToArray(cfg CcboxConfig) []string {
 		result = append(result, fmt.Sprintf("%s=%s", k, v))
 	}
 	return result
-}
-
-// --- Helpers ---
-
-// isQuoted checks whether a string is surrounded by matching quotes.
-func isQuoted(s string) bool {
-	s = strings.TrimSpace(s)
-	if len(s) >= 2 {
-		return (s[0] == '"' && s[len(s)-1] == '"') || (s[0] == '\'' && s[len(s)-1] == '\'')
-	}
-	return false
-}
-
-// stripQuotes removes surrounding single or double quotes from a string.
-func stripQuotes(s string) string {
-	s = strings.TrimSpace(s)
-	if len(s) >= 2 {
-		if (s[0] == '"' && s[len(s)-1] == '"') || (s[0] == '\'' && s[len(s)-1] == '\'') {
-			return s[1 : len(s)-1]
-		}
-	}
-	return s
-}
-
-// isInteger checks if a string represents a valid integer.
-func isInteger(s string) bool {
-	if s == "" {
-		return false
-	}
-	_, err := strconv.Atoi(s)
-	return err == nil
-}
-
-// isFloat checks if a string represents a valid float (must contain a dot).
-func isFloat(s string) bool {
-	if s == "" || !strings.Contains(s, ".") {
-		return false
-	}
-	_, err := strconv.ParseFloat(s, 64)
-	return err == nil
 }

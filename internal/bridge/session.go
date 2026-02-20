@@ -6,7 +6,17 @@ import (
 	"time"
 
 	"github.com/sungur/ccbox/internal/docker"
+	"github.com/sungur/ccbox/internal/log"
 )
+
+// CheckHealth checks if the container entrypoint has completed successfully
+// by testing for the health marker file (/tmp/ccbox-healthy).
+func CheckHealth(ctx context.Context, containerID string) bool {
+	result, err := docker.Exec(ctx, containerID, []string{
+		"test", "-f", "/tmp/ccbox-healthy",
+	})
+	return err == nil && result.ExitCode == 0
+}
 
 // DiscoverSessions lists Claude Code sessions inside a running container by
 // looking for JSONL conversation files under the well-known session directory.
@@ -17,6 +27,11 @@ func DiscoverSessions(ctx context.Context, containerID string) []Session {
 		"-type", "f",
 	})
 	if err != nil || result.ExitCode != 0 {
+		shortID := containerID
+		if len(shortID) > 12 {
+			shortID = shortID[:12]
+		}
+		log.Debugf("Session discovery failed for %s: err=%v exit=%d", shortID, err, result.ExitCode)
 		return nil
 	}
 

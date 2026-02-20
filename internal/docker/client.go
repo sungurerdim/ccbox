@@ -5,6 +5,7 @@ package docker
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,18 +13,55 @@ import (
 	"sync"
 	"time"
 
+	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/volume"
 	dockerclient "github.com/docker/docker/client"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/sungur/ccbox/internal/log"
 )
 
+// DockerAPI defines the Docker Engine API methods used by ccbox.
+// It is a subset of the Docker SDK's full client interface, enabling
+// mock injection for testing via SetClientForTest.
+type DockerAPI interface {
+	Ping(ctx context.Context) (types.Ping, error)
+
+	ContainerList(ctx context.Context, options container.ListOptions) ([]container.Summary, error)
+	ContainerCreate(ctx context.Context, config *container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig, platform *ocispec.Platform, containerName string) (container.CreateResponse, error)
+	ContainerRemove(ctx context.Context, containerID string, options container.RemoveOptions) error
+	ContainerAttach(ctx context.Context, containerID string, options container.AttachOptions) (types.HijackedResponse, error)
+	ContainerStart(ctx context.Context, containerID string, options container.StartOptions) error
+	ContainerStop(ctx context.Context, containerID string, options container.StopOptions) error
+	ContainerWait(ctx context.Context, containerID string, condition container.WaitCondition) (<-chan container.WaitResponse, <-chan error)
+	ContainerInspect(ctx context.Context, containerID string) (container.InspectResponse, error)
+	CopyToContainer(ctx context.Context, containerID string, dstPath string, content io.Reader, options container.CopyToContainerOptions) error
+	ContainerExecCreate(ctx context.Context, containerID string, options container.ExecOptions) (container.ExecCreateResponse, error)
+	ContainerExecAttach(ctx context.Context, execID string, options container.ExecAttachOptions) (types.HijackedResponse, error)
+	ContainerExecInspect(ctx context.Context, execID string) (container.ExecInspect, error)
+
+	ImageBuild(ctx context.Context, buildContext io.Reader, options types.ImageBuildOptions) (types.ImageBuildResponse, error)
+	ImagePull(ctx context.Context, refStr string, options image.PullOptions) (io.ReadCloser, error)
+	ImageTag(ctx context.Context, source string, target string) error
+	ImageInspect(ctx context.Context, imageID string, options ...dockerclient.ImageInspectOption) (image.InspectResponse, error)
+	ImageList(ctx context.Context, options image.ListOptions) ([]image.Summary, error)
+	ImageRemove(ctx context.Context, imageID string, options image.RemoveOptions) ([]image.DeleteResponse, error)
+
+	VolumesPrune(ctx context.Context, pruneFilter filters.Args) (volume.PruneReport, error)
+	BuildCachePrune(ctx context.Context, opts types.BuildCachePruneOptions) (*types.BuildCachePruneReport, error)
+}
+
 var (
-	instance *dockerclient.Client
+	instance DockerAPI
 	once     sync.Once
 	initErr  error
 )
 
-// NewClient returns a singleton Docker client
-func NewClient() (*dockerclient.Client, error) {
+// NewClient returns a singleton Docker client implementing DockerAPI.
+func NewClient() (DockerAPI, error) {
 	once.Do(func() {
 		instance, initErr = dockerclient.NewClientWithOpts(
 			dockerclient.FromEnv,
@@ -31,6 +69,14 @@ func NewClient() (*dockerclient.Client, error) {
 		)
 	})
 	return instance, initErr
+}
+
+// SetClientForTest replaces the singleton Docker client with the provided
+// implementation. Intended for unit tests only — not safe for concurrent use.
+func SetClientForTest(api DockerAPI) {
+	instance = api
+	initErr = nil
+	once.Do(func() {}) // mark as initialized
 }
 
 // CheckHealth checks if Docker daemon is responsive

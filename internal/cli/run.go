@@ -57,7 +57,7 @@ func runDefault(cmd *cobra.Command, args []string) error {
 	useBridgeMode := !attachMode && !noBridge && !buildOnly && !headless
 
 	if useBridgeMode {
-		return runBridgeMode(cmd, fileConfig, claudeArgs, projectPath)
+		return runBridgeMode(cmd, claudeArgs, projectPath, fileConfig)
 	}
 
 	return runAttachMode(cmd, fileConfig, claudeArgs, projectPath)
@@ -93,41 +93,51 @@ func runAttachMode(cmd *cobra.Command, fileConfig config.CcboxConfig, claudeArgs
 	verbose, _ := f.GetBool("verbose")
 	cache, _ := f.GetBool("cache")
 	zeroResidue, _ := f.GetBool("zero-residue")
-	memory, _ := f.GetString("memory")
-	cpus, _ := f.GetString("cpus")
-	network, _ := f.GetString("network")
+	readOnly, _ := f.GetBool("read-only")
+	noPull, _ := f.GetBool("no-pull")
 	yes, _ := f.GetBool("yes")
+
+	// String flags with non-empty defaults: prefer CLI only if explicitly set,
+	// otherwise fall back to config file, then flag default.
+	memory := resolveStringFlag(f, "memory", fileConfig.Memory)
+	cpus := resolveStringFlag(f, "cpus", fileConfig.CPUs)
+	network := resolveStringFlag(f, "network", fileConfig.NetworkPolicy)
+	progress := resolveStringFlag(f, "progress", fileConfig.Progress)
 
 	// Merge CLI flags with config file (CLI takes precedence)
 	return run.Execute(run.ExecuteOptions{
 		StackName:     stack,
 		BuildOnly:     buildOnly,
 		ProjectPath:   projectPath,
-		Fresh:         fresh || fileConfig.Fresh,
+		Fresh:         fresh || boolPtrDefault(fileConfig.Fresh, false),
 		EphemeralLogs: noDebugLogs,
 		DepsMode:      depsMode,
 		Debug:         maxInt(debug, fileConfig.Debug),
-		Headless:      headless || fileConfig.Headless,
+		Headless:      headless || boolPtrDefault(fileConfig.Headless, false),
 		Unattended:    yes,
 		Prune:         !noPrune && boolPtrDefault(fileConfig.Prune, true),
-		Unrestricted:  unrestricted || fileConfig.Unrestricted,
+		Unrestricted:  unrestricted || boolPtrDefault(fileConfig.Unrestricted, false),
 		Verbose:       verbose,
 		Cache:         cache || boolPtrDefault(fileConfig.Cache, false),
 		EnvVars:       mergedEnvVars,
 		ClaudeArgs:    claudeArgs,
-		ZeroResidue:   zeroResidue || fileConfig.ZeroResidue,
-		MemoryLimit:   firstNonEmpty(memory, fileConfig.Memory),
-		CPULimit:      firstNonEmpty(cpus, fileConfig.CPUs),
-		NetworkPolicy: firstNonEmpty(network, fileConfig.NetworkPolicy),
+		ZeroResidue:   zeroResidue || boolPtrDefault(fileConfig.ZeroResidue, false),
+		ReadOnly:      readOnly || boolPtrDefault(fileConfig.ReadOnly, false),
+		NoPull:        noPull,
+		MemoryLimit:   memory,
+		CPULimit:      cpus,
+		NetworkPolicy: network,
+		Progress:      progress,
 	})
 }
 
 // runBridgeMode launches the container in a separate terminal and shows
 // the bridge control UI for voice/paste input. Falls back to attach mode
 // if the bridge package is not available.
-func runBridgeMode(cmd *cobra.Command, fileConfig config.CcboxConfig, claudeArgs []string, projectPath string) error {
-	// Build the ccbox args that the bridge will pass to the container terminal
-	ccboxArgs := buildCcboxArgsForBridge(cmd, fileConfig, claudeArgs)
+func runBridgeMode(cmd *cobra.Command, claudeArgs []string, projectPath string, fileConfig config.CcboxConfig) error {
+	// Build the ccbox args that the bridge will pass to the container terminal.
+	// Uses dynamic flag forwarding — only ccbox-bridge-specific flags are excluded.
+	ccboxArgs := buildCcboxArgsForBridge(cmd, claudeArgs)
 
 	// Try to import and run bridge mode
 	// Bridge mode opens a new terminal window for the container and shows
@@ -158,67 +168,52 @@ func RegisterBridgeRunner(fn BridgeRunnerFunc) {
 	bridgeRunner = fn
 }
 
+// bridgeExcludeFlags lists flags that should NOT be forwarded to child containers.
+// These are bridge-specific or already handled by the launch mechanism.
+// All other explicitly-set flags are forwarded automatically — no hardcoded list
+// to maintain when new flags are added.
+var bridgeExcludeFlags = map[string]bool{
+	"attach-mode": true, // added by launchNewContainer
+	"no-bridge":   true, // bridge-specific, child always runs attach
+	"build":       true, // build-only mode, child needs to run
+	"headless":    true, // prevents bridge; child runs interactively
+	"path":        true, // passed separately by launchNewContainer
+	"chdir":       true, // already applied in parent process
+	"quiet":       true, // parent terminal only
+	"no-pull":     true, // build-time only, not relevant for child container
+}
+
 // buildCcboxArgsForBridge constructs the ccbox CLI arguments that the bridge
-// will pass when launching the container terminal. Only includes non-default values.
-func buildCcboxArgsForBridge(cmd *cobra.Command, fileConfig config.CcboxConfig, claudeArgs []string) []string {
+// will pass when launching the container terminal. Dynamically forwards all
+// explicitly-set flags except bridge-specific ones. The child process loads
+// its own config file from --path, so config-file values don't need forwarding.
+func buildCcboxArgsForBridge(cmd *cobra.Command, claudeArgs []string) []string {
 	var args []string
-	f := cmd.Flags()
 
-	// Always add --attach-mode so the child process doesn't recurse into bridge
-	args = append(args, "--attach-mode")
-
-	// Stack
-	stack, _ := f.GetString("stack")
-	if stack == "" && fileConfig.Stack != "" {
-		stack = fileConfig.Stack
-	}
-	if stack != "" {
-		args = append(args, "--stack="+stack)
-	}
-
-	// Fresh mode
-	if fresh, _ := f.GetBool("fresh"); fresh || fileConfig.Fresh {
-		args = append(args, "--fresh")
-	}
-
-	// Debug level
-	debug, _ := f.GetCount("debug")
-	d := maxInt(debug, fileConfig.Debug)
-	for i := 0; i < d; i++ {
-		args = append(args, "-d")
-	}
-
-	// Unrestricted
-	if unrestricted, _ := f.GetBool("unrestricted"); unrestricted || fileConfig.Unrestricted {
-		args = append(args, "--unrestricted")
-	}
-
-	// Memory (only if non-default)
-	if memory, _ := f.GetString("memory"); memory != "" && memory != config.DefaultMemoryLimit {
-		args = append(args, "--memory="+memory)
-	}
-
-	// CPU (only if non-default)
-	if cpus, _ := f.GetString("cpus"); cpus != "" && cpus != config.DefaultCPULimit {
-		args = append(args, "--cpus="+cpus)
-	}
-
-	// Zero residue
-	if zeroResidue, _ := f.GetBool("zero-residue"); zeroResidue || fileConfig.ZeroResidue {
-		args = append(args, "--zero-residue")
-	}
-
-	// Network (only if non-default)
-	if network, _ := f.GetString("network"); network != "" && network != "full" {
-		args = append(args, "--network="+network)
-	}
-
-	// Environment variables
-	if envVars, _ := f.GetStringArray("env"); len(envVars) > 0 {
-		for _, e := range envVars {
-			args = append(args, "-e", e)
+	cmd.Flags().Visit(func(fl *pflag.Flag) {
+		if bridgeExcludeFlags[fl.Name] {
+			return
 		}
-	}
+
+		switch fl.Value.Type() {
+		case "bool":
+			if fl.Value.String() == "true" {
+				args = append(args, "--"+fl.Name)
+			}
+		case "count":
+			count, _ := cmd.Flags().GetCount(fl.Name)
+			for i := 0; i < count; i++ {
+				args = append(args, "--"+fl.Name)
+			}
+		case "stringArray":
+			vals, _ := cmd.Flags().GetStringArray(fl.Name)
+			for _, v := range vals {
+				args = append(args, "--"+fl.Name, v)
+			}
+		default: // string, int, etc.
+			args = append(args, "--"+fl.Name+"="+fl.Value.String())
+		}
+	})
 
 	// Pass through Claude args
 	if len(claudeArgs) > 0 {
@@ -268,6 +263,9 @@ func collectClaudeArgs(cobraArgs []string) []string {
 
 // --- Env var validation ---
 
+// envVarKeyRe validates environment variable key format (POSIX).
+var envVarKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
 // validateEnvVar checks that an environment variable string is in KEY=VALUE format
 // with a valid POSIX key: [A-Za-z_][A-Za-z0-9_]*
 func validateEnvVar(envVar string) error {
@@ -276,8 +274,7 @@ func validateEnvVar(envVar string) error {
 		return fmt.Errorf("invalid env var format %q: must be KEY=VALUE", envVar)
 	}
 	key := envVar[:idx]
-	re := regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-	if !re.MatchString(key) {
+	if !envVarKeyRe.MatchString(key) {
 		return fmt.Errorf("invalid env var key %q: must match [A-Za-z_][A-Za-z0-9_]*", key)
 	}
 	return nil
@@ -293,14 +290,6 @@ func maxInt(a, b int) int {
 	return b
 }
 
-// firstNonEmpty returns a if non-empty, otherwise b.
-func firstNonEmpty(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
-}
-
 // boolPtrDefault dereferences a *bool, returning defaultVal if nil.
 // Used for config fields where nil means "not set" (use default).
 func boolPtrDefault(ptr *bool, defaultVal bool) bool {
@@ -308,4 +297,20 @@ func boolPtrDefault(ptr *bool, defaultVal bool) bool {
 		return defaultVal
 	}
 	return *ptr
+}
+
+// resolveStringFlag returns the CLI flag value if explicitly set by the user,
+// otherwise the config file value if non-empty, otherwise the flag default.
+// This prevents flags with non-empty defaults (e.g., --memory "4g") from
+// always shadowing config file values.
+func resolveStringFlag(f *pflag.FlagSet, name string, configValue string) string {
+	if f.Changed(name) {
+		val, _ := f.GetString(name)
+		return val
+	}
+	if configValue != "" {
+		return configValue
+	}
+	val, _ := f.GetString(name)
+	return val
 }

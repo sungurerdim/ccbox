@@ -70,6 +70,8 @@ func init() {
 	f.Bool("cache", false, "Enable Docker build cache (default: no-cache for fresh installs)")
 	f.Bool("attach-mode", false, "Container-only mode: skip bridge UI, run container directly")
 	f.Bool("no-bridge", false, "Disable bridge mode (same as --attach-mode)")
+	f.Bool("read-only", false, "Read-only root filesystem (writable dirs via tmpfs overlays)")
+	f.Bool("no-pull", false, "Skip pulling pre-built images from registry (local build only)")
 	f.StringArrayP("env", "e", nil, "Pass environment variables to container (KEY=VALUE, repeatable)")
 
 	// --- Subcommands ---

@@ -41,6 +41,10 @@ type ExecuteOptions struct {
 	MemoryLimit   string
 	CPULimit      string
 	NetworkPolicy string
+	Progress      string // Docker build progress mode: "auto", "plain", "tty"
+	ReadOnly      bool
+	NoPull        bool
+	Version       string
 }
 
 // DetectionResult holds the outcome of project type detection and stack resolution.
@@ -135,20 +139,20 @@ func detectFromProject(projectPath string, verbose bool) config.LanguageStack {
 func Execute(opts ExecuteOptions) error {
 	// Phase 1: Ensure Docker is available
 	if err := checkDockerRunning(); err != nil {
-		return err
+		return fmt.Errorf("check docker: %w", err)
 	}
 
 	// Phase 2: Detect project type and resolve stack
 	detection, err := DetectAndReportStack(opts.ProjectPath, opts.StackName, opts.Verbose)
 	if err != nil {
-		return err
+		return fmt.Errorf("detect project: %w", err)
 	}
 
 	stack := detection.Stack
 
 	// Phase 3: Ensure images are built
 	if err := ensureImages(string(stack), opts); err != nil {
-		return err
+		return fmt.Errorf("prepare images: %w", err)
 	}
 
 	if opts.BuildOnly {
@@ -169,6 +173,7 @@ func Execute(opts ExecuteOptions) error {
 		MemoryLimit:   opts.MemoryLimit,
 		CPULimit:      opts.CPULimit,
 		NetworkPolicy: opts.NetworkPolicy,
+		ReadOnly:      opts.ReadOnly,
 	}
 
 	runConfig, err := BuildDockerRunConfig(
@@ -182,7 +187,7 @@ func Execute(opts ExecuteOptions) error {
 	}
 
 	// Phase 5: Run container
-	return executeContainer(runConfig, detection.ProjectName, opts.Debug, opts.Headless)
+	return executeContainer(runConfig, detection.ProjectName, opts.Debug, opts.Headless, opts.MemoryLimit)
 }
 
 // --- Docker operations ---
@@ -198,7 +203,7 @@ func checkDockerRunning() error {
 	return nil
 }
 
-// ensureImages builds base and stack images if they don't exist.
+// ensureImages ensures the stack image exists locally, trying pull then build.
 func ensureImages(stack string, opts ExecuteOptions) error {
 	// Check if stack image exists
 	imageName := config.GetImageName(stack)
@@ -206,27 +211,69 @@ func ensureImages(stack string, opts ExecuteOptions) error {
 		return nil
 	}
 
+	// Try pulling pre-built image first (unless --no-pull)
+	if !opts.NoPull {
+		version := opts.Version
+		if version == "" {
+			version = "latest"
+		}
+		if pullImage(stack, imageName, version, opts.Progress) {
+			return nil
+		}
+	}
+
+	// Fallback: build locally
 	// Check if base image exists (required for most stacks)
 	dep := config.StackDependencies[config.LanguageStack(stack)]
 	if dep != "" {
 		baseImage := config.GetImageName(string(dep))
 		if !imageExists(baseImage) {
-			log.Bold("First-time setup: building base image...")
-			if err := buildImage(string(dep), opts.Cache); err != nil {
-				return fmt.Errorf("failed to build base image: %w", err)
+			if !opts.NoPull {
+				version := opts.Version
+				if version == "" {
+					version = "latest"
+				}
+				pullImage(string(dep), baseImage, version, opts.Progress)
 			}
-			log.Newline()
+			if !imageExists(baseImage) {
+				log.Bold("First-time setup: building base image...")
+				if err := buildImage(string(dep), opts.Cache, opts.Progress); err != nil {
+					return fmt.Errorf("failed to build base image: %w", err)
+				}
+				log.Newline()
+			}
 		}
 	}
 
 	// Build stack image
 	log.Bold(fmt.Sprintf("Building %s image...", stack))
-	if err := buildImage(stack, opts.Cache); err != nil {
+	if err := buildImage(stack, opts.Cache, opts.Progress); err != nil {
 		return fmt.Errorf("failed to build %s image: %w", stack, err)
 	}
 	log.Newline()
 
 	return nil
+}
+
+// pullImage attempts to pull a pre-built image from the registry and tag it locally.
+// Returns true if the pull and tag succeeded.
+func pullImage(stack, localName, version, progress string) bool {
+	ref := config.RegistryImageName(stack, version)
+	log.Dim("Pulling " + ref + "...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), config.DockerBuildTimeout)
+	defer cancel()
+
+	if err := docker.Pull(ctx, ref, progress); err != nil {
+		log.Debugf("Pull failed: %v", err)
+		return false
+	}
+	if err := docker.Tag(ctx, ref, localName); err != nil {
+		log.Debugf("Tag failed: %v", err)
+		return false
+	}
+	log.Dim("Using pre-built image: " + ref)
+	return true
 }
 
 // imageExists checks if a Docker image exists locally.
@@ -238,7 +285,7 @@ func imageExists(imageName string) bool {
 }
 
 // buildImage builds a Docker image for the given stack.
-func buildImage(stack string, cache bool) error {
+func buildImage(stack string, cache bool, progress string) error {
 	buildDir, err := generate.WriteBuildFiles(config.LanguageStack(stack))
 	if err != nil {
 		return fmt.Errorf("generate build files: %w", err)
@@ -250,13 +297,22 @@ func buildImage(stack string, cache bool) error {
 	defer cancel()
 
 	return docker.Build(ctx, buildDir, imageName, docker.BuildOptions{
-		NoCache: !cache,
+		NoCache:  !cache,
+		Progress: progress,
 	})
 }
 
 // executeContainer runs the Docker container with the given configuration
 // and handles exit codes and diagnostics.
-func executeContainer(runConfig *DockerRunConfig, projectName string, debug int, headless bool) error {
+//
+// Design decision: This uses exec.Command("docker", ...) instead of the Docker
+// SDK's container.Run API. The SDK approach (used for builds, listing, cleanup)
+// requires manual TTY/pty setup and raw terminal mode management, while
+// exec.Command inherits the host's terminal directly — giving correct TTY
+// pass-through, signal propagation, and window resize handling for free.
+// The SDK is used everywhere else where programmatic control matters more
+// than terminal fidelity (build output, container inspection, exec).
+func executeContainer(runConfig *DockerRunConfig, projectName string, debug int, headless bool, memoryLimit string) error {
 	log.Dim("Starting Claude Code...")
 	log.Newline()
 
@@ -317,7 +373,10 @@ func executeContainer(runConfig *DockerRunConfig, projectName string, debug int,
 		// Ctrl+C -- normal user interruption
 		return nil
 	case 137:
-		memLimit := config.DefaultMemoryLimit
+		memLimit := memoryLimit
+		if memLimit == "" {
+			memLimit = config.DefaultMemoryLimit
+		}
 		log.Warn(fmt.Sprintf("Container was killed (OOM or manual stop, limit: %s)", memLimit))
 		log.Dim("Try: ccbox --unrestricted (removes memory limits)")
 	case 139:

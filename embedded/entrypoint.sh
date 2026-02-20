@@ -31,7 +31,7 @@ trap _cleanup EXIT
 trap 'trap - TERM; _cleanup; kill -- -$$' TERM
 trap 'trap - INT; _cleanup; kill -- -$$' INT
 
-set -e
+set -euo pipefail
 
 # === Timezone ===
 [[ -n "$TZ" && -f "/usr/share/zoneinfo/$TZ" ]] && {
@@ -260,6 +260,10 @@ fi
 # === fakepath.so Preload ===
 FAKEPATH_PRELOAD=""
 [[ (-n "$CCBOX_WIN_ORIGINAL_PATH" || -n "$CCBOX_PATH_MAP") && -f "/usr/lib/fakepath.so" ]] && FAKEPATH_PRELOAD="LD_PRELOAD=/usr/lib/fakepath.so"
+
+# === Health Signal ===
+# Touch health file so bridge mode can detect successful container initialization.
+touch /tmp/ccbox-healthy 2>/dev/null || true
 
 # === Execute ===
 if [[ -n "$CCBOX_CMD" ]]; then

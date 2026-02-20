@@ -23,7 +23,7 @@ type CcboxConfig struct {
 	Deps string `yaml:"deps,omitempty"` // "all", "prod", or "skip"
 
 	// Security
-	ZeroResidue   bool   `yaml:"zeroResidue,omitempty"`
+	ZeroResidue   *bool  `yaml:"zeroResidue,omitempty"`
 	NetworkPolicy string `yaml:"networkPolicy,omitempty"` // "full", "isolated", or path to policy.json
 
 	// Resource limits
@@ -32,14 +32,15 @@ type CcboxConfig struct {
 
 	// Docker
 	Progress string `yaml:"progress,omitempty"` // "auto", "plain", or "tty"
-	Cache    *bool  `yaml:"cache,omitempty"`     // pointer to distinguish unset from false
-	Prune    *bool  `yaml:"prune,omitempty"`     // pointer to distinguish unset from false
+	Cache    *bool  `yaml:"cache,omitempty"`    // pointer to distinguish unset from false
+	Prune    *bool  `yaml:"prune,omitempty"`    // pointer to distinguish unset from false
 
 	// Behavior
-	Fresh        bool `yaml:"fresh,omitempty"`
-	Headless     bool `yaml:"headless,omitempty"`
-	Unrestricted bool `yaml:"unrestricted,omitempty"`
-	Debug        int  `yaml:"debug,omitempty"`
+	Fresh        *bool `yaml:"fresh,omitempty"`
+	Headless     *bool `yaml:"headless,omitempty"`
+	Unrestricted *bool `yaml:"unrestricted,omitempty"`
+	ReadOnly     *bool `yaml:"readOnly,omitempty"`
+	Debug        int   `yaml:"debug,omitempty"`
 
 	// Environment variables
 	Env map[string]string `yaml:"env,omitempty"`
@@ -72,6 +73,10 @@ const (
 const (
 	// CcboxPrefix is the prefix used for all ccbox Docker resources.
 	CcboxPrefix = "ccbox"
+
+	// Docker container labels for ccbox resource identification.
+	LabelStack   = "ccbox.stack"
+	LabelProject = "ccbox.project"
 )
 
 // --- Path Constants ---
@@ -118,23 +123,23 @@ const (
 // Env holds all ccbox environment variable names as constants.
 var Env = struct {
 	// Container configuration
-	UID            string
-	GID            string
-	Debug          string
-	Unrestricted   string
-	MinimalMount   string
+	UID             string
+	GID             string
+	Debug           string
+	Unrestricted    string
+	MinimalMount    string
 	PersistentPaths string
-	ZeroResidue    string
+	ZeroResidue     string
 	// Path mapping
-	PathMap          string
-	DirMap           string
-	WinOriginalPath  string
+	PathMap         string
+	DirMap          string
+	WinOriginalPath string
 	// Resource limits
-	PidsLimit  string
-	TmpSize    string
-	ShmSize    string
+	PidsLimit   string
+	TmpSize     string
+	ShmSize     string
 	MemoryLimit string
-	CPULimit   string
+	CPULimit    string
 	// Network isolation
 	NetworkPolicy string
 }{
@@ -154,6 +159,24 @@ var Env = struct {
 	MemoryLimit:     "CCBOX_MEMORY_LIMIT",
 	CPULimit:        "CCBOX_CPU_LIMIT",
 	NetworkPolicy:   "CCBOX_NETWORK_POLICY",
+}
+
+// --- Registry ---
+
+// DefaultRegistry is the default container registry for pre-built ccbox images.
+const DefaultRegistry = "ghcr.io/sungur/ccbox"
+
+// RegistryImageName returns the fully qualified image reference for a stack.
+func RegistryImageName(stack, version string) string {
+	return fmt.Sprintf("%s/%s:%s", registryBase(), stack, version)
+}
+
+// registryBase returns the registry base URL, allowing override via CCBOX_REGISTRY.
+func registryBase() string {
+	if v := os.Getenv("CCBOX_REGISTRY"); v != "" {
+		return v
+	}
+	return DefaultRegistry
 }
 
 // --- Temp Paths ---

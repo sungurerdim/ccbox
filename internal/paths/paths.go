@@ -48,19 +48,6 @@ func IsUncPath(path string) bool {
 	return uncPathRe.MatchString(path)
 }
 
-// IsWsl checks if running inside WSL. Delegates to platform detection.
-// This is a convenience function; prefer platform.DetectHost() for more detail.
-func IsWsl() bool {
-	if runtime.GOOS != "linux" {
-		return false
-	}
-	data, err := os.ReadFile("/proc/version")
-	if err == nil && strings.Contains(strings.ToLower(string(data)), "microsoft") {
-		return true
-	}
-	return os.Getenv("WSL_DISTRO_NAME") != "" || os.Getenv("WSLENV") != ""
-}
-
 // --- Path normalization ---
 
 // normalizePathSeparators converts backslashes to forward slashes,

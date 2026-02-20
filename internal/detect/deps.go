@@ -29,23 +29,23 @@ const (
 
 // DepsInfo holds detected dependency information for a project.
 type DepsInfo struct {
-	Name       string   `json:"name"`
-	Files      []string `json:"files"`
-	InstallAll string   `json:"installAll"`
-	InstallProd string  `json:"installProd"`
-	HasDev     bool     `json:"hasDev"`
-	Priority   int      `json:"priority"`
+	Name        string   `json:"name"`
+	Files       []string `json:"files"`
+	InstallAll  string   `json:"installAll"`
+	InstallProd string   `json:"installProd"`
+	HasDev      bool     `json:"hasDev"`
+	Priority    int      `json:"priority"`
 }
 
 // packageManager defines a detection configuration for a package manager.
 type packageManager struct {
-	name       string
-	detect     []string
-	installAll string
+	name        string
+	detect      []string
+	installAll  string
 	installProd string
-	hasDev     bool
-	priority   int
-	detectFn   string
+	hasDev      bool
+	priority    int
+	detectFn    string
 }
 
 // allPackageManagers defines all supported package managers with detection rules.
@@ -490,19 +490,19 @@ func detectMake(dir string, files []string) *DepsInfo {
 
 // detectFunctions maps function name strings to actual Go functions.
 var detectFunctions = map[string]detectFn{
-	"detectPdmPyproject":      detectPdmPyproject,
-	"detectPipPyproject":      detectPipPyproject,
-	"detectPipRequirements":   detectPipRequirements,
-	"detectPipSetup":          detectPipSetup,
-	"detectDotnet":            detectDotnet,
-	"detectCabal":             detectCabal,
-	"detectLuarocks":          detectLuarocks,
-	"detectNimble":            detectNimble,
-	"detectOpam":              detectOpam,
-	"detectBun":               detectBun,
-	"detectYarn":              detectYarn,
+	"detectPdmPyproject":       detectPdmPyproject,
+	"detectPipPyproject":       detectPipPyproject,
+	"detectPipRequirements":    detectPipRequirements,
+	"detectPipSetup":           detectPipSetup,
+	"detectDotnet":             detectDotnet,
+	"detectCabal":              detectCabal,
+	"detectLuarocks":           detectLuarocks,
+	"detectNimble":             detectNimble,
+	"detectOpam":               detectOpam,
+	"detectBun":                detectBun,
+	"detectYarn":               detectYarn,
 	"detectNodePackageManager": detectNodePackageManager,
-	"detectMake":              detectMake,
+	"detectMake":               detectMake,
 }
 
 // fileExists returns true if the path exists and is accessible.

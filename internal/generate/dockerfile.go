@@ -647,17 +647,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 // dockerfileGenerators maps each LanguageStack to its Dockerfile generator function.
 var dockerfileGenerators = map[config.LanguageStack]func() string{
 	// Core Language Stacks
-	config.StackBase:    baseDockerfile,
-	config.StackPython:  pythonDockerfile,
-	config.StackWeb:     webDockerfile,
-	config.StackGo:      goDockerfile,
-	config.StackRust:    rustDockerfile,
-	config.StackJava:    javaDockerfile,
-	config.StackCpp:     cppDockerfile,
-	config.StackDotnet:  dotnetDockerfile,
-	config.StackSwift:   swiftDockerfile,
-	config.StackDart:    dartDockerfile,
-	config.StackLua:     luaDockerfile,
+	config.StackBase:   baseDockerfile,
+	config.StackPython: pythonDockerfile,
+	config.StackWeb:    webDockerfile,
+	config.StackGo:     goDockerfile,
+	config.StackRust:   rustDockerfile,
+	config.StackJava:   javaDockerfile,
+	config.StackCpp:    cppDockerfile,
+	config.StackDotnet: dotnetDockerfile,
+	config.StackSwift:  swiftDockerfile,
+	config.StackDart:   dartDockerfile,
+	config.StackLua:    luaDockerfile,
 
 	// Combined Language Stacks
 	config.StackJVM:        jvmDockerfile,

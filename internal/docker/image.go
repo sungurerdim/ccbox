@@ -22,6 +22,7 @@ type BuildOptions struct {
 	Labels     map[string]string
 	Target     string // multi-stage build target
 	Dockerfile string // relative path within the build context (default: "Dockerfile")
+	Progress   string // output mode: "auto" (default), "plain", "tty"
 }
 
 // Build creates a Docker image from the contents of buildDir.
@@ -61,8 +62,8 @@ func Build(ctx context.Context, buildDir string, tag string, opts BuildOptions) 
 		BuildArgs:   opts.BuildArgs,
 		Labels:      opts.Labels,
 		Target:      opts.Target,
-		Remove:      true,                // remove intermediate containers after build
-		ForceRemove: true,                // remove intermediate containers even on failure
+		Remove:      true,                  // remove intermediate containers after build
+		ForceRemove: true,                  // remove intermediate containers even on failure
 		Version:     types.BuilderBuildKit, // required for RUN --mount=type=cache
 	}
 
@@ -74,7 +75,7 @@ func Build(ctx context.Context, buildDir string, tag string, opts BuildOptions) 
 
 	// Parse and stream the JSON-encoded build output. This surfaces build
 	// progress to the user and returns the first build error encountered.
-	if err := readBuildOutput(resp.Body); err != nil {
+	if err := readBuildOutput(resp.Body, opts.Progress); err != nil {
 		return err
 	}
 
@@ -83,9 +84,21 @@ func Build(ctx context.Context, buildDir string, tag string, opts BuildOptions) 
 
 // readBuildOutput decodes the JSON message stream from Docker's build API.
 // Supports both legacy builder and BuildKit output formats.
-func readBuildOutput(reader io.Reader) error {
+// Progress mode: "plain" forces non-TTY output, "tty" forces TTY, "auto"/empty auto-detects.
+func readBuildOutput(reader io.Reader, progress string) error {
 	fd := os.Stdout.Fd()
-	return jsonmessage.DisplayJSONMessagesStream(reader, os.Stdout, fd, true, nil)
+	isTTY := true // default: TTY-style output with progress bars
+	switch progress {
+	case "plain":
+		isTTY = false
+	case "tty":
+		isTTY = true
+	default: // "auto" or empty — auto-detect via file mode
+		if info, err := os.Stdout.Stat(); err == nil {
+			isTTY = info.Mode()&os.ModeCharDevice != 0
+		}
+	}
+	return jsonmessage.DisplayJSONMessagesStream(reader, os.Stdout, fd, isTTY, nil)
 }
 
 // createBuildContext creates a tar archive of the build directory contents,
@@ -154,6 +167,37 @@ func createBuildContext(buildDir string) (io.ReadCloser, error) {
 	}()
 
 	return pr, nil
+}
+
+// Pull downloads an image from a registry.
+// The progress parameter controls output: "plain" for non-TTY, "tty" for TTY,
+// or empty/"auto" for auto-detection.
+func Pull(ctx context.Context, ref string, progress string) error {
+	cli, err := NewClient()
+	if err != nil {
+		return fmt.Errorf("docker client: %w", err)
+	}
+
+	reader, err := cli.ImagePull(ctx, ref, image.PullOptions{})
+	if err != nil {
+		return fmt.Errorf("pull image %s: %w", ref, err)
+	}
+	defer reader.Close()
+
+	return readBuildOutput(reader, progress)
+}
+
+// Tag adds a new tag to an existing image.
+func Tag(ctx context.Context, source, target string) error {
+	cli, err := NewClient()
+	if err != nil {
+		return fmt.Errorf("docker client: %w", err)
+	}
+
+	if err := cli.ImageTag(ctx, source, target); err != nil {
+		return fmt.Errorf("tag image %s -> %s: %w", source, target, err)
+	}
+	return nil
 }
 
 // Exists returns true if a Docker image with the given name (or name:tag)

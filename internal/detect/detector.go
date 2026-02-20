@@ -21,9 +21,9 @@ import (
 
 // LanguageDetection represents a single language detection with confidence score.
 type LanguageDetection struct {
-	Language   string             `json:"language"`
-	Confidence int                `json:"confidence"`
-	Trigger    string             `json:"trigger"`
+	Language   string               `json:"language"`
+	Confidence int                  `json:"confidence"`
+	Trigger    string               `json:"trigger"`
 	Stack      config.LanguageStack `json:"stack"`
 }
 
