@@ -6,7 +6,10 @@
 package cli
 
 import (
+	"context"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -85,8 +88,12 @@ func init() {
 }
 
 // Execute runs the root command and exits on error.
+// Sets up signal handling for graceful shutdown via context cancellation.
 func Execute() {
-	if err := rootCmd.Execute(); err != nil {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		log.Error(err.Error())
 		os.Exit(1)
 	}

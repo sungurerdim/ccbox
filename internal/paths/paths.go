@@ -12,7 +12,6 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/text/unicode/norm"
@@ -68,11 +67,13 @@ func normalizePathSeparators(path string) string {
 
 // --- Path conversion ---
 
+// windowsToDockerRe parses a Windows path into drive letter and rest components.
+var windowsToDockerRe = regexp.MustCompile(`^([A-Za-z]):[/\\]*(.*)$`)
+
 // WindowsToDockerPath converts a Windows path to Docker Desktop compatible format.
 // D:\GitHub\Project -> D:/GitHub/Project
 func WindowsToDockerPath(path string) string {
-	re := regexp.MustCompile(`^([A-Za-z]):[/\\]*(.*)$`)
-	match := re.FindStringSubmatch(path)
+	match := windowsToDockerRe.FindStringSubmatch(path)
 	if match == nil {
 		return path
 	}
@@ -212,53 +213,27 @@ func GetDockerEnv() []string {
 func ValidateProjectPath(path string) (string, error) {
 	projectPath, err := filepath.Abs(path)
 	if err != nil {
-		return "", &PathError{Message: fmt.Sprintf("Cannot resolve path: %s", path)}
+		return "", &PathError{Message: fmt.Sprintf("cannot resolve path: %s", path)}
 	}
 
 	info, err := os.Lstat(projectPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return "", &PathError{Message: fmt.Sprintf("Project path does not exist: %s", projectPath)}
+			return "", &PathError{Message: fmt.Sprintf("project path does not exist: %s", projectPath)}
 		}
-		return "", &PathError{Message: fmt.Sprintf("Cannot access path: %s: %v", projectPath, err)}
+		return "", &PathError{Message: fmt.Sprintf("cannot access path: %s: %v", projectPath, err)}
 	}
 
 	// Reject symlinks to prevent symlink-based path traversal
 	if info.Mode()&os.ModeSymlink != 0 {
-		return "", &PathError{Message: fmt.Sprintf("Project path cannot be a symlink: %s", projectPath)}
+		return "", &PathError{Message: fmt.Sprintf("project path cannot be a symlink: %s", projectPath)}
 	}
 
 	if !info.IsDir() {
-		return "", &PathError{Message: fmt.Sprintf("Project path must be a directory: %s", projectPath)}
+		return "", &PathError{Message: fmt.Sprintf("project path must be a directory: %s", projectPath)}
 	}
 
 	return projectPath, nil
-}
-
-// ValidateFilePath validates and resolves a file path.
-// If mustExist is true, the file must already exist.
-func ValidateFilePath(path string, mustExist bool) (string, error) {
-	filePath, err := filepath.Abs(path)
-	if err != nil {
-		return "", &PathError{Message: fmt.Sprintf("Cannot resolve path: %s", path)}
-	}
-
-	info, err := os.Stat(filePath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			if mustExist {
-				return "", &PathError{Message: fmt.Sprintf("File does not exist: %s", filePath)}
-			}
-			return filePath, nil
-		}
-		return "", &PathError{Message: fmt.Sprintf("Cannot access path: %s: %v", filePath, err)}
-	}
-
-	if info.IsDir() {
-		return "", &PathError{Message: fmt.Sprintf("Path is not a file: %s", filePath)}
-	}
-
-	return filePath, nil
 }
 
 // GetClaudeConfigDir returns the default Claude config directory path (~/.claude).
@@ -273,15 +248,6 @@ func GetClaudeConfigDir() string {
 // --- Project directory name handling ---
 
 const maxDirNameBytes = 255
-
-// windowsReservedNames is the set of names that cannot be used as directory names on Windows.
-var windowsReservedNames = map[string]bool{
-	"con": true, "prn": true, "aux": true, "nul": true,
-	"com1": true, "com2": true, "com3": true, "com4": true,
-	"com5": true, "com6": true, "com7": true, "com8": true, "com9": true,
-	"lpt1": true, "lpt2": true, "lpt3": true, "lpt4": true,
-	"lpt5": true, "lpt6": true, "lpt7": true, "lpt8": true, "lpt9": true,
-}
 
 // NormalizeProjectDirName normalizes a project directory name for cross-platform compatibility.
 //
@@ -335,85 +301,11 @@ func NormalizeProjectDirName(dirName string) string {
 	return normalized
 }
 
-// DirNameValidation holds the result of validating a project directory name.
-type DirNameValidation struct {
-	// Valid is true if the name has no blocking issues.
-	Valid bool
-	// Normalized is the safe-to-use directory name.
-	Normalized string
-	// Errors contains blocking issues that prevent usage.
-	Errors []string
-	// Warnings contains non-blocking informational messages.
-	Warnings []string
-}
+// dockerSafeRe matches characters not allowed in Docker identifiers.
+var dockerSafeRe = regexp.MustCompile(`[^a-z0-9._-]`)
 
-// ValidateProjectDirName validates a project directory name for Docker container compatibility.
-func ValidateProjectDirName(dirName string) DirNameValidation {
-	var errs []string
-	var warnings []string
-
-	normalized := NormalizeProjectDirName(dirName)
-
-	if dirName == "" || strings.TrimSpace(dirName) == "" {
-		errs = append(errs, "Directory name is empty")
-		return DirNameValidation{Valid: false, Normalized: "project", Errors: errs, Warnings: warnings}
-	}
-
-	// Check byte length of original
-	originalBytes := len(dirName)
-	if originalBytes > maxDirNameBytes {
-		warnings = append(warnings, fmt.Sprintf("Name exceeds %d bytes (%d bytes), will be truncated", maxDirNameBytes, originalBytes))
-	}
-
-	// Check Windows reserved names
-	lowerName := strings.ToLower(normalized)
-	if idx := strings.LastIndex(lowerName, "."); idx >= 0 {
-		lowerName = lowerName[:idx]
-	}
-	if windowsReservedNames[lowerName] {
-		warnings = append(warnings, fmt.Sprintf("%q is a reserved name on Windows, may cause issues", normalized))
-	}
-
-	// Check for transformations that happened
-	if normalized != dirName {
-		if norm.NFC.String(dirName) != dirName {
-			warnings = append(warnings, "Name contains non-normalized Unicode characters (NFD)")
-		}
-		if containsControlChars(dirName) {
-			warnings = append(warnings, "Name contains control characters (removed)")
-		}
-		if strings.TrimSpace(dirName) != dirName {
-			warnings = append(warnings, "Name has leading/trailing whitespace (trimmed)")
-		}
-		trimmed := strings.TrimSpace(dirName)
-		if len(trimmed) > 0 && (trimmed[len(trimmed)-1] == '.' || trimmed[len(trimmed)-1] == ' ') {
-			warnings = append(warnings, "Name has trailing dots/spaces (removed for Windows)")
-		}
-	}
-
-	// Non-ASCII informational warnings
-	if containsNonASCII(normalized) {
-		if containsEmoji(normalized) {
-			warnings = append(warnings, "Name contains emoji characters")
-		} else if containsCJK(normalized) {
-			warnings = append(warnings, "Name contains CJK (Chinese/Japanese/Korean) characters")
-		} else {
-			warnings = append(warnings, "Name contains non-ASCII characters")
-		}
-	}
-
-	// Shell-sensitive characters
-	if containsShellSpecial(normalized) {
-		warnings = append(warnings, "Name contains shell special characters (safe with current implementation)")
-	}
-
-	return DirNameValidation{
-		Valid:      len(errs) == 0,
-		Normalized: normalized,
-		Errors:     errs,
-		Warnings:   warnings,
-	}
-}
+// dockerMultiHyphenRe matches consecutive hyphens for collapsing.
+var dockerMultiHyphenRe = regexp.MustCompile(`-{2,}`)
 
 // SanitizeForDocker sanitizes a project name for Docker identifiers
 // (container names, image tags). Docker requires: lowercase, alphanumeric,
@@ -430,12 +322,10 @@ func SanitizeForDocker(name string, maxLength int) string {
 	safe := strings.ToLower(name)
 
 	// Replace non-allowed characters with hyphen
-	safeRe := regexp.MustCompile(`[^a-z0-9._-]`)
-	safe = safeRe.ReplaceAllString(safe, "-")
+	safe = dockerSafeRe.ReplaceAllString(safe, "-")
 
 	// Collapse multiple hyphens
-	multiHyphen := regexp.MustCompile(`-{2,}`)
-	safe = multiHyphen.ReplaceAllString(safe, "-")
+	safe = dockerMultiHyphenRe.ReplaceAllString(safe, "-")
 
 	// Remove leading/trailing hyphens, dots, underscores
 	safe = strings.Trim(safe, "-_.")
@@ -452,50 +342,3 @@ func SanitizeForDocker(name string, maxLength int) string {
 	return safe
 }
 
-// --- Helpers ---
-
-func containsControlChars(s string) bool {
-	for _, r := range s {
-		if r <= 0x1F || (r >= 0x7F && r <= 0x9F) {
-			return true
-		}
-	}
-	return false
-}
-
-func containsNonASCII(s string) bool {
-	for _, r := range s {
-		if r < 0x20 || r > 0x7E {
-			return true
-		}
-	}
-	return false
-}
-
-func containsEmoji(s string) bool {
-	for _, r := range s {
-		if unicode.Is(unicode.So, r) || (r >= 0x1F600 && r <= 0x1F64F) || (r >= 0x1F300 && r <= 0x1F5FF) {
-			return true
-		}
-	}
-	return false
-}
-
-func containsCJK(s string) bool {
-	for _, r := range s {
-		if (r >= 0x4E00 && r <= 0x9FFF) || (r >= 0x3400 && r <= 0x4DBF) {
-			return true
-		}
-	}
-	return false
-}
-
-func containsShellSpecial(s string) bool {
-	const specials = "$`'\"\\!&|;*?[]{}()<>"
-	for _, r := range s {
-		if strings.ContainsRune(specials, r) {
-			return true
-		}
-	}
-	return false
-}

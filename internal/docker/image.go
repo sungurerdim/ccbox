@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/filters"
@@ -251,15 +250,3 @@ func RemoveImage(ctx context.Context, name string, force bool) error {
 	return nil
 }
 
-// ImageInfo returns a human-readable summary string for an image,
-// including its tags and size in megabytes.
-func ImageInfo(img image.Summary) string {
-	var tags string
-	if len(img.RepoTags) > 0 {
-		tags = strings.Join(img.RepoTags, ", ")
-	} else {
-		tags = "<none>"
-	}
-	sizeMB := float64(img.Size) / 1024 / 1024
-	return fmt.Sprintf("%s (%.1f MB)", tags, sizeMB)
-}

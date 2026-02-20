@@ -102,17 +102,18 @@ func TestAddClaudeEnvAuthPassthrough(t *testing.T) {
 	defer os.Unsetenv("ANTHROPIC_API_KEY")
 
 	var cmd []string
-	addClaudeEnv(&cmd)
+	var secrets []string
+	addClaudeEnv(&cmd, &secrets)
 
 	found := false
-	for _, arg := range cmd {
-		if arg == "ANTHROPIC_API_KEY=test-key-123" {
+	for _, s := range secrets {
+		if s == "ANTHROPIC_API_KEY=test-key-123" {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Error("addClaudeEnv should pass through ANTHROPIC_API_KEY")
+		t.Error("addClaudeEnv should pass through ANTHROPIC_API_KEY to secrets")
 	}
 }
 

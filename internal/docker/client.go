@@ -56,27 +56,35 @@ type DockerAPI interface {
 
 var (
 	instance DockerAPI
-	once     sync.Once
+	mu       sync.Mutex
 	initErr  error
 )
 
 // NewClient returns a singleton Docker client implementing DockerAPI.
+// Uses sync.Mutex instead of sync.Once to allow retry on transient init errors
+// (e.g., Docker daemon not yet started when first called).
 func NewClient() (DockerAPI, error) {
-	once.Do(func() {
-		instance, initErr = dockerclient.NewClientWithOpts(
-			dockerclient.FromEnv,
-			dockerclient.WithAPIVersionNegotiation(),
-		)
-	})
+	mu.Lock()
+	defer mu.Unlock()
+
+	if instance != nil {
+		return instance, nil
+	}
+
+	instance, initErr = dockerclient.NewClientWithOpts(
+		dockerclient.FromEnv,
+		dockerclient.WithAPIVersionNegotiation(),
+	)
 	return instance, initErr
 }
 
 // SetClientForTest replaces the singleton Docker client with the provided
 // implementation. Intended for unit tests only — not safe for concurrent use.
 func SetClientForTest(api DockerAPI) {
+	mu.Lock()
+	defer mu.Unlock()
 	instance = api
 	initErr = nil
-	once.Do(func() {}) // mark as initialized
 }
 
 // CheckHealth checks if Docker daemon is responsive

@@ -313,6 +313,11 @@ func buildImage(stack string, cache bool, progress string) error {
 // The SDK is used everywhere else where programmatic control matters more
 // than terminal fidelity (build output, container inspection, exec).
 func executeContainer(runConfig *DockerRunConfig, projectName string, debug int, headless bool, memoryLimit string) error {
+	// Clean up secrets env file after container exits
+	if runConfig.EnvFile != "" {
+		defer os.Remove(runConfig.EnvFile)
+	}
+
 	log.Dim("Starting Claude Code...")
 	log.Newline()
 

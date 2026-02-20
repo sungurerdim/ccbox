@@ -10,17 +10,19 @@ import (
 	"github.com/sungur/ccbox/internal/config"
 	"github.com/sungur/ccbox/internal/git"
 	"github.com/sungur/ccbox/internal/log"
+	"github.com/sungur/ccbox/internal/platform"
 )
 
-// envVarKeyRe validates environment variable key format.
-var envVarKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+// EnvVarKeyRe validates environment variable key format (POSIX).
+var EnvVarKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // sessionPathEncodeRe matches characters that Claude Code replaces with hyphens
 // when encoding project paths as directory names under ~/.claude/projects/.
 var sessionPathEncodeRe = regexp.MustCompile(`[:/\\. ]`)
 
-// addGitEnv adds git identity and token environment variables.
-func addGitEnv(cmd *[]string) {
+// addGitEnv adds git identity environment variables to command args.
+// Sensitive values (tokens) are added to secrets list instead.
+func addGitEnv(cmd *[]string, secrets *[]string) {
 	creds := git.GetCredentials()
 
 	if creds.Name != "" {
@@ -32,7 +34,7 @@ func addGitEnv(cmd *[]string) {
 		*cmd = append(*cmd, "-e", "GIT_COMMITTER_EMAIL="+creds.Email)
 	}
 	if creds.Token != "" {
-		*cmd = append(*cmd, "-e", "GITHUB_TOKEN="+creds.Token)
+		*secrets = append(*secrets, "GITHUB_TOKEN="+creds.Token)
 	}
 
 	// Log summary
@@ -162,11 +164,14 @@ func addCapabilityRestrictions(cmd *[]string, networkPolicy string) {
 	constraints := Constraints()
 	*cmd = append(*cmd,
 		"--cap-drop="+constraints.CapDrop,
-		"--cap-add=SETUID",    // gosu: change user ID
-		"--cap-add=SETGID",    // gosu: change group ID
-		"--cap-add=CHOWN",     // entrypoint: change file ownership
-		"--cap-add=SYS_ADMIN", // FUSE: mount filesystem in userspace
+		"--cap-add=SETUID", // gosu: change user ID
+		"--cap-add=SETGID", // gosu: change group ID
+		"--cap-add=CHOWN",  // entrypoint: change file ownership
 	)
+	// SYS_ADMIN only needed for FUSE mount on Windows/WSL
+	if platform.NeedsFuse() {
+		*cmd = append(*cmd, "--cap-add=SYS_ADMIN")
+	}
 	// iptables requires NET_ADMIN for network isolation rules.
 	if networkPolicy != "" && networkPolicy != "full" {
 		*cmd = append(*cmd, "--cap-add=NET_ADMIN")
@@ -206,11 +211,13 @@ func addDnsOptions(cmd *[]string) {
 }
 
 // addClaudeEnv adds Claude Code and runtime environment variables.
-func addClaudeEnv(cmd *[]string) {
+// Sensitive values (API keys, tokens) are added to secrets list instead.
+func addClaudeEnv(cmd *[]string, secrets *[]string) {
 	tz := GetHostTimezone()
 	*cmd = append(*cmd, "-e", "TZ="+tz)
 
-	// Authentication: pass through API keys and OAuth tokens if set on host
+	// Authentication: pass through API keys and OAuth tokens via env-file
+	// to prevent exposure in /proc/pid/cmdline
 	authVars := []string{
 		"ANTHROPIC_API_KEY",
 		"CLAUDE_CODE_API_KEY",
@@ -218,7 +225,7 @@ func addClaudeEnv(cmd *[]string) {
 	}
 	for _, v := range authVars {
 		if val := os.Getenv(v); val != "" {
-			*cmd = append(*cmd, "-e", v+"="+val)
+			*secrets = append(*secrets, v+"="+val)
 		}
 	}
 
@@ -255,10 +262,46 @@ func parseEnvVar(envVar string) (key, value string, ok bool) {
 	value = envVar[idx+1:]
 
 	// Validate key: [A-Za-z_][A-Za-z0-9_]*
-	if !envVarKeyRe.MatchString(key) {
+	if !EnvVarKeyRe.MatchString(key) {
 		return "", "", false
 	}
 	return key, value, true
+}
+
+// writeSecretsEnvFile writes sensitive environment variables to a temporary file
+// for use with docker --env-file. Returns the file path (caller must delete it)
+// or empty string if no secrets to write.
+func writeSecretsEnvFile(secrets []string) (string, error) {
+	if len(secrets) == 0 {
+		return "", nil
+	}
+
+	f, err := os.CreateTemp("", "ccbox-env-*.tmp")
+	if err != nil {
+		return "", fmt.Errorf("create env file: %w", err)
+	}
+
+	// Write with restricted permissions (owner read/write only)
+	if err := os.Chmod(f.Name(), 0600); err != nil {
+		f.Close()
+		os.Remove(f.Name())
+		return "", fmt.Errorf("chmod env file: %w", err)
+	}
+
+	for _, s := range secrets {
+		if _, err := fmt.Fprintln(f, s); err != nil {
+			f.Close()
+			os.Remove(f.Name())
+			return "", fmt.Errorf("write env file: %w", err)
+		}
+	}
+
+	if err := f.Close(); err != nil {
+		os.Remove(f.Name())
+		return "", fmt.Errorf("close env file: %w", err)
+	}
+
+	return f.Name(), nil
 }
 
 // encodePathForSession encodes a project path the same way Claude Code does

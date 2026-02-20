@@ -19,6 +19,9 @@ import (
 	"github.com/sungur/ccbox/internal/platform"
 )
 
+// wslPathRe matches WSL mount paths like /mnt/c/Users/...
+var wslPathRe = regexp.MustCompile(`^/mnt/([a-z])(/.*)?$`)
+
 // --- Types ---
 
 // ContainerConstraints holds resource limits and security settings.
@@ -75,6 +78,9 @@ type DockerRunConfig struct {
 	ContainerName string
 	// ImageName for reference and diagnostics.
 	ImageName string
+	// EnvFile is the path to a temporary env file containing sensitive variables.
+	// The caller must delete this file after the container exits.
+	EnvFile string
 }
 
 // --- Module-level state ---
@@ -228,8 +234,7 @@ func BuildDockerRunConfig(
 
 	// Detect original path for WSL mapping
 	originalPath := absProjectPath
-	wslRe := regexp.MustCompile(`^/mnt/([a-z])(/.*)?$`)
-	wslMatch := wslRe.FindStringSubmatch(originalPath)
+	wslMatch := wslPathRe.FindStringSubmatch(originalPath)
 
 	// Claude config mount modes:
 	// - Fresh mode (--fresh): only credentials + settings (vanilla Claude experience)
@@ -297,45 +302,12 @@ func BuildDockerRunConfig(
 		cmd = append(cmd, "--add-host=host.docker.internal:host-gateway")
 	}
 
-	// Debug, restricted/unrestricted mode flags
-	if opts.Debug > 0 {
-		cmd = append(cmd, "-e", fmt.Sprintf("%s=%d", config.Env.Debug, opts.Debug))
-	}
-	if opts.Unrestricted {
-		cmd = append(cmd, "-e", config.Env.Unrestricted+"=1")
-	} else {
-		// Resource limits (can be overridden via --memory, --cpus flags)
-		memLimit := opts.MemoryLimit
-		if memLimit == "" {
-			memLimit = config.DefaultMemoryLimit
-		}
-		cpuLimit := opts.CPULimit
-		if cpuLimit == "" {
-			cpuLimit = config.DefaultCPULimit
-		}
-		cmd = append(cmd, "--memory="+memLimit)
-		cmd = append(cmd, "--cpus="+cpuLimit)
-		cmd = append(cmd, "--cpu-shares=512")
-	}
-
-	// Zero-residue mode: disable all trace/cache/log artifacts
-	if opts.ZeroResidue {
-		cmd = append(cmd, "-e", config.Env.ZeroResidue+"=1")
-	}
-
-	// Network isolation policy
-	if opts.NetworkPolicy != "" && opts.NetworkPolicy != "full" {
-		cmd = append(cmd, "-e", config.Env.NetworkPolicy+"="+opts.NetworkPolicy)
-		if opts.NetworkPolicy == "isolated" {
-			cmd = append(cmd, "--network=bridge")
-		}
-	}
+	addResourceLimits(&cmd, opts)
 
 	// Environment variables
 	cmd = append(cmd, "-e", "HOME=/ccbox")
 	cmd = append(cmd, "-e", "CLAUDE_CONFIG_DIR=/ccbox/.claude")
 	addTerminalEnv(&cmd)
-	addClaudeEnv(&cmd)
 
 	// fakepath.so: original Windows path for LD_PRELOAD-based getcwd translation.
 	// Makes git, npm, and other glibc-based tools see the original host path.
@@ -359,58 +331,21 @@ func BuildDockerRunConfig(
 	}
 	cmd = append(cmd, "-e", config.Env.PersistentPaths+"="+persistentPaths)
 
-	// FUSE path mapping (CCBOX_PATH_MAP): host paths <-> container paths.
-	// Consumed by both ccbox-fuse (Go FUSE overlay) and fakepath.so (LD_PRELOAD).
-	//
-	// Format: "hostPath1:containerPath1;hostPath2:containerPath2"
-	//   - Separator between pairs: ";"
-	//   - Separator between host and container path: ":"
-	//   - Paths use forward slashes (no backslashes)
-	//
-	// ccbox-fuse reads JSON/JSONL files and translates paths bidirectionally:
-	//   container->host when writing, host->container when reading.
-	// fakepath.so intercepts glibc syscalls (open, stat, etc.) and translates
-	//   host paths to container paths at the syscall level.
-	var pathMappings []string
+	addPathMapping(&cmd, dockerProjectPath, hostProjectPath, originalPath, claudeConfig, wslMatch, opts.Fresh)
+	addDirMapping(&cmd, dockerProjectPath, hostProjectPath, absProjectPath)
 
-	// Map project directory (Windows D:/... -> POSIX /D/...)
-	if dockerProjectPath != hostProjectPath {
-		pathMappings = append(pathMappings, dockerProjectPath+":"+hostProjectPath)
-	}
-
-	// Map WSL path if detected (/mnt/d/... -> /D/...)
-	if wslMatch != nil {
-		pathMappings = append(pathMappings, originalPath+":"+hostProjectPath)
-	}
-
-	// Map .claude config (unless fresh mode which uses minimal mount)
-	if !opts.Fresh {
-		normalizedClaudePath := strings.ReplaceAll(claudeConfig, "\\", "/")
-		pathMappings = append(pathMappings, normalizedClaudePath+":/ccbox/.claude")
-	}
-
-	if len(pathMappings) > 0 {
-		cmd = append(cmd, "-e", config.Env.PathMap+"="+strings.Join(pathMappings, ";"))
-	}
-
-	// Directory name mapping for session bridge (FUSE dirmap).
-	// Claude Code encodes project paths as directory names: [:/\. ] -> -
-	// Container sees /D/GitHub/ccbox -> encodes as -D-GitHub-ccbox
-	// Native Windows sees D:\GitHub\ccbox -> encodes as D--GitHub-ccbox
-	// Entrypoint creates symlink from container-encoded to native-encoded name.
-	if dockerProjectPath != hostProjectPath {
-		containerEncoded := encodePathForSession(hostProjectPath)
-		nativeEncoded := encodePathForSession(absProjectPath)
-		if containerEncoded != nativeEncoded {
-			cmd = append(cmd, "-e", config.Env.DirMap+"="+containerEncoded+":"+nativeEncoded)
-		}
-	}
+	// Collect sensitive environment variables for --env-file
+	// (prevents token exposure in /proc/pid/cmdline)
+	var secrets []string
 
 	// Git environment (name, email, token)
-	addGitEnv(&cmd)
+	addGitEnv(&cmd, &secrets)
 
 	// SSH Agent forwarding (if available on host)
 	addSshAgent(&cmd)
+
+	// Claude environment (API keys, tokens)
+	addClaudeEnv(&cmd, &secrets)
 
 	// User-provided environment variables (added last to allow overrides)
 	for _, envVar := range opts.EnvVars {
@@ -418,6 +353,15 @@ func BuildDockerRunConfig(
 		if ok {
 			cmd = append(cmd, "-e", key+"="+value)
 		}
+	}
+
+	// Write sensitive vars to temp env file
+	envFile, err := writeSecretsEnvFile(secrets)
+	if err != nil {
+		return nil, fmt.Errorf("write secrets env file: %w", err)
+	}
+	if envFile != "" {
+		cmd = append(cmd, "--env-file", envFile)
 	}
 
 	// Image name
@@ -438,5 +382,67 @@ func BuildDockerRunConfig(
 		Interactive:   isInteractive,
 		ContainerName: containerName,
 		ImageName:     imageName,
+		EnvFile:       envFile,
 	}, nil
+}
+
+// addResourceLimits adds debug, resource, zero-residue, and network policy flags.
+func addResourceLimits(cmd *[]string, opts RunOptions) {
+	if opts.Debug > 0 {
+		*cmd = append(*cmd, "-e", fmt.Sprintf("%s=%d", config.Env.Debug, opts.Debug))
+	}
+	if opts.Unrestricted {
+		*cmd = append(*cmd, "-e", config.Env.Unrestricted+"=1")
+	} else {
+		memLimit := opts.MemoryLimit
+		if memLimit == "" {
+			memLimit = config.DefaultMemoryLimit
+		}
+		cpuLimit := opts.CPULimit
+		if cpuLimit == "" {
+			cpuLimit = config.DefaultCPULimit
+		}
+		*cmd = append(*cmd, "--memory="+memLimit)
+		*cmd = append(*cmd, "--cpus="+cpuLimit)
+		*cmd = append(*cmd, "--cpu-shares=512")
+	}
+	if opts.ZeroResidue {
+		*cmd = append(*cmd, "-e", config.Env.ZeroResidue+"=1")
+	}
+	if opts.NetworkPolicy != "" && opts.NetworkPolicy != "full" {
+		*cmd = append(*cmd, "-e", config.Env.NetworkPolicy+"="+opts.NetworkPolicy)
+		if opts.NetworkPolicy == "isolated" {
+			*cmd = append(*cmd, "--network=bridge")
+		}
+	}
+}
+
+// addPathMapping adds FUSE path mapping environment variables (CCBOX_PATH_MAP).
+func addPathMapping(cmd *[]string, dockerProjectPath, hostProjectPath, originalPath, claudeConfig string, wslMatch []string, fresh bool) {
+	var pathMappings []string
+
+	if dockerProjectPath != hostProjectPath {
+		pathMappings = append(pathMappings, dockerProjectPath+":"+hostProjectPath)
+	}
+	if wslMatch != nil {
+		pathMappings = append(pathMappings, originalPath+":"+hostProjectPath)
+	}
+	if !fresh {
+		normalizedClaudePath := strings.ReplaceAll(claudeConfig, "\\", "/")
+		pathMappings = append(pathMappings, normalizedClaudePath+":/ccbox/.claude")
+	}
+	if len(pathMappings) > 0 {
+		*cmd = append(*cmd, "-e", config.Env.PathMap+"="+strings.Join(pathMappings, ";"))
+	}
+}
+
+// addDirMapping adds FUSE directory name mapping (CCBOX_DIR_MAP) for session compatibility.
+func addDirMapping(cmd *[]string, dockerProjectPath, hostProjectPath, absProjectPath string) {
+	if dockerProjectPath != hostProjectPath {
+		containerEncoded := encodePathForSession(hostProjectPath)
+		nativeEncoded := encodePathForSession(absProjectPath)
+		if containerEncoded != nativeEncoded {
+			*cmd = append(*cmd, "-e", config.Env.DirMap+"="+containerEncoded+":"+nativeEncoded)
+		}
+	}
 }

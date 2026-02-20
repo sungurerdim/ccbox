@@ -4,6 +4,7 @@ package config
 import (
 	"crypto/rand"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -171,12 +172,38 @@ func RegistryImageName(stack, version string) string {
 	return fmt.Sprintf("%s/%s:%s", registryBase(), stack, version)
 }
 
+// registryRe validates registry format: host/path or host:port/path (no scheme).
+var registryRe = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?(:[0-9]+)?(/[a-zA-Z0-9._/-]+)?$`)
+
 // registryBase returns the registry base URL, allowing override via CCBOX_REGISTRY.
+// Validates the override to prevent supply chain attacks via malicious registry URLs.
 func registryBase() string {
-	if v := os.Getenv("CCBOX_REGISTRY"); v != "" {
-		return v
+	v := os.Getenv("CCBOX_REGISTRY")
+	if v == "" {
+		return DefaultRegistry
 	}
-	return DefaultRegistry
+	if !validateRegistry(v) {
+		return DefaultRegistry
+	}
+	return v
+}
+
+// validateRegistry checks that a registry value is a valid Docker registry reference.
+func validateRegistry(registry string) bool {
+	// Reject URLs with scheme (Docker registries don't use scheme prefix)
+	if strings.Contains(registry, "://") {
+		return false
+	}
+	// Reject empty or whitespace-only
+	if strings.TrimSpace(registry) == "" {
+		return false
+	}
+	// Parse as URL to catch injection attempts
+	if _, err := url.Parse("https://" + registry); err != nil {
+		return false
+	}
+	// Must match Docker registry format
+	return registryRe.MatchString(registry)
 }
 
 // --- Temp Paths ---

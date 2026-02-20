@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"os"
-	"regexp"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -112,7 +111,7 @@ func runAttachMode(cmd *cobra.Command, fileConfig config.CcboxConfig, claudeArgs
 		Fresh:         fresh || boolPtrDefault(fileConfig.Fresh, false),
 		EphemeralLogs: noDebugLogs,
 		DepsMode:      depsMode,
-		Debug:         maxInt(debug, fileConfig.Debug),
+		Debug:         max(debug, fileConfig.Debug),
 		Headless:      headless || boolPtrDefault(fileConfig.Headless, false),
 		Unattended:    yes,
 		Prune:         !noPrune && boolPtrDefault(fileConfig.Prune, true),
@@ -263,9 +262,6 @@ func collectClaudeArgs(cobraArgs []string) []string {
 
 // --- Env var validation ---
 
-// envVarKeyRe validates environment variable key format (POSIX).
-var envVarKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-
 // validateEnvVar checks that an environment variable string is in KEY=VALUE format
 // with a valid POSIX key: [A-Za-z_][A-Za-z0-9_]*
 func validateEnvVar(envVar string) error {
@@ -274,21 +270,13 @@ func validateEnvVar(envVar string) error {
 		return fmt.Errorf("invalid env var format %q: must be KEY=VALUE", envVar)
 	}
 	key := envVar[:idx]
-	if !envVarKeyRe.MatchString(key) {
+	if !run.EnvVarKeyRe.MatchString(key) {
 		return fmt.Errorf("invalid env var key %q: must match [A-Za-z_][A-Za-z0-9_]*", key)
 	}
 	return nil
 }
 
 // --- Utility helpers ---
-
-// maxInt returns the larger of two integers.
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
 
 // boolPtrDefault dereferences a *bool, returning defaultVal if nil.
 // Used for config fields where nil means "not set" (use default).

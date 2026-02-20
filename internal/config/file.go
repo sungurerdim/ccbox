@@ -70,7 +70,7 @@ func loadConfigFile(path string) *CcboxConfig {
 
 	var cfg CcboxConfig
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		log.Debugf("Failed to parse config %s: %v", path, err)
+		log.Warnf("Failed to parse config %s: %v", path, err)
 		return nil
 	}
 	return &cfg
