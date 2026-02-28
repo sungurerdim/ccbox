@@ -11,10 +11,10 @@ func TestDriveLetterToContainerPath(t *testing.T) {
 	}{
 		{"D:/GitHub/ccbox", "/D/GitHub/ccbox"},
 		{"C:/Users/test", "/C/Users/test"},
-		{"/usr/local/bin", "/usr/local/bin"},         // No drive letter
-		{"d:/lower", "/d/lower"},                     // lowercase drive preserved
-		{"D:/", "/D/"},                               // Root
-		{"", ""},                                     // Empty
+		{"/usr/local/bin", "/usr/local/bin"}, // No drive letter
+		{"d:/lower", "/d/lower"},             // lowercase drive preserved
+		{"D:/", "/D/"},                       // Root
+		{"", ""},                             // Empty
 	}
 
 	for _, tt := range tests {

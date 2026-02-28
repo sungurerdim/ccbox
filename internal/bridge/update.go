@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	dcontainer "github.com/docker/docker/api/types/container"
 	dfilters "github.com/docker/docker/api/types/filters"
+	"github.com/sungur/ccbox/internal/config"
 	"github.com/sungur/ccbox/internal/docker"
 	"github.com/sungur/ccbox/internal/voice"
 )
@@ -44,11 +45,13 @@ func (m BridgeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "up", "k":
 			if m.currentIndex > 0 {
 				m.currentIndex--
+				m.selectedID = flatItemID(m.flatItems[m.currentIndex])
 			}
 
 		case "down", "j":
 			if m.currentIndex < len(m.flatItems)-1 {
 				m.currentIndex++
+				m.selectedID = flatItemID(m.flatItems[m.currentIndex])
 			}
 
 		case "n":
@@ -90,7 +93,23 @@ func (m BridgeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case refreshMsg:
 		m.containers = msg.containers
 		m.flatItems = buildFlatItems(m.containers)
-		if m.currentIndex >= len(m.flatItems) {
+		// Restore selection by ID to prevent index drift after refresh.
+		if m.selectedID != "" {
+			found := false
+			for i, item := range m.flatItems {
+				if flatItemID(item) == m.selectedID {
+					m.currentIndex = i
+					found = true
+					break
+				}
+			}
+			if !found {
+				m.currentIndex = min(m.currentIndex, max(0, len(m.flatItems)-1))
+				if len(m.flatItems) > 0 {
+					m.selectedID = flatItemID(m.flatItems[m.currentIndex])
+				}
+			}
+		} else if m.currentIndex >= len(m.flatItems) {
 			m.currentIndex = max(0, len(m.flatItems)-1)
 		}
 
@@ -120,6 +139,18 @@ func (m BridgeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// flatItemID returns a stable identifier for a flat item, used to preserve
+// cursor selection across data refreshes.
+func flatItemID(item FlatItem) string {
+	if item.IsContainer && item.Container != nil {
+		return "c:" + item.Container.ID
+	}
+	if item.Session != nil && item.ParentContainer != nil {
+		return "s:" + item.ParentContainer.ID + ":" + item.Session.ID
+	}
+	return ""
+}
+
 // --- Flat item construction ---
 
 func buildFlatItems(containers []ContainerInfo) []FlatItem {
@@ -147,6 +178,7 @@ func refreshData() tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 		defer cancel()
 		for i := range containers {
+			containers[i].Healthy = CheckHealth(ctx, containers[i].ID)
 			containers[i].Sessions = DiscoverSessions(ctx, containers[i].ID)
 		}
 		return refreshMsg{containers: containers}
@@ -211,7 +243,7 @@ func sendPaste(containers []ContainerInfo) tea.Cmd {
 			return pasteToContainer(containers[0], imgData, "image")
 		}
 		textData, err := readClipboardText()
-		if err == nil && textData != "" {
+		if err == nil && strings.TrimSpace(textData) != "" {
 			return pasteToContainer(containers[0], []byte(textData), "text")
 		}
 		return statusMsg{message: "Clipboard empty"}
@@ -240,7 +272,7 @@ func listRunningContainers() []ContainerInfo {
 	}
 
 	sdkContainers, err := cli.ContainerList(ctx, dcontainer.ListOptions{
-		Filters: dfilters.NewArgs(dfilters.Arg("label", "ccbox")),
+		Filters: dfilters.NewArgs(dfilters.Arg("label", config.CcboxPrefix)),
 	})
 	if err != nil {
 		return nil
@@ -257,10 +289,10 @@ func listRunningContainers() []ContainerInfo {
 			ID:     c.ID,
 			Name:   name,
 			Status: c.Status,
-			Stack:  c.Labels["ccbox.stack"],
+			Stack:  c.Labels[config.LabelStack],
 		}
 
-		if project, ok := c.Labels["ccbox.project"]; ok {
+		if project, ok := c.Labels[config.LabelProject]; ok {
 			info.Project = project
 		}
 		if info.Project == "" {

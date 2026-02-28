@@ -4,6 +4,8 @@
 package fuse
 
 import (
+	"fmt"
+	"os"
 	"strings"
 	"unicode"
 )
@@ -95,6 +97,7 @@ func (c *Config) parsePathMap(pathMap string) {
 		}
 		c.PathMappings = append(c.PathMappings, m)
 		if len(c.PathMappings) >= MaxMappings {
+			fmt.Fprintf(os.Stderr, "[ccbox-fuse] warning: path mapping limit reached (%d), remaining mappings ignored\n", MaxMappings)
 			break
 		}
 	}
@@ -118,6 +121,7 @@ func (c *Config) parseDirMap(dirMap string) {
 			NativeName:    entry[idx+1:],
 		})
 		if len(c.DirMappings) >= MaxDirMappings {
+			fmt.Fprintf(os.Stderr, "[ccbox-fuse] warning: dir mapping limit reached (%d), remaining mappings ignored\n", MaxDirMappings)
 			break
 		}
 	}

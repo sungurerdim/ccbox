@@ -397,7 +397,6 @@ env:
 		{"Memory", cfg.Memory, "8g"},
 		{"CPUs", cfg.CPUs, "4.0"},
 		{"Debug", cfg.Debug, 1},
-		{"Fresh", cfg.Fresh, false},
 	}
 
 	for _, c := range checks {
@@ -406,6 +405,10 @@ env:
 		}
 	}
 
+	// Pointer bool checks (nil/false/true distinction)
+	if cfg.Fresh == nil || *cfg.Fresh != false {
+		t.Errorf("cfg.Fresh should be *false")
+	}
 	if cfg.Cache == nil || *cfg.Cache != true {
 		t.Errorf("cfg.Cache should be true")
 	}

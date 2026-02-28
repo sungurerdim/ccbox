@@ -236,4 +236,72 @@ func TestApplyDirMap(t *testing.T) {
 			t.Errorf("got  %q\nwant %q", string(got), want)
 		}
 	})
+
+	// --- Bare directory name in JSON value context ---
+	// Sessions-index.json has "directory":"D--GitHub-ccbox" where the name
+	// appears directly after a quote, not after a path separator.
+
+	t.Run("bare name in JSON value: toContainer", func(t *testing.T) {
+		input := []byte(`{"directory":"D--GitHub-ccbox","id":"abc"}`)
+		got := ApplyDirMap(input, dm, true)
+		if got == nil {
+			t.Fatal("expected transform, got nil")
+		}
+		want := `{"directory":"-D-GitHub-ccbox","id":"abc"}`
+		if string(got) != want {
+			t.Errorf("got  %q\nwant %q", string(got), want)
+		}
+	})
+
+	t.Run("bare name in JSON value: toHost", func(t *testing.T) {
+		input := []byte(`{"directory":"-D-GitHub-ccbox","id":"abc"}`)
+		got := ApplyDirMap(input, dm, false)
+		if got == nil {
+			t.Fatal("expected transform, got nil")
+		}
+		want := `{"directory":"D--GitHub-ccbox","id":"abc"}`
+		if string(got) != want {
+			t.Errorf("got  %q\nwant %q", string(got), want)
+		}
+	})
+
+	t.Run("bare name round-trip through JSON value", func(t *testing.T) {
+		input := []byte(`{"directory":"D--GitHub-ccbox","path":"/projects/D--GitHub-ccbox/s.jsonl"}`)
+		container := ApplyDirMap(input, dm, true)
+		if container == nil {
+			t.Fatal("toContainer returned nil")
+		}
+		want := `{"directory":"-D-GitHub-ccbox","path":"/projects/-D-GitHub-ccbox/s.jsonl"}`
+		if string(container) != want {
+			t.Errorf("toContainer:\n  got  %q\n  want %q", string(container), want)
+		}
+		restored := ApplyDirMap(container, dm, false)
+		if restored == nil {
+			t.Fatal("toHost returned nil")
+		}
+		if string(restored) != string(input) {
+			t.Errorf("round-trip mismatch:\n  got  %q\n  want %q", string(restored), string(input))
+		}
+	})
+
+	t.Run("bare name partial match not replaced", func(t *testing.T) {
+		// "D--GitHub-ccbox-extra" should NOT match "D--GitHub-ccbox"
+		input := []byte(`{"directory":"D--GitHub-ccbox-extra"}`)
+		got := ApplyDirMap(input, dm, true)
+		if got != nil {
+			t.Errorf("partial match should not transform, got %q", string(got))
+		}
+	})
+
+	t.Run("sessions-index.json realistic", func(t *testing.T) {
+		input := []byte(`[{"id":"abc-123","directory":"D--GitHub-ccbox","path":"/projects/D--GitHub-ccbox/abc-123.jsonl"},{"id":"def-456","directory":"D--GitHub-ccbox","path":"/projects/D--GitHub-ccbox/def-456.jsonl"}]`)
+		got := ApplyDirMap(input, dm, true)
+		if got == nil {
+			t.Fatal("expected transform, got nil")
+		}
+		want := `[{"id":"abc-123","directory":"-D-GitHub-ccbox","path":"/projects/-D-GitHub-ccbox/abc-123.jsonl"},{"id":"def-456","directory":"-D-GitHub-ccbox","path":"/projects/-D-GitHub-ccbox/def-456.jsonl"}]`
+		if string(got) != want {
+			t.Errorf("got  %q\nwant %q", string(got), want)
+		}
+	})
 }

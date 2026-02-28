@@ -4,8 +4,8 @@ This is the ccbox project - a secure Docker sandbox for Claude Code.
 
 ## Stack
 
-- **Language**: Go 1.23+
-- **CLI**: cobra + viper
+- **Language**: Go 1.24+
+- **CLI**: cobra
 - **Docker**: Docker SDK (native API, no shell-out)
 - **TUI**: bubbletea + lipgloss (bridge mode)
 - **Build**: GoReleaser + GitHub Actions

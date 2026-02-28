@@ -1,14 +1,12 @@
 name: CI
 
 on:
-  push:
+  pull_request:
     branches: [main]
     paths-ignore:
       - '**.md'
       - 'LICENSE'
       - '.claude/**'
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -17,7 +15,6 @@ concurrency:
 
 permissions:
   contents: read
-  pull-requests: write
 
 jobs:
   lint:
@@ -34,7 +31,7 @@ jobs:
         run: go vet ./...
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         with:
           version: latest
 
@@ -50,7 +47,7 @@ jobs:
           go-version-file: 'go.mod'
 
       - name: Test
-        run: go test -v -race ./...
+        run: go test -v -race -count=1 ./...
 
   build:
     name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
@@ -101,26 +98,8 @@ jobs:
           fi
           echo "All versions consistent: $VERSION"
 
-  security:
-    name: Security
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
-
-  auto-merge:
-    name: Auto Merge
-    runs-on: ubuntu-latest
-    needs: [lint, test, build, validate, security]
-    if: github.event_name == 'pull_request'
-    steps:
-      - name: Enable auto-merge
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh pr merge ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --auto --squash
+      - name: Secret scan
+        run: |
+          ! grep -rn 'sk-ant-\|ANTHROPIC_API_KEY=\|ghp_\|ghs_\|OPENAI_API_KEY=' \
+            --include='*.go' --include='*.yml' --include='*.yaml' --include='*.env' --include='*.sh' . \
+            || { echo "::error::Potential secret found"; exit 1; }

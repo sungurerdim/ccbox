@@ -197,10 +197,15 @@ func extractJSONPath(buf []byte, pos int) (string, int) {
 	i := pos
 	for i < len(buf) && buf[i] != '"' && buf[i] != ',' && buf[i] != '}' && buf[i] != ']' {
 		if buf[i] == '\\' {
-			pb.WriteByte('/')
 			i++
 			if i < len(buf) && buf[i] == '\\' {
-				i++ // skip second backslash in JSON escape
+				pb.WriteByte('/')
+				i++ // \\\\ -> / (JSON-escaped backslash = path separator)
+			} else if i < len(buf) && buf[i] == '"' {
+				pb.WriteByte('"')
+				i++ // \\\" -> literal quote (not a string terminator)
+			} else {
+				pb.WriteByte('/') // single backslash -> /
 			}
 		} else {
 			pb.WriteByte(buf[i])

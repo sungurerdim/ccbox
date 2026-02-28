@@ -210,7 +210,7 @@ LABEL org.opencontainers.image.title="ccbox/python"
 
 func goDockerfile() string {
 	return `# ccbox/go - Go + Claude Code + golangci-lint
-FROM golang:latest
+FROM golang:1.24-bookworm
 
 LABEL org.opencontainers.image.title="ccbox/go"
 
@@ -227,7 +227,7 @@ RUN curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/i
 
 func rustDockerfile() string {
 	return `# ccbox/rust - Rust + Claude Code + clippy + rustfmt
-FROM rust:latest
+FROM rust:1.85-slim-bookworm
 
 LABEL org.opencontainers.image.title="ccbox/rust"
 
@@ -244,7 +244,7 @@ RUN rustup component add clippy rustfmt
 
 func javaDockerfile() string {
 	return `# ccbox/java - Java (Temurin LTS) + Claude Code + Maven + quality tools
-FROM eclipse-temurin:latest
+FROM eclipse-temurin:21-jdk-jammy
 
 LABEL org.opencontainers.image.title="ccbox/java"
 
@@ -647,17 +647,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 // dockerfileGenerators maps each LanguageStack to its Dockerfile generator function.
 var dockerfileGenerators = map[config.LanguageStack]func() string{
 	// Core Language Stacks
-	config.StackBase:    baseDockerfile,
-	config.StackPython:  pythonDockerfile,
-	config.StackWeb:     webDockerfile,
-	config.StackGo:      goDockerfile,
-	config.StackRust:    rustDockerfile,
-	config.StackJava:    javaDockerfile,
-	config.StackCpp:     cppDockerfile,
-	config.StackDotnet:  dotnetDockerfile,
-	config.StackSwift:   swiftDockerfile,
-	config.StackDart:    dartDockerfile,
-	config.StackLua:     luaDockerfile,
+	config.StackBase:   baseDockerfile,
+	config.StackPython: pythonDockerfile,
+	config.StackWeb:    webDockerfile,
+	config.StackGo:     goDockerfile,
+	config.StackRust:   rustDockerfile,
+	config.StackJava:   javaDockerfile,
+	config.StackCpp:    cppDockerfile,
+	config.StackDotnet: dotnetDockerfile,
+	config.StackSwift:  swiftDockerfile,
+	config.StackDart:   dartDockerfile,
+	config.StackLua:    luaDockerfile,
 
 	// Combined Language Stacks
 	config.StackJVM:        jvmDockerfile,

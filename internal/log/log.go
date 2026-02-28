@@ -55,11 +55,11 @@ var (
 	magentaStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
 
 	// Combination styles
-	cyanBoldStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("14"))
-	blueBoldStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
-	redBoldStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("9"))
-	greenBoldStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("10"))
-	yellowBoldStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("11"))
+	cyanBoldStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("14"))
+	blueBoldStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
+	redBoldStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("9"))
+	greenBoldStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("10"))
+	yellowBoldStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("11"))
 )
 
 // --- Configuration functions ---
@@ -270,31 +270,31 @@ func Write(message string) {
 // Style provides string styling functions that return styled strings
 // without printing them. Use with Raw() for complex compositions.
 var Style = struct {
-	Dim         func(...string) string
-	Bold        func(...string) string
-	Red         func(...string) string
-	Green       func(...string) string
-	Yellow      func(...string) string
-	Blue        func(...string) string
-	Cyan        func(...string) string
-	Magenta     func(...string) string
-	CyanBold    func(...string) string
-	BlueBold    func(...string) string
-	RedBold     func(...string) string
-	GreenBold   func(...string) string
-	YellowBold  func(...string) string
+	Dim        func(...string) string
+	Bold       func(...string) string
+	Red        func(...string) string
+	Green      func(...string) string
+	Yellow     func(...string) string
+	Blue       func(...string) string
+	Cyan       func(...string) string
+	Magenta    func(...string) string
+	CyanBold   func(...string) string
+	BlueBold   func(...string) string
+	RedBold    func(...string) string
+	GreenBold  func(...string) string
+	YellowBold func(...string) string
 }{
-	Dim:         dimStyle.Render,
-	Bold:        boldStyle.Render,
-	Red:         redStyle.Render,
-	Green:       greenStyle.Render,
-	Yellow:      yellowStyle.Render,
-	Blue:        blueStyle.Render,
-	Cyan:        cyanStyle.Render,
-	Magenta:     magentaStyle.Render,
-	CyanBold:    cyanBoldStyle.Render,
-	BlueBold:    blueBoldStyle.Render,
-	RedBold:     redBoldStyle.Render,
-	GreenBold:   greenBoldStyle.Render,
-	YellowBold:  yellowBoldStyle.Render,
+	Dim:        dimStyle.Render,
+	Bold:       boldStyle.Render,
+	Red:        redStyle.Render,
+	Green:      greenStyle.Render,
+	Yellow:     yellowStyle.Render,
+	Blue:       blueStyle.Render,
+	Cyan:       cyanStyle.Render,
+	Magenta:    magentaStyle.Render,
+	CyanBold:   cyanBoldStyle.Render,
+	BlueBold:   blueBoldStyle.Render,
+	RedBold:    redBoldStyle.Render,
+	GreenBold:  greenBoldStyle.Render,
+	YellowBold: yellowBoldStyle.Render,
 }

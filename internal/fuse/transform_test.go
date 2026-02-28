@@ -71,6 +71,31 @@ func TestExtractJSONPath(t *testing.T) {
 			wantPath: "/path/file",
 			wantPos:  13,
 		},
+		// --- Escaped quote handling (GAP-4 fix) ---
+		// In JSON, \" is an escaped literal quote (single \ + "). extractJSONPath should
+		// NOT treat the " as a string terminator. Windows paths can't contain quotes,
+		// so this is a correctness fix for non-path JSON content.
+		{
+			name:     "escaped quote does not terminate",
+			buf:      `/path/to/\"file"`,
+			pos:      0,
+			wantPath: `/path/to/"file`,
+			wantPos:  15,
+		},
+		{
+			name:     "backslash-backslash then escaped quote",
+			buf:      `\\dir\\\"file"`,
+			pos:      0,
+			wantPath: `/dir/"file`,
+			wantPos:  13,
+		},
+		{
+			name:     "escaped quote at end of buffer",
+			buf:      `\\path\\file\"`,
+			pos:      0,
+			wantPath: `/path/file"`,
+			wantPos:  14,
+		},
 		// --- Additional extractJSONPath coverage ---
 		// Note: extractJSONPath does NOT stop at whitespace.
 		// Whitespace stop is handled by TransformToContainer/TransformToHost callers.
@@ -999,5 +1024,124 @@ func TestTransformLargeBuffer(t *testing.T) {
 	}
 	if string(restored) != host {
 		t.Error("large buffer round-trip mismatch (content differs)")
+	}
+}
+
+// --- GAP-2: Sessions-index.json transform ---
+
+func TestTransformSessionsIndex(t *testing.T) {
+	// sessions-index.json contains "directory" (bare label) and "path" (full path).
+	// Both must be transformed: "path" by PathMapping, "directory" by DirMap.
+	// The "directory" field appears as a bare name after a quote (no path separator prefix),
+	// so DirMap must match after '"' to catch it.
+	mappings := []PathMapping{
+		{From: "C:/Users/Sungur/.claude", To: "/ccbox/.claude", Drive: 'c'},
+	}
+	dirMappings := []DirMapping{
+		{ContainerName: "-D-GitHub-ccbox", NativeName: "D--GitHub-ccbox"},
+	}
+
+	// Realistic sessions-index.json content
+	hostIndex := `[{"id":"abc-123","directory":"D--GitHub-ccbox","path":"C:\\Users\\Sungur\\.claude\\projects\\D--GitHub-ccbox\\abc-123.jsonl","lastModified":"2026-02-20T10:00:00Z"},{"id":"def-456","directory":"D--GitHub-ccbox","path":"C:\\Users\\Sungur\\.claude\\projects\\D--GitHub-ccbox\\def-456.jsonl","lastModified":"2026-02-21T11:00:00Z"}]`
+
+	container := TransformToContainer([]byte(hostIndex), mappings, dirMappings)
+	if container == nil {
+		t.Fatal("sessions-index ToContainer returned nil")
+	}
+
+	containerStr := string(container)
+
+	// "path" fields must be transformed to container format
+	if !strings.Contains(containerStr, "/ccbox/.claude/projects/-D-GitHub-ccbox/abc-123.jsonl") {
+		t.Errorf("path field not transformed: %s", containerStr)
+	}
+	if !strings.Contains(containerStr, "/ccbox/.claude/projects/-D-GitHub-ccbox/def-456.jsonl") {
+		t.Errorf("second path field not transformed: %s", containerStr)
+	}
+
+	// "directory" field must ALSO be transformed — Claude Code matches this
+	// against Readdir output which shows container-format names
+	if !strings.Contains(containerStr, `"directory":"-D-GitHub-ccbox"`) {
+		t.Errorf("directory field not transformed to container format: %s", containerStr)
+	}
+	if strings.Contains(containerStr, `"directory":"D--GitHub-ccbox"`) {
+		t.Errorf("directory field still has native format (should be container format): %s", containerStr)
+	}
+
+	// Round-trip back to host
+	restored := TransformToHost(container, mappings, dirMappings)
+	if restored == nil {
+		t.Fatal("sessions-index ToHost returned nil")
+	}
+
+	if string(restored) != hostIndex {
+		t.Errorf("sessions-index round-trip mismatch:\n  got  %q\n  want %q", string(restored), hostIndex)
+	}
+}
+
+// --- GAP-5: Realistic multi-file session bundle ---
+
+func TestTransformRealisticSessionBundle(t *testing.T) {
+	mappings := []PathMapping{
+		{From: "D:/GitHub/ccbox", To: "/D/GitHub/ccbox", Drive: 'd'},
+		{From: "C:/Users/Sungur/.claude", To: "/ccbox/.claude", Drive: 'c'},
+	}
+	dirMappings := []DirMapping{
+		{ContainerName: "-D-GitHub-ccbox", NativeName: "D--GitHub-ccbox"},
+	}
+
+	// Simulate a full session bundle: session JSONL, plan, file-history, user-prefs
+	files := map[string]struct {
+		host      string
+		container string
+	}{
+		"session.jsonl": {
+			host:      `{"type":"init","cwd":"D:\\GitHub\\ccbox","config":"C:\\Users\\Sungur\\.claude\\projects\\D--GitHub-ccbox\\config.json"}` + "\n" + `{"type":"tool_use","path":"D:\\GitHub\\ccbox\\internal\\fuse\\transform.go"}` + "\n",
+			container: `{"type":"init","cwd":"/D/GitHub/ccbox","config":"/ccbox/.claude/projects/-D-GitHub-ccbox/config.json"}` + "\n" + `{"type":"tool_use","path":"/D/GitHub/ccbox/internal/fuse/transform.go"}` + "\n",
+		},
+		"plan.json": {
+			host:      `{"projectPath":"D:\\GitHub\\ccbox","steps":[{"file":"D:\\GitHub\\ccbox\\cmd\\ccbox\\main.go"}]}`,
+			container: `{"projectPath":"/D/GitHub/ccbox","steps":[{"file":"/D/GitHub/ccbox/cmd/ccbox/main.go"}]}`,
+		},
+		"file-history.json": {
+			host:      `{"files":["D:\\GitHub\\ccbox\\go.mod","D:\\GitHub\\ccbox\\go.sum","C:\\Users\\Sungur\\.claude\\settings.json"]}`,
+			container: `{"files":["/D/GitHub/ccbox/go.mod","/D/GitHub/ccbox/go.sum","/ccbox/.claude/settings.json"]}`,
+		},
+	}
+
+	for name, f := range files {
+		t.Run(name+"/toContainer", func(t *testing.T) {
+			got := TransformToContainer([]byte(f.host), mappings, dirMappings)
+			if got == nil {
+				t.Fatalf("ToContainer returned nil for %s", name)
+			}
+			if string(got) != f.container {
+				t.Errorf("ToContainer mismatch:\n  got  %q\n  want %q", string(got), f.container)
+			}
+		})
+
+		t.Run(name+"/toHost", func(t *testing.T) {
+			got := TransformToHost([]byte(f.container), mappings, dirMappings)
+			if got == nil {
+				t.Fatalf("ToHost returned nil for %s", name)
+			}
+			if string(got) != f.host {
+				t.Errorf("ToHost mismatch:\n  got  %q\n  want %q", string(got), f.host)
+			}
+		})
+
+		t.Run(name+"/roundTrip", func(t *testing.T) {
+			container := TransformToContainer([]byte(f.host), mappings, dirMappings)
+			if container == nil {
+				t.Fatalf("ToContainer returned nil for %s", name)
+			}
+			restored := TransformToHost(container, mappings, dirMappings)
+			if restored == nil {
+				t.Fatalf("ToHost returned nil for %s", name)
+			}
+			if string(restored) != f.host {
+				t.Errorf("round-trip mismatch:\n  got  %q\n  want %q", string(restored), f.host)
+			}
+		})
 	}
 }

@@ -6,7 +6,10 @@
 package cli
 
 import (
+	"context"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -70,6 +73,8 @@ func init() {
 	f.Bool("cache", false, "Enable Docker build cache (default: no-cache for fresh installs)")
 	f.Bool("attach-mode", false, "Container-only mode: skip bridge UI, run container directly")
 	f.Bool("no-bridge", false, "Disable bridge mode (same as --attach-mode)")
+	f.Bool("read-only", false, "Read-only root filesystem (writable dirs via tmpfs overlays)")
+	f.Bool("no-pull", false, "Skip pulling pre-built images from registry (local build only)")
 	f.StringArrayP("env", "e", nil, "Pass environment variables to container (KEY=VALUE, repeatable)")
 
 	// --- Subcommands ---
@@ -83,8 +88,12 @@ func init() {
 }
 
 // Execute runs the root command and exits on error.
+// Sets up signal handling for graceful shutdown via context cancellation.
 func Execute() {
-	if err := rootCmd.Execute(); err != nil {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		log.Error(err.Error())
 		os.Exit(1)
 	}

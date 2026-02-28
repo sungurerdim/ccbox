@@ -12,6 +12,7 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-units"
+	"github.com/sungur/ccbox/internal/config"
 )
 
 // RunConfig defines the configuration for creating and running a container.
@@ -63,7 +64,7 @@ func ListCcbox(ctx context.Context) ([]container.Summary, error) {
 	}
 
 	f := filters.NewArgs()
-	f.Add("name", "ccbox")
+	f.Add("name", config.CcboxPrefix)
 
 	containers, err := cli.ContainerList(ctx, container.ListOptions{
 		All:     true,

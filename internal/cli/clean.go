@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/sungur/ccbox/internal/config"
 	"github.com/sungur/ccbox/internal/docker"
 	"github.com/sungur/ccbox/internal/log"
 )
@@ -17,11 +18,13 @@ var cleanCmd = &cobra.Command{
 	Use:   "clean",
 	Short: "Remove ccbox containers, images, and temp files",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx := context.Background()
+		ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
+		defer cancel()
+
 		deep, _ := cmd.Flags().GetBool("deep")
 		yes, _ := cmd.Flags().GetBool("yes")
 
-		if err := docker.EnsureRunning(ctx, 30*time.Second); err != nil {
+		if err := docker.EnsureRunning(ctx, config.DockerStartupTimeout); err != nil {
 			return fmt.Errorf("docker is not running")
 		}
 
@@ -34,7 +37,7 @@ var cleanCmd = &cobra.Command{
 			} else {
 				log.Yellow("This will remove ccbox containers and images.")
 			}
-			// Auto-confirm for now. Interactive prompt can be added later.
+			log.Newline()
 		}
 
 		log.Dim("Removing containers...")

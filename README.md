@@ -2,7 +2,8 @@
 
 **Isolated Docker sandbox for Claude Code.** Your project stays safe, Claude runs at full power.
 
-> Claude Code runs in a container where it can only see your current project and `~/.claude` settings — nothing else on your system is accessible. Bypass mode is enabled by default because the sandbox itself is the safety boundary.
+> Claude Code runs in a container where your host filesystem doesn't exist — not restricted, absent.
+> Bypass mode is enabled because the container is the security boundary.
 
 ## Installation
 
@@ -28,6 +29,20 @@ ccbox
 That's it. ccbox detects your project type, builds an image with the right tools, installs dependencies, and launches Claude Code.
 
 **First run:** ~2 min (builds image) | **After:** Instant (cached)
+
+## Why ccbox?
+
+| | ccbox | Claude Code Sandbox | `--worktree` |
+|---|---|---|---|
+| Host filesystem | **Absent** (not mounted) | Present, restricted | Full access |
+| Bypass mode | Yes (container = boundary) | No (permissions enforced) | No |
+| Custom tools | Pre-installed per stack | Host tools only | Host tools only |
+| Reproducibility | Deterministic image | Depends on host | Depends on host |
+| Side effects | Confined to container | Can affect host | Can affect host |
+
+**Can't access what doesn't exist.** The host filesystem isn't restricted inside the container — it's absent entirely. No policy to bypass, no permission to escalate, no path to traverse.
+
+> Details: [SECURITY.md](SECURITY.md)
 
 ## Usage
 
@@ -70,6 +85,8 @@ ccbox --no-deps         # Skip installation
 | Git credentials (auto-detected) | Host shell, processes |
 | SSH agent (if running on host) | Other network services |
 | Pre-installed language tools + deps | |
+
+> Claude runs with `--dangerously-skip-permissions` because the container itself is the permission boundary.
 
 ## Options
 
@@ -170,17 +187,17 @@ ccbox auto-detects your project type. Use `-s <stack>` to override.
 
 ## Security & Performance
 
-<details>
-<summary><b>Container security</b></summary>
-
 | Protection | Description |
 |------------|-------------|
-| Non-root user | Runs as your UID/GID |
-| Capabilities dropped | `CAP_DROP=ALL`, only SETUID/SETGID/CHOWN/SYS_ADMIN added back |
-| Process limits | Max 2048 (fork bomb protection) |
+| Non-root user | Runs as your UID/GID via gosu |
+| Capabilities dropped | `--cap-drop=ALL`, only SETUID/SETGID/CHOWN/SYS_ADMIN added back |
+| Process limits | `--pids-limit=2048` (fork bomb protection) |
+| Resource limits | Memory 4g, CPU 2.0 (configurable, `--unrestricted` to remove) |
 | Restricted mounts | Only project + `~/.claude` + tmpfs |
+| Ephemeral temp | `/tmp`, `/var/tmp`, `/run` on RAM (tmpfs) |
+| Credentials | Env vars only, SSH agent socket read-only, no keys on disk |
 
-</details>
+> Full details: [SECURITY.md](SECURITY.md)
 
 <details>
 <summary><b>Performance optimizations</b></summary>

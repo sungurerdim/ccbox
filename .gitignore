@@ -1,6 +1,7 @@
 # Go build output (root-level binaries only)
 /ccbox
 /ccbox.exe
+/ccbox-test.exe
 /ccbox-fuse
 dist/
 build/
