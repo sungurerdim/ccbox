@@ -34,8 +34,10 @@ func ApplyDirMap(buf []byte, dirMappings []DirMapping, toContainer bool) []byte 
 	anyChange := false
 
 	for i < len(buf) {
-		// Look for "/segment" or "\\segment" boundary
-		isSep := buf[i] == '/' || (buf[i] == '\\' && i+1 < len(buf) && buf[i+1] == '\\')
+		// Look for "/segment", "\\segment", or '"segment' boundary
+		// The '"' case handles bare directory names in JSON string values,
+		// e.g. "directory":"D--GitHub-ccbox" in sessions-index.json
+		isSep := buf[i] == '/' || buf[i] == '"' || (buf[i] == '\\' && i+1 < len(buf) && buf[i+1] == '\\')
 		if isSep {
 			sepLen := 1
 			if buf[i] == '\\' {
