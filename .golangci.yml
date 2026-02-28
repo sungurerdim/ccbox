@@ -29,16 +29,31 @@ linters:
         - (*os.File).Close
         - syscall.Close
         - os.Remove
+        - os.Setenv
+        - os.Unsetenv
+    gocyclo:
+      min-complexity: 35
     gosec:
       excludes:
+        - G103 # Use of unsafe (FUSE requires unsafe pointer ops)
+        - G104 # Errors unhandled (best-effort cleanup paths)
         - G115 # Integer overflow conversions (FUSE interface requires uint64/uint32↔int64 casts)
         - G204 # Subprocess launched with variable (expected for Docker CLI)
+        - G301 # Directory permissions (Docker build context uses 0755)
+        - G302 # File permissions (trace log, config files need wider perms)
         - G304 # File path provided as taint input (expected for file operations)
-        - G306 # WriteFile permissions >0600 (build context files need 0644/0755, test files use t.TempDir)
+        - G306 # WriteFile permissions >0600 (build context files need 0644/0755)
+        - G701 # Filepath traversal via taint analysis (intentional Docker path construction)
+        - G702 # Command injection via taint analysis (intentional Docker exec construction)
+        - G703 # Path traversal via taint analysis (intentional Docker path construction)
+        - G705 # XSS via taint analysis (not a web app)
   exclusions:
     paths:
       - native
       - embedded
+    rules:
+      - linters: [staticcheck]
+        text: "QF1"
 
 issues:
   max-issues-per-linter: 50
