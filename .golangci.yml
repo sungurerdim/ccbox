@@ -16,7 +16,7 @@ linters:
     - nolintlint
   settings:
     gocyclo:
-      min-complexity: 30
+      min-complexity: 35
     goconst:
       min-occurrences: 5
       min-len: 5
@@ -31,8 +31,6 @@ linters:
         - os.Remove
         - os.Setenv
         - os.Unsetenv
-    gocyclo:
-      min-complexity: 35
     gosec:
       excludes:
         - G103 # Use of unsafe (FUSE requires unsafe pointer ops)
