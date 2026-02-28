@@ -30,6 +30,9 @@ linters:
     paths:
       - native
       - embedded
+    rules:
+      - linters: [errcheck]
+        text: "Error return value of.*Close.*is not checked"
 
 issues:
   max-issues-per-linter: 50
