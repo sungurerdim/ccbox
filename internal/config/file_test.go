@@ -1,111 +1,139 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
-func TestParseSimpleYaml(t *testing.T) {
+func TestLoadConfigFile(t *testing.T) {
 	tests := []struct {
 		name    string
-		input   string
-		wantKey string
-		wantVal any
+		content string
+		check   func(t *testing.T, cfg *CcboxConfig)
 	}{
-		{"string value", "stack: go", "stack", "go"},
-		{"bool true", "fresh: true", "fresh", true},
-		{"bool false", "headless: false", "headless", false},
-		{"integer", "debug: 2", "debug", 2},
-		{"quoted string double", `stack: "web"`, "stack", "web"},
-		{"quoted string single", "stack: 'web'", "stack", "web"},
-		{"quoted float stays string", `cpus: "4.0"`, "cpus", "4.0"},
-		{"quoted int stays string", `debug: "2"`, "debug", "2"},
-		{"quoted bool stays string", `fresh: "true"`, "fresh", "true"},
-		{"unquoted float", "cpus: 4.0", "cpus", 4.0},
-		{"comment line", "# this is a comment\nstack: go", "stack", "go"},
-		{"empty input", "", "", nil},
+		{
+			name:    "string fields",
+			content: "stack: go\ndeps: prod\nmemory: 8g\ncpus: \"4.0\"\n",
+			check: func(t *testing.T, cfg *CcboxConfig) {
+				if cfg.Stack != "go" {
+					t.Errorf("Stack = %q, want %q", cfg.Stack, "go")
+				}
+				if cfg.Deps != "prod" {
+					t.Errorf("Deps = %q, want %q", cfg.Deps, "prod")
+				}
+				if cfg.Memory != "8g" {
+					t.Errorf("Memory = %q, want %q", cfg.Memory, "8g")
+				}
+				if cfg.CPUs != "4.0" {
+					t.Errorf("CPUs = %q, want %q", cfg.CPUs, "4.0")
+				}
+			},
+		},
+		{
+			name:    "bool pointer fields",
+			content: "fresh: true\nheadless: false\nunrestricted: true\n",
+			check: func(t *testing.T, cfg *CcboxConfig) {
+				if cfg.Fresh == nil || !*cfg.Fresh {
+					t.Error("Fresh should be *true")
+				}
+				if cfg.Headless == nil || *cfg.Headless {
+					t.Error("Headless should be *false")
+				}
+				if cfg.Unrestricted == nil || !*cfg.Unrestricted {
+					t.Error("Unrestricted should be *true")
+				}
+			},
+		},
+		{
+			name:    "int field",
+			content: "debug: 2\n",
+			check: func(t *testing.T, cfg *CcboxConfig) {
+				if cfg.Debug != 2 {
+					t.Errorf("Debug = %d, want 2", cfg.Debug)
+				}
+			},
+		},
+		{
+			name:    "pointer bool fields",
+			content: "cache: true\nprune: false\n",
+			check: func(t *testing.T, cfg *CcboxConfig) {
+				if cfg.Cache == nil || !*cfg.Cache {
+					t.Error("Cache should be *true")
+				}
+				if cfg.Prune == nil || *cfg.Prune {
+					t.Error("Prune should be *false")
+				}
+			},
+		},
+		{
+			name:    "env map",
+			content: "env:\n  FOO: bar\n  BAZ: \"qux\"\n",
+			check: func(t *testing.T, cfg *CcboxConfig) {
+				if cfg.Env == nil {
+					t.Fatal("Env should not be nil")
+				}
+				if cfg.Env["FOO"] != "bar" {
+					t.Errorf("Env[FOO] = %q, want %q", cfg.Env["FOO"], "bar")
+				}
+				if cfg.Env["BAZ"] != "qux" {
+					t.Errorf("Env[BAZ] = %q, want %q", cfg.Env["BAZ"], "qux")
+				}
+			},
+		},
+		{
+			name:    "empty file",
+			content: "",
+			check: func(t *testing.T, cfg *CcboxConfig) {
+				if cfg == nil {
+					t.Fatal("empty file should return non-nil config")
+				}
+				if cfg.Stack != "" {
+					t.Errorf("Stack should be empty, got %q", cfg.Stack)
+				}
+			},
+		},
+		{
+			name:    "full config",
+			content: "stack: web\nnetworkPolicy: isolated\nzeroResidue: true\nprogress: plain\n",
+			check: func(t *testing.T, cfg *CcboxConfig) {
+				if cfg.Stack != "web" {
+					t.Errorf("Stack = %q, want %q", cfg.Stack, "web")
+				}
+				if cfg.NetworkPolicy != "isolated" {
+					t.Errorf("NetworkPolicy = %q, want %q", cfg.NetworkPolicy, "isolated")
+				}
+				if cfg.ZeroResidue == nil || !*cfg.ZeroResidue {
+					t.Error("ZeroResidue should be *true")
+				}
+				if cfg.Progress != "plain" {
+					t.Errorf("Progress = %q, want %q", cfg.Progress, "plain")
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := parseSimpleYaml(tt.input)
-			if tt.wantKey == "" {
-				if len(result) != 0 {
-					t.Errorf("expected empty map, got %v", result)
-				}
-				return
+			dir := t.TempDir()
+			path := filepath.Join(dir, "ccbox.yaml")
+			if err := os.WriteFile(path, []byte(tt.content), 0644); err != nil {
+				t.Fatalf("write temp file: %v", err)
 			}
-			got, ok := result[tt.wantKey]
-			if !ok {
-				t.Errorf("key %q not found in result %v", tt.wantKey, result)
-				return
+			cfg := loadConfigFile(path)
+			if cfg == nil {
+				t.Fatal("loadConfigFile returned nil")
 			}
-			if got != tt.wantVal {
-				t.Errorf("result[%q] = %v (%T), want %v (%T)", tt.wantKey, got, got, tt.wantVal, tt.wantVal)
-			}
+			tt.check(t, cfg)
 		})
 	}
-}
 
-func TestParseSimpleYamlEnvBlock(t *testing.T) {
-	input := "env:\n  FOO: bar\n  BAZ: \"qux\"\nstack: go"
-	result := parseSimpleYaml(input)
-
-	envMap, ok := result["env"].(map[string]string)
-	if !ok {
-		t.Fatalf("env should be map[string]string, got %T", result["env"])
-	}
-	if envMap["FOO"] != "bar" {
-		t.Errorf("env[FOO] = %q, want %q", envMap["FOO"], "bar")
-	}
-	if envMap["BAZ"] != "qux" {
-		t.Errorf("env[BAZ] = %q, want %q", envMap["BAZ"], "qux")
-	}
-	if result["stack"] != "go" {
-		t.Errorf("stack = %v, want %q", result["stack"], "go")
-	}
-}
-
-func TestIsQuoted(t *testing.T) {
-	tests := []struct {
-		input string
-		want  bool
-	}{
-		{`"hello"`, true},
-		{`'hello'`, true},
-		{`"4.0"`, true},
-		{"hello", false},
-		{`"`, false},
-		{"", false},
-		{`"mismatched'`, false},
-	}
-
-	for _, tt := range tests {
-		got := isQuoted(tt.input)
-		if got != tt.want {
-			t.Errorf("isQuoted(%q) = %v, want %v", tt.input, got, tt.want)
+	t.Run("nonexistent file", func(t *testing.T) {
+		cfg := loadConfigFile("/nonexistent/path/ccbox.yaml")
+		if cfg != nil {
+			t.Error("expected nil for nonexistent file")
 		}
-	}
-}
-
-func TestStripQuotes(t *testing.T) {
-	tests := []struct {
-		input string
-		want  string
-	}{
-		{`"hello"`, "hello"},
-		{`'hello'`, "hello"},
-		{"hello", "hello"},
-		{`""`, ""},
-		{`''`, ""},
-		{"", ""},
-	}
-
-	for _, tt := range tests {
-		got := stripQuotes(tt.input)
-		if got != tt.want {
-			t.Errorf("stripQuotes(%q) = %q, want %q", tt.input, got, tt.want)
-		}
-	}
+	})
 }
 
 func TestMergeConfigs(t *testing.T) {
@@ -142,6 +170,29 @@ func TestMergeConfigs(t *testing.T) {
 		}
 	})
 
+	t.Run("bool pointer override false", func(t *testing.T) {
+		bTrue := true
+		bFalse := false
+		base := &CcboxConfig{Unrestricted: &bTrue}
+		override := &CcboxConfig{Unrestricted: &bFalse}
+
+		result := mergeConfigs(base, override)
+		if result.Unrestricted == nil || *result.Unrestricted != false {
+			t.Errorf("Unrestricted should be false after override")
+		}
+	})
+
+	t.Run("bool pointer nil preserves base", func(t *testing.T) {
+		bTrue := true
+		base := &CcboxConfig{Unrestricted: &bTrue}
+		override := &CcboxConfig{} // Unrestricted is nil
+
+		result := mergeConfigs(base, override)
+		if result.Unrestricted == nil || *result.Unrestricted != true {
+			t.Errorf("Unrestricted should remain true when override is nil")
+		}
+	})
+
 	t.Run("env map merge", func(t *testing.T) {
 		base := &CcboxConfig{Env: map[string]string{"A": "1", "B": "2"}}
 		override := &CcboxConfig{Env: map[string]string{"B": "3", "C": "4"}}
@@ -157,48 +208,6 @@ func TestMergeConfigs(t *testing.T) {
 			t.Errorf("Env[C] = %q, want %q", result.Env["C"], "4")
 		}
 	})
-}
-
-func TestIsInteger(t *testing.T) {
-	tests := []struct {
-		input string
-		want  bool
-	}{
-		{"42", true},
-		{"-1", true},
-		{"0", true},
-		{"3.14", false},
-		{"abc", false},
-		{"", false},
-	}
-
-	for _, tt := range tests {
-		got := isInteger(tt.input)
-		if got != tt.want {
-			t.Errorf("isInteger(%q) = %v, want %v", tt.input, got, tt.want)
-		}
-	}
-}
-
-func TestIsFloat(t *testing.T) {
-	tests := []struct {
-		input string
-		want  bool
-	}{
-		{"3.14", true},
-		{"-0.5", true},
-		{"42", false},
-		{"abc", false},
-		{"", false},
-		{"1.2.3", false},
-	}
-
-	for _, tt := range tests {
-		got := isFloat(tt.input)
-		if got != tt.want {
-			t.Errorf("isFloat(%q) = %v, want %v", tt.input, got, tt.want)
-		}
-	}
 }
 
 func TestConfigEnvToArray(t *testing.T) {

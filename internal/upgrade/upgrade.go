@@ -24,7 +24,7 @@ type UpdateInfo struct {
 
 // CheckUpdate checks GitHub releases for a version newer than currentVersion.
 // Returns nil (no error) if already up to date. Returns UpdateInfo if an update is available.
-func CheckUpdate(currentVersion string) (*UpdateInfo, error) {
+func CheckUpdate(ctx context.Context, currentVersion string) (*UpdateInfo, error) {
 	source, err := selfupdate.NewGitHubSource(selfupdate.GitHubConfig{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GitHub source: %w", err)
@@ -37,7 +37,7 @@ func CheckUpdate(currentVersion string) (*UpdateInfo, error) {
 		return nil, fmt.Errorf("failed to create updater: %w", err)
 	}
 
-	latest, found, err := updater.DetectLatest(context.Background(), selfupdate.ParseSlug(repoOwner+"/"+repoName))
+	latest, found, err := updater.DetectLatest(ctx, selfupdate.ParseSlug(repoOwner+"/"+repoName))
 	if err != nil {
 		return nil, fmt.Errorf("failed to detect latest version: %w", err)
 	}
@@ -58,7 +58,7 @@ func CheckUpdate(currentVersion string) (*UpdateInfo, error) {
 }
 
 // PerformUpdate downloads and applies the update described by info.
-func PerformUpdate(info *UpdateInfo) error {
+func PerformUpdate(ctx context.Context, info *UpdateInfo) error {
 	if info == nil || info.release == nil {
 		return fmt.Errorf("no update information available")
 	}
@@ -80,7 +80,7 @@ func PerformUpdate(info *UpdateInfo) error {
 		return fmt.Errorf("failed to determine executable path: %w", err)
 	}
 
-	if err := updater.UpdateTo(context.Background(), info.release, exe); err != nil {
+	if err := updater.UpdateTo(ctx, info.release, exe); err != nil {
 		return fmt.Errorf("failed to apply update: %w", err)
 	}
 

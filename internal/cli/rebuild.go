@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/sungur/ccbox/internal/config"
@@ -18,12 +17,14 @@ var rebuildCmd = &cobra.Command{
 	Short: "Rebuild Docker images with latest Claude Code",
 	Long:  "Rebuilds ccbox Docker images. Default: rebuild base only. Use --stack or --all to rebuild more.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx := context.Background()
+		ctx, cancel := context.WithTimeout(cmd.Context(), config.DockerBuildTimeout)
+		defer cancel()
+
 		stackName, _ := cmd.Flags().GetString("stack")
 		all, _ := cmd.Flags().GetBool("all")
 		noCache, _ := cmd.Flags().GetBool("no-cache")
 
-		if err := docker.EnsureRunning(ctx, 30*time.Second); err != nil {
+		if err := docker.EnsureRunning(ctx, config.DockerStartupTimeout); err != nil {
 			return fmt.Errorf("docker is not running")
 		}
 

@@ -5,14 +5,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/sungur/ccbox/internal/clipboard"
 	"github.com/sungur/ccbox/internal/docker"
-	"github.com/sungur/ccbox/internal/platform"
 )
 
 // pasteToContainer copies data into a running container's .claude/input/ directory.
@@ -71,42 +69,10 @@ func pasteToContainer(c ContainerInfo, data []byte, dataType string) statusMsg {
 
 // readClipboardImage reads an image from the system clipboard.
 func readClipboardImage() ([]byte, error) {
-	cmdArgs := platform.ClipboardImageCmd()
-	if cmdArgs == nil {
-		return nil, fmt.Errorf("clipboard image not supported on this platform")
-	}
-
-	cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		return nil, err
-	}
-
-	data := stdout.Bytes()
-	if len(data) == 0 {
-		return nil, fmt.Errorf("no image data in clipboard")
-	}
-	return data, nil
+	return clipboard.ReadImage()
 }
 
 // readClipboardText reads text from the system clipboard.
 func readClipboardText() (string, error) {
-	cmdArgs := platform.ClipboardTextCmd()
-	if cmdArgs == nil {
-		return "", fmt.Errorf("clipboard text not supported on this platform")
-	}
-
-	cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		return "", err
-	}
-
-	return stdout.String(), nil
+	return clipboard.ReadText()
 }

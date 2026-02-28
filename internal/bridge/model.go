@@ -20,6 +20,7 @@ type ContainerInfo struct {
 	Project  string
 	Stack    string
 	Status   string
+	Healthy  bool // true if entrypoint completed successfully
 	Sessions []Session
 }
 
@@ -36,6 +37,7 @@ type BridgeModel struct {
 	containers    []ContainerInfo
 	flatItems     []FlatItem
 	currentIndex  int
+	selectedID    string // tracks selected item across refreshes
 	statusMessage string
 	statusExpiry  time.Time
 	width         int

@@ -22,7 +22,7 @@ _cleanup() {
         done
     fi
     # Zero-residue cleanup
-    if [[ -n "$CCBOX_ZERO_RESIDUE" ]]; then
+    if [[ -n "${CCBOX_ZERO_RESIDUE:-}" ]]; then
         _log "Zero-residue cleanup..."
         rm -rf /ccbox/.cache/* /tmp/* /run/ccbox-fuse-trace.log /ccbox/.claude/debug/* 2>/dev/null || true
     fi
@@ -31,10 +31,10 @@ trap _cleanup EXIT
 trap 'trap - TERM; _cleanup; kill -- -$$' TERM
 trap 'trap - INT; _cleanup; kill -- -$$' INT
 
-set -e
+set -euo pipefail
 
 # === Timezone ===
-[[ -n "$TZ" && -f "/usr/share/zoneinfo/$TZ" ]] && {
+[[ -n "${TZ:-}" && -f "/usr/share/zoneinfo/${TZ:-}" ]] && {
     ln -sf "/usr/share/zoneinfo/$TZ" /etc/localtime 2>/dev/null || true
     echo "$TZ" > /etc/timezone 2>/dev/null || true
 } || true
@@ -42,7 +42,7 @@ set -e
 _log "Entrypoint started (UID: $(id -u), GID: $(id -g))"
 
 # === Network Isolation ===
-if [[ "$CCBOX_NETWORK_POLICY" == "isolated" ]] && command -v iptables &>/dev/null; then
+if [[ "${CCBOX_NETWORK_POLICY:-}" == "isolated" ]] && command -v iptables &>/dev/null; then
     _log "Network policy: isolated (private IPs blocked)"
     iptables -F OUTPUT 2>/dev/null || true
     iptables -A OUTPUT -o lo -j ACCEPT 2>/dev/null || true
@@ -110,41 +110,9 @@ _setup_fuse_overlay() {
     _log "FUSE mounted: $label"
 }
 
-# === Session Directory Mapping (container name -> native name) ===
-if [[ -n "$CCBOX_DIR_MAP" ]]; then
-    _claude_projects="${CLAUDE_CONFIG_DIR:-/ccbox/.claude}/projects"
-    mkdir -p "$_claude_projects" 2>/dev/null || true
-    IFS=';' read -ra _dirmaps <<< "$CCBOX_DIR_MAP"
-    for _dm in "${_dirmaps[@]}"; do
-        _container_name="${_dm%%:*}" _native_name="${_dm##*:}"
-        [[ -z "$_container_name" || -z "$_native_name" || "$_container_name" == "$_native_name" ]] && continue
-        _literal_dir="$_claude_projects/$_container_name" _native_dir="$_claude_projects/$_native_name"
-
-        # Merge any existing shadow sessions into native directory
-        if [[ -d "$_literal_dir" && ! -L "$_literal_dir" && -d "$_native_dir" ]]; then
-            _log "Merging shadow sessions: $_container_name -> $_native_name"
-            for _sf in "$_literal_dir"/*.jsonl; do
-                [[ -f "$_sf" ]] && [[ ! -f "$_native_dir/$(basename "$_sf")" ]] && mv "$_sf" "$_native_dir/" 2>/dev/null || true
-            done
-            rm -rf "$_literal_dir" 2>/dev/null || true
-        elif [[ -d "$_literal_dir" && ! -L "$_literal_dir" && ! -d "$_native_dir" ]]; then
-            # Shadow dir exists but native doesn't - rename it
-            mv "$_literal_dir" "$_native_dir" 2>/dev/null || true
-        fi
-
-        # Ensure native directory exists and symlink container name to it
-        mkdir -p "$_native_dir" 2>/dev/null || true
-        rm -f "$_literal_dir" 2>/dev/null || true
-        ln -sfn "$_native_name" "$_literal_dir" 2>/dev/null || true
-        _log "Session symlink: $_container_name -> $_native_name"
-
-        # Invalidate stale session index
-        _idx="$_native_dir/sessions-index.json"
-        [[ -f "$_idx" ]] && [[ -n "$(find "$_native_dir" -maxdepth 1 -name '*.jsonl' -newer "$_idx" -print -quit 2>/dev/null)" ]] && rm -f "$_idx" 2>/dev/null
-    done
-fi
-
 # === FUSE Path Translation ===
+# FUSE handles directory name mapping at VFS level (container_name ↔ native_name)
+# via Lookup/Readdir/Mkdir path translation — no symlinks needed on host.
 if [[ -n "$CCBOX_PATH_MAP" && -x "/usr/local/bin/ccbox-fuse" ]]; then
     _log "Setting up FUSE path translation..."
     [[ -d "/ccbox/.claude" ]] && _setup_fuse_overlay "/ccbox/.claude" "global" && export CCBOX_FUSE_GLOBAL=1
@@ -152,7 +120,7 @@ if [[ -n "$CCBOX_PATH_MAP" && -x "/usr/local/bin/ccbox-fuse" ]]; then
     _log "Path mapping: $CCBOX_PATH_MAP"
 
     # FUSE health check: warn if path translation setup failed
-    if [[ -z "$CCBOX_FUSE_GLOBAL" && -z "$CCBOX_FUSE_PROJECT" ]]; then
+    if [[ -z "${CCBOX_FUSE_GLOBAL:-}" && -z "${CCBOX_FUSE_PROJECT:-}" ]]; then
         echo "[ccbox:WARN] FUSE mount failed - path translation unavailable" >&2
         echo "[ccbox:WARN] Sessions may not sync with host Claude Code" >&2
     fi
@@ -161,7 +129,7 @@ if [[ -n "$CCBOX_PATH_MAP" && -x "/usr/local/bin/ccbox-fuse" ]]; then
     # Claude Code reads MCP config from both ~/.claude.json and ~/.claude/.claude.json
     # FUSE overlay is on /ccbox/.claude (directory), but /ccbox/.claude.json is a
     # separate bind mount outside the overlay. Symlink it so reads get transformed paths.
-    if [[ -n "$CCBOX_FUSE_GLOBAL" && -f "/ccbox/.claude.json" ]]; then
+    if [[ -n "${CCBOX_FUSE_GLOBAL:-}" && -f "/ccbox/.claude.json" ]]; then
         ln -sf /ccbox/.claude/.claude.json /ccbox/.claude.json 2>/dev/null || true
     fi
 
@@ -234,7 +202,7 @@ fi
 
 # === GitHub CLI (gh) Token Support ===
 # If GITHUB_TOKEN is set, configure git to use it for HTTPS operations
-if [[ -n "$GITHUB_TOKEN" ]]; then
+if [[ -n "${GITHUB_TOKEN:-}" ]]; then
     _log "GitHub token configured (git + gh CLI)"
     git config --global credential.helper "!f() { echo \"username=x-access-token\"; echo \"password=\$GITHUB_TOKEN\"; }; f" 2>/dev/null || true
 fi
@@ -248,7 +216,7 @@ _log "Starting Claude Code..."
 
 # === Priority Wrapper ===
 PRIORITY_CMD=""
-[[ -z "$CCBOX_UNRESTRICTED" ]] && PRIORITY_CMD="nice -n 10 ionice -c2 -n7"
+[[ -z "${CCBOX_UNRESTRICTED:-}" ]] && PRIORITY_CMD="nice -n 10 ionice -c2 -n7"
 
 # === User Switch ===
 EXEC_PREFIX=""
@@ -259,10 +227,14 @@ fi
 
 # === fakepath.so Preload ===
 FAKEPATH_PRELOAD=""
-[[ (-n "$CCBOX_WIN_ORIGINAL_PATH" || -n "$CCBOX_PATH_MAP") && -f "/usr/lib/fakepath.so" ]] && FAKEPATH_PRELOAD="LD_PRELOAD=/usr/lib/fakepath.so"
+[[ (-n "${CCBOX_WIN_ORIGINAL_PATH:-}" || -n "${CCBOX_PATH_MAP:-}") && -f "/usr/lib/fakepath.so" ]] && FAKEPATH_PRELOAD="LD_PRELOAD=/usr/lib/fakepath.so"
+
+# === Health Signal ===
+# Touch health file so bridge mode can detect successful container initialization.
+touch /tmp/ccbox-healthy 2>/dev/null || true
 
 # === Execute ===
-if [[ -n "$CCBOX_CMD" ]]; then
+if [[ -n "${CCBOX_CMD:-}" ]]; then
     exec $EXEC_PREFIX env $FAKEPATH_PRELOAD $CCBOX_CMD "$@"
 else
     # Direct execution (no tmux wrapper - cleaner, avoids multi-line arg issues)

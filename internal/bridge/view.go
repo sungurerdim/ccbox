@@ -12,30 +12,36 @@ import (
 var (
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("#7B61FF")).
+			Foreground(lipgloss.AdaptiveColor{Light: "#5B41DF", Dark: "#7B61FF"}).
 			MarginBottom(1)
 
 	containerStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#00D4AA")).
+			Foreground(lipgloss.AdaptiveColor{Light: "#008866", Dark: "#00D4AA"}).
 			Bold(true)
 
 	sessionStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#888888")).
+			Foreground(lipgloss.AdaptiveColor{Light: "#666666", Dark: "#888888"}).
 			PaddingLeft(4)
 
 	selectedStyle = lipgloss.NewStyle().
-			Background(lipgloss.Color("#333333")).
-			Foreground(lipgloss.Color("#FFFFFF"))
+			Background(lipgloss.AdaptiveColor{Light: "#D0D0D0", Dark: "#333333"}).
+			Foreground(lipgloss.AdaptiveColor{Light: "#000000", Dark: "#FFFFFF"})
 
 	statusStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FFD700"))
+			Foreground(lipgloss.AdaptiveColor{Light: "#B8860B", Dark: "#FFD700"})
 
 	helpStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#555555")).
+			Foreground(lipgloss.AdaptiveColor{Light: "#888888", Dark: "#555555"}).
 			MarginTop(1)
 
 	dimStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#666666"))
+			Foreground(lipgloss.AdaptiveColor{Light: "#999999", Dark: "#666666"})
+
+	healthyStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.AdaptiveColor{Light: "#008800", Dark: "#00FF00"})
+
+	initStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.AdaptiveColor{Light: "#B8860B", Dark: "#FFD700"})
 )
 
 // --- View ---
@@ -68,7 +74,12 @@ func (m BridgeModel) View() string {
 				if stack == "" {
 					stack = "-"
 				}
-				line = fmt.Sprintf("  %s  %s  %s",
+				healthIndicator := initStyle.Render("○")
+				if c.Healthy {
+					healthIndicator = healthyStyle.Render("●")
+				}
+				line = fmt.Sprintf("  %s %s  %s  %s",
+					healthIndicator,
 					containerStyle.Render(name),
 					dimStyle.Render(stack),
 					dimStyle.Render(c.Status),

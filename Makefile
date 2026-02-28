@@ -1,4 +1,4 @@
-.PHONY: build test lint clean dev fmt tidy
+.PHONY: build test lint clean dev fmt tidy install
 
 VERSION ?= dev
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -32,3 +32,6 @@ fmt:
 
 tidy:
 	go mod tidy
+
+install:
+	bash scripts/dev-install.sh

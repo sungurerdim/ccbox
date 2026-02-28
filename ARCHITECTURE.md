@@ -208,17 +208,27 @@ eclipse-temurin:latest → ccbox/java → ccbox/jvm
 
 ### Container Isolation
 
-- `--cap-drop=ALL`: Drop all Linux capabilities
-- `--security-opt=no-new-privileges`: Prevent privilege escalation
-- `--pids-limit=2048`: Fork bomb protection
-- Tmpfs for `/tmp`: No disk residue
+| Mechanism | Flag | Purpose |
+|-----------|------|---------|
+| Capability drop | `--cap-drop=ALL` | Remove all Linux capabilities |
+| Capability add | `SETUID`, `SETGID`, `CHOWN`, `SYS_ADMIN` | gosu, ownership, FUSE only |
+| Process limit | `--pids-limit=2048` | Fork bomb protection |
+| Init process | `--init` | Proper signal handling |
+| Memory limit | `--memory=4g` | Prevent host exhaustion |
+| CPU limit | `--cpus=2.0`, `--cpu-shares=512` | Lower priority vs host |
 
 ### Volume Mounts
 
-Only specific directories are mounted:
-- Project directory (read-write)
-- Host `.claude` for settings (via FUSE)
-- SSH agent socket (if available)
+Only specific directories are mounted — the host filesystem is absent, not restricted:
+
+| Mount | Mode | Purpose |
+|-------|------|---------|
+| Project directory | `rw` | Working directory |
+| `~/.claude` | `rw` | Settings and sessions (via FUSE on Windows) |
+| SSH agent socket | `ro` | Key-based auth (socket only, no keys) |
+| `/tmp`, `/var/tmp`, `/run` | tmpfs | Ephemeral, RAM-based |
+
+> Full security details: [SECURITY.md](SECURITY.md)
 
 ## Tool Versioning
 

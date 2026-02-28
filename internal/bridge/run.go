@@ -12,11 +12,9 @@ func RunBridgeMode(opts BridgeOptions) error {
 	model := NewBridgeModel(opts)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 
-	finalModel, err := p.Run()
-	if err != nil {
+	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("bridge mode error: %w", err)
 	}
 
-	_ = finalModel
 	return nil
 }
