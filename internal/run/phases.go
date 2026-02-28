@@ -198,7 +198,7 @@ func checkDockerRunning() error {
 	defer cancel()
 
 	if err := docker.EnsureRunning(ctx, config.DockerStartupTimeout); err != nil {
-		return fmt.Errorf("Docker is not running. Start Docker and try again")
+		return fmt.Errorf("docker is not running. Start Docker and try again")
 	}
 	return nil
 }
