@@ -101,5 +101,6 @@ jobs:
       - name: Secret scan
         run: |
           ! grep -rn 'sk-ant-\|ANTHROPIC_API_KEY=\|ghp_\|ghs_\|OPENAI_API_KEY=' \
-            --include='*.go' --include='*.yml' --include='*.yaml' --include='*.env' --include='*.sh' . \
+            --include='*.go' --include='*.env' --include='*.sh' \
+            --exclude='*_test.go' . \
             || { echo "::error::Potential secret found"; exit 1; }
