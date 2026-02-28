@@ -1,5 +1,7 @@
 # ccbox
 
+> **This project is archived.** Development continues in [ai-fence](https://github.com/sungurerdim/ai-fence), a next-generation rewrite with a broader scope.
+
 **Isolated Docker sandbox for Claude Code.** Your project stays safe, Claude runs at full power.
 
 > Claude Code runs in a container where your host filesystem doesn't exist — not restricted, absent.
