@@ -1,8 +1,0 @@
-{
-  "alwaysThinkingEnabled": true,
-   "statusLine": {
-    "type": "command",
-    "command": "~/.claude/cco-statusline.exe",
-    "padding": 1
-  }
-}
