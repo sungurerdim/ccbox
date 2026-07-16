@@ -1,0 +1,17 @@
+pre-commit:
+  parallel: true
+  commands:
+    lint:
+      glob: "*.go"
+      run: go vet ./... || true
+    format-check:
+      glob: "*.go"
+      run: test -z "$(gofmt -l .)" || (echo "⚠️  Run: gofmt -w ." && exit 1)
+
+commit-msg:
+  commands:
+    conventional:
+      run: |
+        msg=$(cat {1})
+        echo "$msg" | grep -qE "^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?\!?: .{1,100}" \
+          || (echo "❌ Conventional commit required. Example: feat: add feature" && exit 1)
